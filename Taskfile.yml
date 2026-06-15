@@ -60,11 +60,12 @@ tasks:
       - task: publish
 
   release:
-    desc: 'Bump the version and cut a GitHub release. Usage: task release -- major|minor|patch'
+    desc: 'Bump the version and cut a GitHub release (defaults to patch). Usage: task release [-- major|minor|patch]'
     cmds:
       - |
         set -eu
         bump="{{.CLI_ARGS}}"
+        bump="${bump:-patch}"
         case "$bump" in
           major|minor|patch) ;;
           *) echo "usage: task release -- major|minor|patch" >&2; exit 1 ;;
