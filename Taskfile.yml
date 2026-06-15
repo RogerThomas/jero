@@ -1,0 +1,68 @@
+# https://taskfile.dev
+
+version: '3'
+
+tasks:
+  install:
+    desc: Install the virtual environment and the pre-commit hooks
+    cmds:
+      - uv sync --all-groups
+      - uv run prek install
+
+  check:
+    desc: 'Run code quality tools: lock check + prek (ruff, pyright, deptry, pylint)'
+    cmds:
+      - uv lock --locked
+      - uv run prek run -a
+
+  test:
+    desc: Run the test suite with coverage
+    cmd: uv run pytest --cov --cov-config=pyproject.toml --cov-report=xml
+
+  pyright:
+    desc: Static type checking
+    cmd: uv run pyright
+
+  ruff:
+    desc: Lint and auto-fix
+    cmd: uv run ruff check --fix --unsafe-fixes .
+
+  pylint:
+    desc: Run pylint
+    cmd: uv run pylint jero tests
+
+  deptry:
+    desc: Check for dependency issues
+    cmd: uv run deptry .
+
+  prek:
+    desc: Run the pre-commit hooks
+    cmd: uv run prek {{.CLI_ARGS}}
+
+  clean-build:
+    desc: Remove build artifacts
+    cmd: rm -rf dist
+
+  build:
+    desc: Build the wheel
+    cmds:
+      - task: clean-build
+      - uv build
+
+  publish:
+    desc: Publish a release to PyPI
+    cmd: uv publish
+
+  build-and-publish:
+    desc: Build and publish
+    cmds:
+      - task: build
+      - task: publish
+
+  docs:
+    desc: Build and serve the documentation
+    cmd: uv run zensical serve
+
+  docs-test:
+    desc: Build the documentation strictly (fail on warnings)
+    cmd: uv run zensical build -s

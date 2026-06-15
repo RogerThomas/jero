@@ -1,0 +1,41 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: "v6.0.0"
+    hooks:
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: check-json
+      - id: pretty-format-json
+        args: [--autofix, --no-sort-keys]
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: "v0.15.15"
+    hooks:
+      - id: ruff-check
+        args: [--exit-non-zero-on-fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: pyright
+        name: pyright
+        entry: uv run pyright
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: deptry
+        name: deptry
+        entry: uv run deptry .
+        language: system
+        pass_filenames: false
+
+      - id: pylint
+        name: pylint
+        entry: uv run pylint
+        language: system
+        types: [python]

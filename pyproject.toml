@@ -1,0 +1,159 @@
+[project]
+name = "jero"
+version = "0.0.1"
+description = "An opinionated, msgspec-first ASGI micro-framework"
+authors = [{ name = "Roger Thomas", email = "roger.thomas87@gmail.com" }]
+readme = "README.md"
+keywords = ["asgi", "msgspec", "web-framework", "rest", "api"]
+requires-python = ">=3.14"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet :: WWW/HTTP :: WSGI :: Application",
+    "Framework :: AsyncIO",
+    "Typing :: Typed",
+]
+dependencies = [
+    "msgspec>=0.21.1",
+    "multipart>=1.0",
+]
+
+[project.urls]
+Homepage = "https://RogerThomas.github.io/jero/"
+Repository = "https://github.com/RogerThomas/jero"
+Documentation = "https://RogerThomas.github.io/jero/"
+
+[dependency-groups]
+dev = [
+    "deptry>=0.24.0",
+    "httpx2[http2]>=2.3.0",
+    "mkdocstrings-python>=1.0.3",
+    "prek>=0.2.0",
+    "pylint>=4.0.4",
+    "pyright>=1.1.410",
+    "pytest>=9.0.3",
+    "pytest-cov>=7.0.0",
+    "pytest-mock>=3.15.1",
+    "ruff>=0.15.16",
+    "zensical>=0.0.26",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["jero"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.coverage.run]
+branch = true
+source = ["jero"]
+
+[tool.coverage.report]
+skip_empty = true
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "A",   # builtins shadowing
+    "ANN", # type annotations
+    "ARG", # unused arguments
+    "B",   # bugbear (common bugs & bad patterns)
+    "BLE", # blind excepts
+    "C4",  # comprehensions
+    "C90", # mccabe complexity
+    "COM", # commas
+    "DTZ", # datetime timezone
+    "E",   # pycodestyle errors
+    "ERA", # eradicate commented-out code
+    "F",   # pyflakes
+    "FA",  # future annotations
+    "FBT", # boolean trap
+    "I",   # import sorting
+    "ICN", # import conventions
+    "ISC", # implicit str concat
+    "N",   # naming conventions
+    "NPY", # numpy rules
+    "PGH", # pygrep-hooks
+    "PT",  # pytest style
+    "PTH", # pathlib
+    "RET", # return statements
+    "RUF", # Ruff extra rules
+    "S",   # security
+    "SIM", # simplifications
+    "T10", # debugger statements
+    "TC",  # typing under TYPE_CHECKING
+    "TD",  # TODOs must be annotated
+    "TID", # tidy imports
+    "TRY", # tryceratops
+    "UP",  # pyupgrade / newer syntax
+    "W",   # pycodestyle warnings
+    "YTT", # flake8-2020
+]
+ignore = [
+    "COM812", # trailing commas — conflicts with the ruff formatter
+    "D211",   # no-blank-line-before-class
+    "D213",   # multi-line-summary-second-line
+    "TC006",  # allow unquoted types in typing.cast()
+    "TRY003", # long exception messages at raise sites
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The test client mirrors arbitrary user JSON payloads/responses — Any is intrinsic.
+"jero/testing.py" = ["ANN401"]
+# Tests assert (S101), and test handlers declare sources they don't read (ARG002);
+# keep typing imports inline for readability (TC).
+"tests/**" = ["S101", "TC001", "TC002", "TC003", "ARG002"]
+
+[tool.pyright]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+# Pin the uv-managed venv so pyright resolves imports even when it's launched
+# outside `uv run` (e.g. an editor/LSP). Without this it can't find jero's deps
+# and emits spurious "unknown import symbol" errors the CLI run never sees.
+venvPath = "."
+venv = ".venv"
+
+# pytest fixtures use the `_name`-function + `@pytest.fixture(name=...)` pattern, so
+# they read as unused to pyright (pytest injects them by string). Disable the check
+# under tests/ only; jero/ stays strict so genuinely dead functions are still caught.
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+extraPaths = ["."]
+reportUnusedFunction = "none"
+
+[tool.pylint.main]
+disable = [
+    "R0902",
+    "R0903",
+    "R0911",
+    "R0912",
+    "R0913",
+    "R0914",
+    # the `multipart` package ships no type stubs, so pylint can't see its
+    # members — these are false positives (pyright already ignores them at source).
+    "E1101", # no-member
+    "E1123", # unexpected-keyword-arg
+    "E1133", # not-an-iterable
+    # ruff owns line length (line-length = 100); don't double-report it here.
+    "C0301", # line-too-long
+]
+
+[tool.pylint.basic]
+# jero uses descriptive PascalCase / single-cap TypeVars (THeaders, TUser, FactoryT).
+typevar-rgx = "^_?[A-Z][a-zA-Z0-9]*$"
+
+[tool.pylint.format]
+max-module-lines = 2500
