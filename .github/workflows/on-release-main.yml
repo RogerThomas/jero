@@ -32,6 +32,13 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     needs: [set-version]
+    # Trusted Publishing (OIDC) — no PyPI token needed. The environment name
+    # must match the one configured on the PyPI publisher ("pypi").
+    environment:
+      name: pypi
+      url: https://pypi.org/p/jero
+    permissions:
+      id-token: write
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -49,8 +56,6 @@ jobs:
 
       - name: Publish package
         run: uv publish
-        env:
-          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
 
   deploy-docs:
     needs: publish
