@@ -10,7 +10,7 @@ copyright = 'Maintained by <a href="https://RogerThomas.com">RogerThomas</a>.'
 
 nav = [
     { "Home" = "index.md" },
-    { "Modules" = "modules.md" },
+    { "API Reference" = "modules.md" },
 ]
 
 [project.plugins.mkdocstrings.handlers.python]
