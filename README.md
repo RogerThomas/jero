@@ -88,12 +88,15 @@ See [`AGENTS.md`](AGENTS.md) for the design philosophy and the contract, and
 
 ## Releasing a new version
 
-- Create an API token on [PyPI](https://pypi.org/) and add it to the repo secrets
-  as `PYPI_TOKEN`.
-- Create a [new release](https://github.com/RogerThomas/jero/releases/new) on
-  GitHub with a tag of the form `*.*.*`.
+Publishing uses PyPI [Trusted Publishing](https://docs.pypi.org/trusted-publishers/)
+(OIDC) — no token required.
 
-The release workflow builds, publishes to PyPI, and deploys the docs.
+1. Bump `version` in `pyproject.toml` and commit it to `main`.
+2. Create a [GitHub release](https://github.com/RogerThomas/jero/releases/new)
+   tagged with the **same** version — a bare PEP 440 string, e.g. `0.1.0` (no `v`).
+
+The release workflow verifies the tag matches `pyproject.toml`, builds, publishes
+to PyPI, and deploys the docs. A version mismatch fails the release.
 
 ---
 
