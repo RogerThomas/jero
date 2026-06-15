@@ -3,11 +3,11 @@
 <img src="docs/assets/jero-logo.png" alt="jero" width="440">
 
 <p>
-  <a href="https://img.shields.io/github/v/release/RogerThomas/jero"><img src="https://img.shields.io/github/v/release/RogerThomas/jero" alt="Release"></a>
+  <a href="https://github.com/RogerThomas/jero/releases"><img src="https://img.shields.io/github/v/release/RogerThomas/jero" alt="Release"></a>
   <a href="https://github.com/RogerThomas/jero/actions/workflows/main.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/RogerThomas/jero/main.yml?branch=main" alt="Build status"></a>
   <a href="https://codecov.io/gh/RogerThomas/jero"><img src="https://codecov.io/gh/RogerThomas/jero/branch/main/graph/badge.svg" alt="codecov"></a>
-  <a href="https://img.shields.io/github/commit-activity/m/RogerThomas/jero"><img src="https://img.shields.io/github/commit-activity/m/RogerThomas/jero" alt="Commit activity"></a>
-  <a href="https://img.shields.io/github/license/RogerThomas/jero"><img src="https://img.shields.io/github/license/RogerThomas/jero" alt="License"></a>
+  <a href="https://github.com/RogerThomas/jero/commits/main"><img src="https://img.shields.io/github/commit-activity/m/RogerThomas/jero" alt="Commit activity"></a>
+  <a href="https://github.com/RogerThomas/jero/blob/main/LICENSE"><img src="https://img.shields.io/github/license/RogerThomas/jero" alt="License"></a>
 </p>
 
 **An opinionated, msgspec-first ASGI micro-framework for Python 3.14.**
@@ -18,19 +18,21 @@
 
 ## What is jero?
 
-jero is built on three non-negotiable pillars:
+jero is opinionated on purpose. It makes one bet: that being aggressively
+prescriptive — rather than flexible — is exactly what lets a framework be *both*
+extremely fast *and* a joy to build on. Three pillars, all non-negotiable:
 
-1. **Speed.** All introspection happens once, at wiring time. The per-request path
-   is just dict lookup → msgspec decode → call → encode — nothing else.
-2. **Opinionated, scaffolded DX.** There is one blessed way to do each thing.
-   Contracts are checked at startup and fail loud with a precise `WiringError`,
-   never silently at runtime.
-3. **Strict, expressive typing.** Everything is fully, statically typed under
-   pyright-strict. Types *are* the contract — the binding, the wiring errors, and
-   (on the roadmap) the source of the OpenAPI spec.
+1. **Speed.** Introspection happens once, at startup. The request path is dict
+   lookup → msgspec decode → call → encode, and nothing else is ever added to it.
+2. **Opinionated DX.** One blessed way to do each thing, encoded so you can't get it
+   wrong. Contracts fail loud at startup with a precise `WiringError`, never quietly
+   at runtime.
+3. **Strict typing.** Fully static under pyright-strict — the types *are* the
+   contract, and the source of the coming OpenAPI spec. If you don't like typing,
+   this isn't your framework.
 
-It deliberately has **no DI container**: you hand-wire dependencies in `_wire`, and
-the framework owns only what the language doesn't give you for free — lifecycle.
+And no DI container: dependencies are hand-wired in `_wire`; the framework adds only
+lifecycle — the one thing plain Python doesn't give you.
 
 ## Example
 
