@@ -18,6 +18,8 @@ paths = ["jero"]
 
 [project.theme]
 language = "en"
+logo = "assets/jero-favicon.png"
+favicon = "assets/jero-favicon.png"
 features = [
     "announce.dismiss",
     "content.code.annotate",

@@ -1,15 +1,20 @@
-# jero
+<div align="center">
 
-[![Release](https://img.shields.io/github/v/release/RogerThomas/jero)](https://img.shields.io/github/v/release/RogerThomas/jero)
-[![Build status](https://img.shields.io/github/actions/workflow/status/RogerThomas/jero/main.yml?branch=main)](https://github.com/RogerThomas/jero/actions/workflows/main.yml?query=branch%3Amain)
-[![codecov](https://codecov.io/gh/RogerThomas/jero/branch/main/graph/badge.svg)](https://codecov.io/gh/RogerThomas/jero)
-[![Commit activity](https://img.shields.io/github/commit-activity/m/RogerThomas/jero)](https://img.shields.io/github/commit-activity/m/RogerThomas/jero)
-[![License](https://img.shields.io/github/license/RogerThomas/jero)](https://img.shields.io/github/license/RogerThomas/jero)
+<img src="docs/assets/jero-logo.png" alt="jero" width="440">
 
-An opinionated, msgspec-first ASGI micro-framework for Python 3.14.
+<p>
+  <a href="https://img.shields.io/github/v/release/RogerThomas/jero"><img src="https://img.shields.io/github/v/release/RogerThomas/jero" alt="Release"></a>
+  <a href="https://github.com/RogerThomas/jero/actions/workflows/main.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/RogerThomas/jero/main.yml?branch=main" alt="Build status"></a>
+  <a href="https://codecov.io/gh/RogerThomas/jero"><img src="https://codecov.io/gh/RogerThomas/jero/branch/main/graph/badge.svg" alt="codecov"></a>
+  <a href="https://img.shields.io/github/commit-activity/m/RogerThomas/jero"><img src="https://img.shields.io/github/commit-activity/m/RogerThomas/jero" alt="Commit activity"></a>
+  <a href="https://img.shields.io/github/license/RogerThomas/jero"><img src="https://img.shields.io/github/license/RogerThomas/jero" alt="License"></a>
+</p>
 
-- **GitHub**: <https://github.com/RogerThomas/jero/>
-- **Documentation**: <https://RogerThomas.github.io/jero/>
+**An opinionated, msgspec-first ASGI micro-framework for Python 3.14.**
+
+<a href="https://github.com/RogerThomas/jero/">GitHub</a> · <a href="https://RogerThomas.github.io/jero/">Documentation</a>
+
+</div>
 
 ## What is jero?
 
