@@ -23,7 +23,7 @@ class BlobPath(Struct):
 class BlobResource(Resource):
     """Resource exercising raw bytes in and custom response types out."""
 
-    async def create(self, content: bytes) -> JSONResponse:
+    async def create(self, content: bytes) -> JSONResponse[Echo]:
         """Echo a raw bytes body back as a JSON response with a custom header."""
         return JSONResponse(json=Echo(body=content.decode()), raw_headers={"x-kind": "echo"})
 
@@ -81,14 +81,14 @@ def test_snakecase_key_is_rejected_for_camel_field(client: TestClient) -> None:
 class RawRespResource(Resource):
     """Resource returning responses whose headers come from a RawHeaders bag."""
 
-    async def read_many(self) -> JSONResponse:
+    async def read_many(self) -> JSONResponse[Echo]:
         """Set response headers from a RawHeaders, preserving its as-sent casing."""
         return JSONResponse(
             json=Echo(body="ok"),
             raw_headers=RawHeaders([("X-Kind", "raw"), ("X-Trace-Id", "trace")]),
         )
 
-    async def create(self, content: bytes) -> JSONResponse:
+    async def create(self, content: bytes) -> JSONResponse[Echo]:
         """Forward a bag carrying a repeated header (the Set-Cookie case)."""
         return JSONResponse(
             json=Echo(body=content.decode()),
@@ -149,7 +149,7 @@ class RespHeaders(Struct):
 class TypedHeaderResource(Resource):
     """Resource returning typed headers, plus raw_headers for a repeated cookie."""
 
-    async def read_many(self) -> JSONResponse:
+    async def read_many(self) -> JSONResponse[Echo, RespHeaders]:
         """Set typed headers (Struct) and a raw Set-Cookie repeat together."""
         return JSONResponse(
             json=Echo(body="ok"),
@@ -191,3 +191,29 @@ def test_typed_and_raw_headers_both_emitted(typed_client: TestClient) -> None:
     assert resp.headers["x-trace-id"] == "trace"
     assert ("Set-Cookie", "a=1") in resp.multi_headers
     assert ("Set-Cookie", "b=2") in resp.multi_headers
+
+
+# --- status_code overrides the verb's default status ---
+
+
+class StatusResource(Resource):
+    """Resource overriding the default status code on its response."""
+
+    async def create(self, content: bytes) -> JSONResponse[Echo]:
+        """Return 202 instead of the create verb's default 201."""
+        return JSONResponse(json=Echo(body=content.decode()), status_code=202)
+
+
+class StatusApp(BaseApp):
+    """App wiring the status-override resource."""
+
+    async def _wire(self) -> None:
+        self._include_resource(StatusResource(), path="/status")
+
+
+def test_status_code_overrides_verb_default() -> None:
+    """A response's status_code overrides the verb's default (201 -> 202)."""
+    with TestClient(StatusApp()) as client:
+        resp = client.post("/status", content=b"ok")
+        assert resp.status_code == 202
+        assert resp.json() == {"body": "ok"}

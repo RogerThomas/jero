@@ -27,35 +27,38 @@ class ServerSentEvent[T: Struct | str]:
 
 
 @dataclass(kw_only=True, slots=True)
-class _StreamingResponse[T]:
+class _StreamingResponse[T, H: Struct | None = None]:
     """Shared base for the streaming response kinds. ``stream`` is an item source
     (a plain async iterable, or a one-yield lifecycle generator for setup/teardown);
-    ``status`` defaults to the verb's status when None.
+    ``status_code`` overrides the verb's default status when set.
 
     Headers work as on :class:`~jero.BaseResponse`: ``headers`` is a typed Struct
-    (the conventional case), ``raw_headers`` the escape hatch for exotic names,
-    casing, or repeats; both are emitted, typed first."""
+    (the header *type* is the parameter ``H``, defaulting to None), ``raw_headers``
+    the escape hatch for exotic names, casing, or repeats; both are emitted, typed
+    first."""
 
     stream: Source[T]
-    headers: Struct | None = None
+    headers: H | None = None
     raw_headers: RawHeaders | Mapping[str, str] | None = None
-    status: int | None = None
+    status_code: int | None = None
 
 
 @dataclass(kw_only=True, slots=True)
-class StreamingResponse(_StreamingResponse[bytes]):
+class StreamingResponse[H: Struct | None = None](_StreamingResponse[bytes, H]):
     """A response streamed as raw ``bytes`` chunks (``application/octet-stream`` by
-    default; override via ``headers``)."""
+    default; override via ``raw_headers``)."""
 
 
 @dataclass(kw_only=True, slots=True)
-class NDJSONStreamingResponse[T: Struct](_StreamingResponse[T]):
+class NDJSONStreamingResponse[T: Struct, H: Struct | None = None](_StreamingResponse[T, H]):
     """A response streamed as newline-delimited JSON — one ``T`` Struct per line
     (``application/x-ndjson``)."""
 
 
 @dataclass(kw_only=True, slots=True)
-class SSEResponse[T: Struct | str = str](_StreamingResponse[T | ServerSentEvent[T]]):
+class SSEResponse[T: Struct | str = str, H: Struct | None = None](
+    _StreamingResponse[T | ServerSentEvent[T], H]
+):
     """A Server-Sent Events response (``text/event-stream``, GET-only). Yield a
     Struct/str (sent as ``data``) or a :class:`ServerSentEvent`. ``keepalive``, if
     set, emits a comment ping every N idle seconds."""

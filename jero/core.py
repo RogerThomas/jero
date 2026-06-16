@@ -137,20 +137,21 @@ class HTTPError(Exception):
         self.detail = detail
 
 
-class BaseResponse(Struct, kw_only=True):
-    """Base for handler returns that control response headers.
+@dataclass(kw_only=True, slots=True)
+class BaseResponse[H: Struct | None = None]:
+    """Base for handler returns that control response headers and status.
 
-    Return one of the concrete subclasses; the status code is still the
-    verb's (201 for create, 200 otherwise). ``content-type`` defaults per kind
-    and ``content-length`` is managed by the framework (ignored if supplied).
+    Return one of the concrete subclasses. ``content-type`` defaults per kind and
+    ``content-length`` is managed by the framework (ignored if supplied).
 
-    Two ways to set headers, mirroring how a handler *receives* them:
+    The header *type* is a parameter ``H`` so it is known statically (and to the
+    OpenAPI spec), mirroring how a handler *receives* typed headers:
 
-    - ``headers`` — a typed Struct, for the conventional 99%. Field names map to
-      wire names by the inverse of the request mangle (``x_trace_id`` ->
-      ``x-trace-id``); scalar values are stringified (``bool`` as
-      ``true``/``false``), Struct/list values are JSON-encoded. None-valued
-      optional fields are omitted. This is what the OpenAPI spec is derived from.
+    - ``headers`` — a typed Struct (parameterize as ``JSONResponse[Body, Headers]``).
+      Field names map to wire names by the inverse of the request mangle
+      (``x_trace_id`` -> ``x-trace-id``); scalar values are stringified (``bool`` as
+      ``true``/``false``), Struct/list values are JSON-encoded; None-valued fields
+      are omitted. ``H`` defaults to ``None`` (no typed headers).
     - ``raw_headers`` — the escape hatch for exotic names: literal underscores,
       specific casing, or repeats (e.g. multiple ``Set-Cookie``). A plain mapping,
       or a ``RawHeaders`` (pass the request's straight through to forward it,
@@ -158,22 +159,28 @@ class BaseResponse(Struct, kw_only=True):
 
     When both are given, the typed ``headers`` are emitted first, then
     ``raw_headers`` is appended, so its repeats survive.
+
+    ``status_code`` overrides the verb's default status (201 for create, else 200)
+    when set.
     """
 
-    headers: Struct | None = None
+    headers: H | None = None
     raw_headers: RawHeaders | Mapping[str, str] | None = None
+    status_code: int | None = None
 
 
-class BytesResponse(BaseResponse):
+@dataclass(kw_only=True, slots=True)
+class BytesResponse[H: Struct | None = None](BaseResponse[H]):
     """Raw bytes; content-type defaults to application/octet-stream."""
 
     content: bytes
 
 
-class JSONResponse(BaseResponse):
+@dataclass(kw_only=True, slots=True)
+class JSONResponse[T: Struct, H: Struct | None = None](BaseResponse[H]):
     """A Struct encoded as JSON; content-type defaults to application/json."""
 
-    json: Struct
+    json: T
 
 
 class Resource:
@@ -228,7 +235,7 @@ class _StreamResult(Protocol):
     stream: Any
     headers: Struct | None
     raw_headers: RawHeaders | Mapping[str, str] | None
-    status: int | None
+    status_code: int | None
 
 
 def _allow_header(allowed: Sequence[_HttpMethod]) -> bytes:
@@ -609,6 +616,10 @@ def _return_kind(ann: object) -> _ReturnKind | None:  # noqa: C901
         return "stream-ndjson"
     if origin is SSEResponse:
         return "stream-sse"
+    if origin is BytesResponse:
+        return "bytes-response"
+    if origin is JSONResponse:
+        return "json-response"
     if (
         origin is list
         and len(args) == 1
@@ -974,13 +985,14 @@ class _BytesResponseSender:
     _status: int
 
     async def __call__(
-        self, scope: Scope, receive: Receive, send: Send, result: BytesResponse
+        self, scope: Scope, receive: Receive, send: Send, result: BytesResponse[Any]
     ) -> None:
         _ = (scope, receive)
+        status = result.status_code if result.status_code is not None else self._status
         headers = _response_headers(
             result.headers, result.raw_headers, b"application/octet-stream", len(result.content)
         )
-        await _send_payload(send, self._status, result.content, headers)
+        await _send_payload(send, status, result.content, headers)
 
 
 @dataclass(slots=True)
@@ -988,14 +1000,15 @@ class _JSONResponseSender:
     _status: int
 
     async def __call__(
-        self, scope: Scope, receive: Receive, send: Send, result: JSONResponse
+        self, scope: Scope, receive: Receive, send: Send, result: JSONResponse[Any, Any]
     ) -> None:
         _ = (scope, receive)
+        status = result.status_code if result.status_code is not None else self._status
         payload = msgspec_encoder.encode(result.json)
         headers = _response_headers(
             result.headers, result.raw_headers, b"application/json", len(payload)
         )
-        await _send_payload(send, self._status, payload, headers)
+        await _send_payload(send, status, payload, headers)
 
 
 @dataclass(slots=True)
@@ -1127,7 +1140,7 @@ class _StreamSender:
         send: Send,
         result: _StreamResult,
     ) -> None:
-        status = result.status if result.status is not None else self._status
+        status = result.status_code if result.status_code is not None else self._status
         headers = _stream_headers(result.headers, result.raw_headers, self._content_type)
         if scope["method"] == "HEAD":
             await send({"type": "http.response.start", "status": status, "headers": headers})
@@ -1225,7 +1238,7 @@ class _SSEStreamSender(_StreamSender):
         result: _StreamResult,
     ) -> None:
         sse = cast("SSEResponse[Any]", result)
-        status = result.status if result.status is not None else self._status
+        status = result.status_code if result.status_code is not None else self._status
         headers = _stream_headers(result.headers, result.raw_headers, self._content_type)
         if scope["method"] == "HEAD":
             await send({"type": "http.response.start", "status": status, "headers": headers})
