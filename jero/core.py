@@ -68,8 +68,8 @@ from urllib.parse import parse_qsl, unquote
 
 import multipart as _multipart  # pyright: ignore[reportMissingTypeStubs]
 from msgspec import DecodeError, Struct, ValidationError, convert
+from msgspec.json import Decoder, Encoder
 from msgspec.json import decode as json_decode
-from msgspec.json import encode as json_encode
 from msgspec.structs import fields as struct_fields
 
 from jero.forms import FilePart, FormPart, NoHeaders
@@ -79,6 +79,16 @@ from jero.streaming import (
     SSEResponse,
     StreamingResponse,
 )
+
+# Reusable msgspec codecs. Building these once and reusing them is faster than the
+# module-level ``msgspec.json.encode`` / ``decode`` helpers, which construct a
+# throwaway codec on every call. Exported via the jero API for app code to reuse too.
+# The Encoder reuses an internal buffer and is not safe for concurrent use across
+# threads — fine here, since jero runs on a single async event loop per worker. The
+# Decoder is untyped: typed request bodies are decoded against their own Struct at the
+# call site (an untyped decode + ``convert`` would weaken validation).
+msgspec_encoder = Encoder()
+msgspec_decoder = Decoder()
 
 type Scope = dict[str, Any]
 type Receive = Callable[[], Awaitable[dict[str, Any]]]
@@ -904,7 +914,7 @@ class _JSONResponseSender:
         self, scope: Scope, receive: Receive, send: Send, result: JSONResponse
     ) -> None:
         _ = (scope, receive)
-        payload = json_encode(result.json)
+        payload = msgspec_encoder.encode(result.json)
         headers = _response_headers(result.headers, b"application/json", len(payload))
         await _send_payload(send, self._status, payload, headers)
 
@@ -915,7 +925,7 @@ class _JSONSender:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send, result: object) -> None:
         _ = (scope, receive)
-        await _send_json(send, self._status, json_encode(result))
+        await _send_json(send, self._status, msgspec_encoder.encode(result))
 
 
 def _stream_headers(
@@ -1011,7 +1021,7 @@ async def _finish_lifecycle[T](lifecycle: AsyncIterator[AsyncIterable[T]] | None
 def _sse_data_lines(data: Struct | str) -> list[str]:
     if isinstance(data, str):
         return data.splitlines() or [""]
-    return json_encode(data).decode().splitlines()
+    return msgspec_encoder.encode(data).decode().splitlines()
 
 
 def _encode_sse(item: Struct | str | ServerSentEvent[Any]) -> bytes:
@@ -1042,9 +1052,9 @@ class _StreamSender:
 
     async def _send_setup_error(self, send: Send, exc: Exception) -> None:
         if isinstance(exc, HTTPError):
-            await _send_json(send, exc.status, json_encode({"error": exc.detail}))
+            await _send_json(send, exc.status, msgspec_encoder.encode({"error": exc.detail}))
             return
-        await _send_json(send, 500, json_encode({"error": "internal server error"}))
+        await _send_json(send, 500, msgspec_encoder.encode({"error": "internal server error"}))
 
     async def __call__(
         self,
@@ -1090,7 +1100,7 @@ class _NDJSONStreamSender(_StreamSender):
     def _chunk(self, item: object) -> bytes:
         if not isinstance(item, Struct):
             raise TypeError("NDJSONStreamingResponse items must be msgspec.Struct instances")
-        return json_encode(item) + b"\n"
+        return msgspec_encoder.encode(item) + b"\n"
 
 
 @dataclass(slots=True)
@@ -1235,10 +1245,10 @@ class _Route:
             kwargs = await self._bind(scope, receive, path_values)
             result = await self._fn(**kwargs) if self._is_async else self._fn(**kwargs)
         except HTTPError as exc:
-            await _send_json(send, exc.status, json_encode({"error": exc.detail}))
+            await _send_json(send, exc.status, msgspec_encoder.encode({"error": exc.detail}))
             return
         except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-            await _send_json(send, 500, json_encode({"error": "internal server error"}))
+            await _send_json(send, 500, msgspec_encoder.encode({"error": "internal server error"}))
             return
         await self._send_result(scope, receive, send, result)
 

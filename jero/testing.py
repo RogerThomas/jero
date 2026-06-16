@@ -25,10 +25,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
 
-from msgspec.json import decode as json_decode
-from msgspec.json import encode as json_encode
-
-from jero.core import BaseFactory, instantiate_factory
+from jero.core import BaseFactory, instantiate_factory, msgspec_decoder, msgspec_encoder
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Sequence
@@ -58,7 +55,7 @@ class TestResponse:
 
     def json(self) -> Any:
         """The response body decoded as JSON."""
-        return json_decode(self.content)
+        return msgspec_decoder.decode(self.content)
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,7 +169,7 @@ class _StreamSession:
                 data_lines.append(line[6:])
         data_text = "\n".join(data_lines)
         try:
-            data: Any = json_decode(data_text.encode())
+            data: Any = msgspec_decoder.decode(data_text.encode())
         except ValueError:
             data = data_text
         return TestSSEEvent(data=data, event=event, id=event_id, retry=retry)
@@ -180,7 +177,7 @@ class _StreamSession:
     def _decode(self, raw: bytes) -> Any:
         content_type = self.headers["content-type"].split(";")[0]
         if content_type == "application/x-ndjson":
-            return json_decode(raw.rstrip(b"\n"))
+            return msgspec_decoder.decode(raw.rstrip(b"\n"))
         if content_type == "text/event-stream":
             return self._decode_sse(raw)
         return raw
@@ -348,7 +345,7 @@ class TestClient:
         body = b""
         wire_headers = {k.lower(): v for k, v in (headers or {}).items()}
         if json is not None:
-            body = json_encode(json)
+            body = msgspec_encoder.encode(json)
             wire_headers.setdefault("content-type", "application/json")
         elif content is not None:
             body = content
@@ -388,7 +385,7 @@ class TestClient:
         body = b""
         wire_headers = {k.lower(): v for k, v in (headers or {}).items()}
         if json is not None:
-            body = json_encode(json)
+            body = msgspec_encoder.encode(json)
             wire_headers.setdefault("content-type", "application/json")
         elif content is not None:
             body = content

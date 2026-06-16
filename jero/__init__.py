@@ -10,6 +10,8 @@ from jero.core import (
     JSONResponse,
     Resource,
     WiringError,
+    msgspec_decoder,
+    msgspec_encoder,
 )
 from jero.forms import FilePart, FormPart, NoHeaders
 from jero.streaming import NDJSONStreamingResponse, ServerSentEvent, SSEResponse, StreamingResponse
@@ -36,4 +38,6 @@ __all__ = [
     "TestResponse",
     "TestSSEEvent",
     "WiringError",
+    "msgspec_decoder",
+    "msgspec_encoder",
 ]
