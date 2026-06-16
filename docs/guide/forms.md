@@ -9,7 +9,7 @@ from typing import Literal
 
 from msgspec import Struct
 
-from jero import Endpoint, FilePart, FormPart
+from jero import BaseApp, Endpoint, FilePart, FormPart
 
 
 class JobConfig(Struct):
@@ -25,11 +25,24 @@ class CreateJob(Struct):
     note: FormPart[str] | None = None                   # optional part with metadata
 
 
+class JobAccepted(Struct):
+    filename: str
+    size: int
+
+
 class UploadEndpoint(Endpoint):
     async def post(self, form: CreateJob) -> JobAccepted:
-        text = form.config.dpi
+        dpi = form.config.dpi
         upload = form.document            # a FilePart
         return JobAccepted(filename=upload.filename, size=len(upload.data))
+
+
+class App(BaseApp):
+    async def _wire(self) -> None:
+        self._include_endpoint(UploadEndpoint(), path="/jobs")
+
+
+app = App()
 ```
 
 ## Field types

@@ -34,11 +34,17 @@ When you need to set headers or override the status, return a wrapper. They're
 generic so the body and header **types are preserved**, not erased:
 
 ```python
-from jero import JSONResponse, BytesResponse
+from msgspec import Struct
+
+from jero import BaseApp, JSONResponse, Resource
 
 
 class Widget(Struct):
     id: str
+
+
+class WidgetPath(Struct):
+    widget_id: str
 
 
 class WidgetHeaders(Struct):
@@ -52,6 +58,14 @@ class WidgetResource(Resource):
             json=Widget(id=path.widget_id),
             headers=WidgetHeaders(x_cache="hit", x_rate_limit=100),
         )
+
+
+class App(BaseApp):
+    async def _wire(self) -> None:
+        self._include_resource(WidgetResource(), path="/widgets")
+
+
+app = App()
 ```
 
 - `JSONResponse[T: Struct, H: Struct | None = None]` — `json: T`, encoded with the

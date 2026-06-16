@@ -6,6 +6,10 @@ An opinionated, msgspec-first ASGI web framework (Python 3.14). The goal is a
 framework that is **both** very fast **and** a joy to build on — achieved by
 being aggressively opinionated rather than flexible.
 
+> **Naming:** always write the name lowercase — `jero`, never `Jero` — even at the
+> start of a sentence (à la `pytest`/`uv`/`ruff`). Capitalization is reserved for the
+> logo wordmark only.
+
 ## Design philosophy (three pillars, all non-negotiable)
 
 1. **Speed.** All introspection happens once, at wiring time; the per-request

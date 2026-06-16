@@ -19,7 +19,7 @@ incrementally:
 ```python
 from collections.abc import AsyncIterator
 
-from jero import Endpoint, NDJSONStreamingResponse
+from jero import BaseApp, Endpoint, NDJSONStreamingResponse
 
 
 class Movie(Struct):
@@ -33,6 +33,14 @@ class MoviesEndpoint(Endpoint):
 
     async def get(self) -> NDJSONStreamingResponse[Movie]:
         return NDJSONStreamingResponse(stream=self._movies())
+
+
+class App(BaseApp):
+    async def _wire(self) -> None:
+        self._include_endpoint(MoviesEndpoint(), path="/movies")
+
+
+app = App()
 ```
 
 ## Server-Sent Events
@@ -41,7 +49,7 @@ class MoviesEndpoint(Endpoint):
 `ServerSentEvent` to control the `event` / `id` / `retry` fields:
 
 ```python
-from jero import SSEResponse, ServerSentEvent
+from jero import BaseApp, Endpoint, SSEResponse, ServerSentEvent
 
 
 class EventsEndpoint(Endpoint):
@@ -51,6 +59,14 @@ class EventsEndpoint(Endpoint):
 
     async def get(self) -> SSEResponse[Movie]:
         return SSEResponse(stream=self._events())
+
+
+class App(BaseApp):
+    async def _wire(self) -> None:
+        self._include_endpoint(EventsEndpoint(), path="/events")
+
+
+app = App()
 ```
 
 ### Keepalive

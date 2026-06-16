@@ -19,6 +19,11 @@ learns *which* sources a handler wants, and the request path just fills them in.
 rejected on bodyless verbs (`GET`, `DELETE`). Everything else can combine freely.
 
 ```python
+from msgspec import Struct
+
+from jero import BaseApp, Resource
+
+
 class WidgetPath(Struct):
     widget_id: str
 
@@ -29,9 +34,17 @@ class Page(Struct):
 
 
 class WidgetResource(Resource):
-    # PUT /widgets/{widget_id}?dry_run=...
+    # PUT /widgets/{widget_id}?limit=...&offset=...
     async def update(self, path: WidgetPath, params: Page, json: WidgetIn) -> Widget:
         ...
+
+
+class App(BaseApp):
+    async def _wire(self) -> None:
+        self._include_resource(WidgetResource(), path="/widgets")
+
+
+app = App()
 ```
 
 ## JSON body — `json`

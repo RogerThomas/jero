@@ -59,12 +59,26 @@ An `Endpoint` is a class with bare verb methods (`get` / `post` / `put` / `patch
 returns 200, and the path is exact. A different path is a different `Endpoint`.
 
 ```python
-from jero import Endpoint
+from msgspec import Struct
+
+from jero import BaseApp, Endpoint
+
+
+class Health(Struct):
+    status: str
 
 
 class HealthEndpoint(Endpoint):
     async def get(self) -> Health:        # GET /healthz
         return Health(status="ok")
+
+
+class App(BaseApp):
+    async def _wire(self) -> None:
+        self._include_endpoint(HealthEndpoint(), path="/healthz")
+
+
+app = App()
 ```
 
 Use endpoints for health checks, webhooks, and actions that aren't a resource.
