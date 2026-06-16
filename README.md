@@ -59,11 +59,15 @@ request/response contract, and they're verified at startup.
 
 ## Why jero?
 
-|   |   |
-| --- | --- |
-| ⚡&nbsp;**Fast** | Co-leads the fastest Python ASGI frameworks — within a few percent of Go on the hot path (see [Performance](#performance)). All introspection happens once, at startup; the request path is just dict lookup → decode → call → encode. |
-| 🎯&nbsp;**Opinionated** | One blessed way to do each thing, so you can't get it wrong. Contracts fail loud at startup with a precise `WiringError`, never quietly at runtime. |
-| 🔒&nbsp;**Typed** | Fully static under pyright-strict, leaning hard into modern Python typing — PEP 695 generics (`JSONResponse[Body, Headers]`, `BaseApp[Factory]`), bounded type-params, generic inheritance, `Protocol`s. A handler's signature *is* its schema, and the source of the coming OpenAPI spec. |
+- ⚡ **Fast** — co-leads the fastest Python ASGI frameworks, within a few percent of Go
+  on the hot path (see [Performance](#performance)). All introspection happens once, at
+  startup; the request path is just dict lookup → decode → call → encode.
+- 🎯 **Opinionated** — one blessed way to do each thing, so you can't get it wrong.
+  Contracts fail loud at startup with a precise `WiringError`, never quietly at runtime.
+- 🔒 **Typed** — fully static under pyright-strict, leaning hard into modern Python
+  typing: PEP 695 generics (`JSONResponse[Body, Headers]`, `BaseApp[Factory]`), bounded
+  type-params, generic inheritance, `Protocol`s. A handler's signature *is* its schema —
+  and the source of the coming OpenAPI spec.
 
 No DI container, either: dependencies are hand-wired in `_wire`; the framework adds
 only lifecycle — the one thing plain Python doesn't give you.
@@ -159,8 +163,8 @@ class Factory(BaseFactory):
 
 class App(BaseApp[Factory]):
     async def _wire(self) -> None:
-        widgets = await self._factory.create_widget_service()
-        self._include_resource(WidgetResource(widgets), path="/widgets")
+        widget_service = await self._factory.create_widget_service()
+        self._include_resource(WidgetResource(widget_service), path="/widgets")
 
 
 app = App()
