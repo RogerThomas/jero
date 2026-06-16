@@ -57,7 +57,6 @@ from collections.abc import (
     AsyncIterator,
     Awaitable,
     Callable,
-    Iterable,
     Mapping,
     Sequence,
 )
@@ -74,7 +73,6 @@ from types import NoneType, get_original_bases
 from typing import Any, ClassVar, Literal, Protocol, cast, get_args, get_origin, get_type_hints
 from urllib.parse import parse_qsl, unquote
 
-import multipart as _multipart  # pyright: ignore[reportMissingTypeStubs]
 from msgspec import DecodeError, Struct, ValidationError, convert
 from msgspec.json import Decoder, Encoder
 from msgspec.json import decode as json_decode
@@ -82,6 +80,7 @@ from msgspec.structs import fields as struct_fields
 
 from jero.forms import FilePart, FormPart, NoHeaders
 from jero.headers import RawHeaders
+from jero.multipart import MultipartError, MultipartParser, parse_options_header
 from jero.streaming import (
     NDJSONStreamingResponse,
     ServerSentEvent,
@@ -113,7 +112,6 @@ type _DynamicRoutes = dict[tuple[_HttpMethod, int], list[_Pattern]]
 # (see the METHODS tables); HEAD/OPTIONS are synthesized for the Allow header.
 type _HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
 type _AllowedMethods = dict[str, list[_HttpMethod]]
-type _MultipartOptionsParser = Callable[[str], tuple[str, dict[str, str]]]
 # How a handler's return value is encoded onto the wire; see _return_kind / _result_sender.
 type _ReturnKind = Literal[
     "json",
@@ -235,30 +233,6 @@ class _StreamResult(Protocol):
     stream: Any
     headers: RawHeaders | Mapping[str, str] | None
     status: int | None
-
-
-class _MultipartPart(Protocol):
-    name: str | None
-    filename: str | None
-    headerlist: list[tuple[str, str]]
-    raw: bytes
-
-
-class _MultipartParserFactory(Protocol):
-    def __call__(
-        self, stream: BytesIO, boundary: str, *, strict: bool
-    ) -> Iterable[_MultipartPart]: ...
-
-
-_parse_options_header = cast(
-    "_MultipartOptionsParser",
-    _multipart.parse_options_header,  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
-)
-_MultipartParser = cast("_MultipartParserFactory", _multipart.MultipartParser)
-_MultipartError = cast(
-    "type[Exception]",
-    _multipart.MultipartError,  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
-)
 
 
 def _allow_header(allowed: Sequence[_HttpMethod]) -> bytes:
@@ -487,7 +461,7 @@ def _content_type_header(headers: dict[str, str]) -> tuple[str, str] | None:
     value = headers.get("content_type")
     if value is None:
         return None
-    media_type, options = _parse_options_header(value)
+    media_type, options = parse_options_header(value)
     boundary = options.get("boundary")
     if boundary is None:
         return media_type, ""
@@ -512,7 +486,7 @@ def _parse_form_parts(body: bytes, raw_headers: dict[str, str]) -> dict[str, lis
 
     parts: dict[str, list[_Part]] = defaultdict(list)
     try:
-        for raw_part in _MultipartParser(BytesIO(body), parsed[1], strict=True):
+        for raw_part in MultipartParser(BytesIO(body), parsed[1], strict=True):
             if raw_part.name is None:
                 raise HTTPError(400, "malformed multipart body")
             headers = _part_headers(raw_part.headerlist)
@@ -525,7 +499,7 @@ def _parse_form_parts(body: bytes, raw_headers: dict[str, str]) -> dict[str, lis
                     body=raw_part.raw,
                 )
             )
-    except _MultipartError as exc:
+    except MultipartError as exc:
         raise HTTPError(400, str(exc)) from None
     return parts
 
