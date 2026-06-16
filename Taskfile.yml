@@ -48,7 +48,7 @@ tasks:
 
   prek:
     desc: Run the pre-commit hooks
-    cmd: uv run prek {{.CLI_ARGS}}
+    cmd: uv run prek run {{default "-a" .CLI_ARGS}}
 
   clean-build:
     desc: Remove build artifacts
