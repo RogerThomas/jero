@@ -5,7 +5,7 @@
 <p>
   <a href="https://pypi.org/project/jero/"><img src="https://img.shields.io/pypi/v/jero" alt="PyPI"></a>
   <a href="https://github.com/RogerThomas/jero/actions/workflows/main.yml?query=branch%3Amain"><img src="https://github.com/RogerThomas/jero/actions/workflows/main.yml/badge.svg?branch=main" alt="Build status"></a>
-  <a href="https://codecov.io/gh/RogerThomas/jero"><img src="https://codecov.io/gh/RogerThomas/jero/branch/main/graph/badge.svg" alt="codecov"></a>
+  <a href="https://codecov.io/gh/RogerThomas/jero"><img src="https://img.shields.io/codecov/c/github/RogerThomas/jero/main" alt="codecov"></a>
   <a href="https://pypi.org/project/jero/"><img src="https://img.shields.io/pypi/pyversions/jero" alt="Python versions"></a>
   <a href="https://github.com/RogerThomas/jero/blob/main/LICENSE"><img src="https://img.shields.io/pypi/l/jero" alt="License"></a>
 </p>
@@ -59,15 +59,20 @@ request/response contract, and they're verified at startup.
 
 ## Why jero?
 
-- ⚡ **Fast** — co-leads the fastest Python ASGI frameworks, within a few percent of Go
-  on the hot path (see [Performance](#performance)). All introspection happens once, at
-  startup; the request path is just dict lookup → decode → call → encode.
-- 🎯 **Opinionated** — one blessed way to do each thing, so you can't get it wrong.
-  Contracts fail loud at startup with a precise `WiringError`, never quietly at runtime.
-- 🔒 **Typed** — fully static under pyright-strict, leaning hard into modern Python
-  typing: PEP 695 generics (`JSONResponse[Body, Headers]`, `BaseApp[Factory]`), bounded
-  type-params, generic inheritance, `Protocol`s. A handler's signature *is* its schema —
-  and the source of the coming OpenAPI spec.
+<table>
+<tr>
+<td>⚡&nbsp;<strong>Fast</strong></td>
+<td>Co-leads the fastest Python ASGI frameworks — within a few percent of Go on the hot path (see <a href="#performance">Performance</a>). All introspection happens once, at startup; the request path is just dict lookup → decode → call → encode.</td>
+</tr>
+<tr>
+<td>🎯&nbsp;<strong>Opinionated</strong></td>
+<td>One blessed way to do each thing, so you can't get it wrong. Contracts fail loud at startup with a precise <code>WiringError</code>, never quietly at runtime.</td>
+</tr>
+<tr>
+<td>🔒&nbsp;<strong>Typed</strong></td>
+<td>Fully static under pyright-strict, leaning hard into modern Python typing — PEP 695 generics (<code>JSONResponse[Body, Headers]</code>, <code>BaseApp[Factory]</code>), bounded type-params, generic inheritance, <code>Protocol</code>s. A handler's signature <em>is</em> its schema, and the source of the coming OpenAPI spec.</td>
+</tr>
+</table>
 
 No DI container, either: dependencies are hand-wired in `_wire`; the framework adds
 only lifecycle — the one thing plain Python doesn't give you.

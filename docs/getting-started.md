@@ -5,8 +5,6 @@ jero targets **Python 3.14** and runs under any ASGI server.
 ## Install
 
 ```bash
-pip install jero
-# or
 uv add jero
 ```
 
