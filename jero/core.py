@@ -65,10 +65,10 @@ from typing import Any, ClassVar, Literal, Protocol, cast, get_args, get_origin,
 from urllib.parse import parse_qsl, unquote
 
 from msgspec import DecodeError, Struct, ValidationError, convert
-from msgspec.json import Decoder, Encoder
 from msgspec.json import decode as json_decode
 from msgspec.structs import fields as struct_fields
 
+from jero.codecs import msgspec_encoder
 from jero.forms import FilePart, FormPart, NoHeaders
 from jero.headers import RawHeaders
 from jero.multipart import MultipartError, MultipartParser, parse_options_header
@@ -77,17 +77,8 @@ from jero.streaming import (
     ServerSentEvent,
     SSEResponse,
     StreamingResponse,
+    encode_sse,
 )
-
-# Reusable msgspec codecs. Building these once and reusing them is faster than the
-# module-level ``msgspec.json.encode`` / ``decode`` helpers, which construct a
-# throwaway codec on every call. Exported via the jero API for app code to reuse too.
-# The Encoder reuses an internal buffer and is not safe for concurrent use across
-# threads — fine here, since jero runs on a single async event loop per worker. The
-# Decoder is untyped: typed request bodies are decoded against their own Struct at the
-# call site (an untyped decode + ``convert`` would weaken validation).
-msgspec_encoder = Encoder()
-msgspec_decoder = Decoder()
 
 type Scope = dict[str, Any]
 type Receive = Callable[[], Awaitable[dict[str, Any]]]
@@ -150,14 +141,27 @@ class BaseResponse(Struct, kw_only=True):
     """Base for handler returns that control response headers.
 
     Return one of the concrete subclasses; the status code is still the
-    verb's (201 for create, 200 otherwise). ``content-length`` is managed
-    by the framework and ignored if supplied in ``headers``.
+    verb's (201 for create, 200 otherwise). ``content-type`` defaults per kind
+    and ``content-length`` is managed by the framework (ignored if supplied).
 
-    ``headers`` accepts a plain mapping (the common case) or a ``RawHeaders`` — pass
-    the request's ``RawHeaders`` straight through to forward it, repeats and all.
+    Two ways to set headers, mirroring how a handler *receives* them:
+
+    - ``headers`` — a typed Struct, for the conventional 99%. Field names map to
+      wire names by the inverse of the request mangle (``x_trace_id`` ->
+      ``x-trace-id``); scalar values are stringified (``bool`` as
+      ``true``/``false``), Struct/list values are JSON-encoded. None-valued
+      optional fields are omitted. This is what the OpenAPI spec is derived from.
+    - ``raw_headers`` — the escape hatch for exotic names: literal underscores,
+      specific casing, or repeats (e.g. multiple ``Set-Cookie``). A plain mapping,
+      or a ``RawHeaders`` (pass the request's straight through to forward it,
+      repeats and all).
+
+    When both are given, the typed ``headers`` are emitted first, then
+    ``raw_headers`` is appended, so its repeats survive.
     """
 
-    headers: RawHeaders | Mapping[str, str] | None = None
+    headers: Struct | None = None
+    raw_headers: RawHeaders | Mapping[str, str] | None = None
 
 
 class BytesResponse(BaseResponse):
@@ -222,7 +226,8 @@ class Auth[THeaders: Struct, TUser: Struct](Protocol):
 
 class _StreamResult(Protocol):
     stream: Any
-    headers: RawHeaders | Mapping[str, str] | None
+    headers: Struct | None
+    raw_headers: RawHeaders | Mapping[str, str] | None
     status: int | None
 
 
@@ -879,26 +884,62 @@ class _Binder:
 type _Sender = Callable[[Scope, Receive, Send, Any], Awaitable[None]]
 
 
-def _user_header_items(
-    user_headers: RawHeaders | Mapping[str, str] | None,
-) -> list[tuple[str, str]]:
-    """The user's response header pairs. A RawHeaders forwards every pair (repeats
-    included, e.g. Set-Cookie); a plain mapping yields its items."""
-    if user_headers is None:
+def _encode_header_value(value: object) -> str:
+    """One header value as a string: scalars plain (``bool`` as ``true``/``false``),
+    Struct/list/other values JSON-encoded."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, Enum):
+        return _encode_header_value(value.value)
+    return msgspec_encoder.encode(value).decode()
+
+
+def _typed_header_items(headers: Struct | None) -> list[tuple[str, str]]:
+    """A typed header Struct as wire pairs: field name inverse-mangled
+    (``x_trace_id`` -> ``x-trace-id``), value encoded. None-valued fields omitted."""
+    if headers is None:
         return []
-    if isinstance(user_headers, RawHeaders):
-        return user_headers.multi_items()
-    return list(user_headers.items())
+    items: list[tuple[str, str]] = []
+    for field in struct_fields(type(headers)):
+        value = getattr(headers, field.name)
+        if value is None:
+            continue
+        items.append((field.name.replace("_", "-"), _encode_header_value(value)))
+    return items
+
+
+def _user_header_items(
+    raw_headers: RawHeaders | Mapping[str, str] | None,
+) -> list[tuple[str, str]]:
+    """The raw_headers escape-hatch pairs. A RawHeaders forwards every pair (repeats
+    included, e.g. Set-Cookie); a plain mapping yields its items."""
+    if raw_headers is None:
+        return []
+    if isinstance(raw_headers, RawHeaders):
+        return raw_headers.multi_items()
+    return list(raw_headers.items())
+
+
+def _header_items(
+    typed: Struct | None, raw: RawHeaders | Mapping[str, str] | None
+) -> list[tuple[str, str]]:
+    """Combined response header pairs: typed Struct first, then raw_headers appended."""
+    return _typed_header_items(typed) + _user_header_items(raw)
 
 
 def _response_headers(
-    user_headers: RawHeaders | Mapping[str, str] | None,
+    typed: Struct | None,
+    raw: RawHeaders | Mapping[str, str] | None,
     default_content_type: bytes,
     payload_length: int,
 ) -> list[tuple[bytes, bytes]]:
     headers: list[tuple[bytes, bytes]] = []
     has_content_type = False
-    for key, value in _user_header_items(user_headers):
+    for key, value in _header_items(typed, raw):
         lower = key.lower()
         if lower == "content-length":
             continue
@@ -924,7 +965,7 @@ class _BytesSender:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send, result: bytes) -> None:
         _ = (scope, receive)
-        headers = _response_headers(None, b"application/octet-stream", len(result))
+        headers = _response_headers(None, None, b"application/octet-stream", len(result))
         await _send_payload(send, self._status, result, headers)
 
 
@@ -937,7 +978,7 @@ class _BytesResponseSender:
     ) -> None:
         _ = (scope, receive)
         headers = _response_headers(
-            result.headers, b"application/octet-stream", len(result.content)
+            result.headers, result.raw_headers, b"application/octet-stream", len(result.content)
         )
         await _send_payload(send, self._status, result.content, headers)
 
@@ -951,7 +992,9 @@ class _JSONResponseSender:
     ) -> None:
         _ = (scope, receive)
         payload = msgspec_encoder.encode(result.json)
-        headers = _response_headers(result.headers, b"application/json", len(payload))
+        headers = _response_headers(
+            result.headers, result.raw_headers, b"application/json", len(payload)
+        )
         await _send_payload(send, self._status, payload, headers)
 
 
@@ -965,12 +1008,13 @@ class _JSONSender:
 
 
 def _stream_headers(
-    user_headers: RawHeaders | Mapping[str, str] | None,
+    typed: Struct | None,
+    raw: RawHeaders | Mapping[str, str] | None,
     default_content_type: bytes,
 ) -> list[tuple[bytes, bytes]]:
     headers: list[tuple[bytes, bytes]] = []
     has_content_type = False
-    for key, value in _user_header_items(user_headers):
+    for key, value in _header_items(typed, raw):
         lower = key.lower()
         if lower == "content-length":
             continue
@@ -1057,25 +1101,6 @@ async def _finish_lifecycle[T](lifecycle: AsyncIterator[AsyncIterable[T]] | None
     raise RuntimeError("streaming lifecycle must yield exactly one stream")
 
 
-def _sse_data_lines(data: Struct | str) -> list[str]:
-    if isinstance(data, str):
-        return data.splitlines() or [""]
-    return msgspec_encoder.encode(data).decode().splitlines()
-
-
-def _encode_sse(item: Struct | str | ServerSentEvent[Any]) -> bytes:
-    event = item if isinstance(item, ServerSentEvent) else ServerSentEvent(data=item)
-    lines: list[str] = []
-    if event.event is not None:
-        lines.append(f"event: {event.event}")
-    if event.id is not None:
-        lines.append(f"id: {event.id}")
-    if event.retry is not None:
-        lines.append(f"retry: {event.retry}")
-    lines += [f"data: {line}" for line in _sse_data_lines(event.data)]
-    return ("\n".join(lines) + "\n\n").encode()
-
-
 @dataclass(slots=True)
 class _StreamSender:
     _status: int
@@ -1103,7 +1128,7 @@ class _StreamSender:
         result: _StreamResult,
     ) -> None:
         status = result.status if result.status is not None else self._status
-        headers = _stream_headers(result.headers, self._content_type)
+        headers = _stream_headers(result.headers, result.raw_headers, self._content_type)
         if scope["method"] == "HEAD":
             await send({"type": "http.response.start", "status": status, "headers": headers})
             await send({"type": "http.response.body", "body": b""})
@@ -1190,7 +1215,7 @@ class _SSEStreamSender(_StreamSender):
         if not isinstance(item, (Struct, ServerSentEvent, str)):
             raise TypeError("SSEResponse items must be Struct, str, or ServerSentEvent")
         event = cast("Struct | ServerSentEvent[Any] | str", item)
-        return _encode_sse(event)
+        return encode_sse(event)
 
     async def __call__(
         self,
@@ -1201,7 +1226,7 @@ class _SSEStreamSender(_StreamSender):
     ) -> None:
         sse = cast("SSEResponse[Any]", result)
         status = result.status if result.status is not None else self._status
-        headers = _stream_headers(result.headers, self._content_type)
+        headers = _stream_headers(result.headers, result.raw_headers, self._content_type)
         if scope["method"] == "HEAD":
             await send({"type": "http.response.start", "status": status, "headers": headers})
             await send({"type": "http.response.body", "body": b""})

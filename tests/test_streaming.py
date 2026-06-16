@@ -54,7 +54,7 @@ class BytesEndpoint(Endpoint):
 
     async def get(self) -> StreamingResponse:
         """Return a byte stream with a CSV content type."""
-        return StreamingResponse(stream=self._chunks(), headers={"content-type": "text/csv"})
+        return StreamingResponse(stream=self._chunks(), raw_headers={"content-type": "text/csv"})
 
 
 class SSEEndpoint(Endpoint):

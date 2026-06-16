@@ -24,7 +24,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
 
-from jero.core import BaseFactory, instantiate_factory, msgspec_decoder, msgspec_encoder
+from jero.codecs import msgspec_decoder, msgspec_encoder
+from jero.core import BaseFactory, instantiate_factory
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Sequence

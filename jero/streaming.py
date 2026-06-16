@@ -2,9 +2,11 @@
 
 from collections.abc import AsyncGenerator, AsyncIterable, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from msgspec import Struct
 
+from jero.codecs import msgspec_encoder
 from jero.headers import (
     RawHeaders,  # noqa: TC001  # runtime-evaluated annotation (no future import)
 )
@@ -28,10 +30,15 @@ class ServerSentEvent[T: Struct | str]:
 class _StreamingResponse[T]:
     """Shared base for the streaming response kinds. ``stream`` is an item source
     (a plain async iterable, or a one-yield lifecycle generator for setup/teardown);
-    ``status`` defaults to the verb's status when None."""
+    ``status`` defaults to the verb's status when None.
+
+    Headers work as on :class:`~jero.BaseResponse`: ``headers`` is a typed Struct
+    (the conventional case), ``raw_headers`` the escape hatch for exotic names,
+    casing, or repeats; both are emitted, typed first."""
 
     stream: Source[T]
-    headers: RawHeaders | Mapping[str, str] | None = None
+    headers: Struct | None = None
+    raw_headers: RawHeaders | Mapping[str, str] | None = None
     status: int | None = None
 
 
@@ -54,3 +61,25 @@ class SSEResponse[T: Struct | str = str](_StreamingResponse[T | ServerSentEvent[
     set, emits a comment ping every N idle seconds."""
 
     keepalive: float | None = None
+
+
+def _sse_data_lines(data: Struct | str) -> list[str]:
+    if isinstance(data, str):
+        return data.splitlines() or [""]
+    return msgspec_encoder.encode(data).decode().splitlines()
+
+
+# Un-underscored: the SSE wire-format encoder lives with ServerSentEvent but is
+# called by core's stream sender — it deliberately crosses the module boundary.
+def encode_sse(item: Struct | str | ServerSentEvent[Any]) -> bytes:
+    """Encode one item as an SSE ``text/event-stream`` frame (event/id/retry/data)."""
+    event = item if isinstance(item, ServerSentEvent) else ServerSentEvent(data=item)
+    lines: list[str] = []
+    if event.event is not None:
+        lines.append(f"event: {event.event}")
+    if event.id is not None:
+        lines.append(f"id: {event.id}")
+    if event.retry is not None:
+        lines.append(f"retry: {event.retry}")
+    lines += [f"data: {line}" for line in _sse_data_lines(event.data)]
+    return ("\n".join(lines) + "\n\n").encode()

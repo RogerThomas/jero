@@ -25,11 +25,11 @@ class BlobResource(Resource):
 
     async def create(self, content: bytes) -> JSONResponse:
         """Echo a raw bytes body back as a JSON response with a custom header."""
-        return JSONResponse(json=Echo(body=content.decode()), headers={"x-kind": "echo"})
+        return JSONResponse(json=Echo(body=content.decode()), raw_headers={"x-kind": "echo"})
 
     async def read_one(self, path: BlobPath) -> BytesResponse:
         """Return the path id as raw bytes with a custom header."""
-        return BytesResponse(content=path.id.encode(), headers={"x-id": path.id})
+        return BytesResponse(content=path.id.encode(), raw_headers={"x-id": path.id})
 
 
 class BlobApp(BaseApp):
@@ -85,14 +85,14 @@ class RawRespResource(Resource):
         """Set response headers from a RawHeaders, preserving its as-sent casing."""
         return JSONResponse(
             json=Echo(body="ok"),
-            headers=RawHeaders([("X-Kind", "raw"), ("X-Trace-Id", "trace")]),
+            raw_headers=RawHeaders([("X-Kind", "raw"), ("X-Trace-Id", "trace")]),
         )
 
     async def create(self, content: bytes) -> JSONResponse:
         """Forward a bag carrying a repeated header (the Set-Cookie case)."""
         return JSONResponse(
             json=Echo(body=content.decode()),
-            headers=RawHeaders([("Set-Cookie", "first"), ("Set-Cookie", "second")]),
+            raw_headers=RawHeaders([("Set-Cookie", "first"), ("Set-Cookie", "second")]),
         )
 
 
@@ -125,3 +125,69 @@ def test_response_forwards_repeated_headers_from_raw_bag() -> None:
         assert resp.status_code == 201
         assert ("Set-Cookie", "first") in resp.multi_headers
         assert ("Set-Cookie", "second") in resp.multi_headers
+
+
+# --- Typed response headers: a Struct, mirroring how headers are received ---
+
+
+class Meta(Struct):
+    """A nested value to exercise Struct-valued (JSON-encoded) headers."""
+
+    region: str
+
+
+class RespHeaders(Struct):
+    """Typed response headers: field names inverse-mangle to wire names."""
+
+    x_trace_id: str
+    x_rate_limit: int
+    x_cached: bool
+    x_meta: Meta
+    x_absent: str | None = None
+
+
+class TypedHeaderResource(Resource):
+    """Resource returning typed headers, plus raw_headers for a repeated cookie."""
+
+    async def read_many(self) -> JSONResponse:
+        """Set typed headers (Struct) and a raw Set-Cookie repeat together."""
+        return JSONResponse(
+            json=Echo(body="ok"),
+            headers=RespHeaders(
+                x_trace_id="trace", x_rate_limit=100, x_cached=True, x_meta=Meta(region="eu")
+            ),
+            raw_headers=RawHeaders([("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")]),
+        )
+
+
+class TypedHeaderApp(BaseApp):
+    """App wiring the typed-header resource."""
+
+    async def _wire(self) -> None:
+        self._include_resource(TypedHeaderResource(), path="/typed")
+
+
+@pytest.fixture(name="typed_client")
+def _typed_client() -> Generator[TestClient]:
+    with TestClient(TypedHeaderApp()) as client:
+        yield client
+
+
+def test_typed_headers_mangle_names_and_encode_values(typed_client: TestClient) -> None:
+    """Field names inverse-mangle (x_trace_id -> x-trace-id) and values stringify;
+    a Struct field is JSON-encoded; a None field is omitted."""
+    resp = typed_client.get("/typed")
+    assert resp.status_code == 200
+    assert resp.headers["x-trace-id"] == "trace"
+    assert resp.headers["x-rate-limit"] == "100"
+    assert resp.headers["x-cached"] == "true"
+    assert resp.headers["x-meta"] == '{"region":"eu"}'
+    assert "x-absent" not in resp.headers
+
+
+def test_typed_and_raw_headers_both_emitted(typed_client: TestClient) -> None:
+    """Typed headers and raw_headers are both sent; raw repeats survive."""
+    resp = typed_client.get("/typed")
+    assert resp.headers["x-trace-id"] == "trace"
+    assert ("Set-Cookie", "a=1") in resp.multi_headers
+    assert ("Set-Cookie", "b=2") in resp.multi_headers
