@@ -1,9 +1,13 @@
 """Typed streaming response wrappers."""
 
-from collections.abc import AsyncGenerator, AsyncIterable
+from collections.abc import AsyncGenerator, AsyncIterable, Mapping
 from dataclasses import dataclass
 
 from msgspec import Struct
+
+from jero.headers import (
+    RawHeaders,  # noqa: TC001  # runtime-evaluated annotation (no future import)
+)
 
 type Source[T] = AsyncIterable[T] | AsyncGenerator[AsyncIterable[T]]
 
@@ -27,7 +31,7 @@ class _StreamingResponse[T]:
     ``status`` defaults to the verb's status when None."""
 
     stream: Source[T]
-    headers: dict[str, str] | None = None
+    headers: RawHeaders | Mapping[str, str] | None = None
     status: int | None = None
 
 

@@ -18,10 +18,7 @@ classifiers = [
     "Framework :: AsyncIO",
     "Typing :: Typed",
 ]
-dependencies = [
-    "msgspec>=0.21.1",
-    "multipart>=1.0",
-]
+dependencies = ["msgspec>=0.21.1", "multipart>=1.0"]
 
 [project.urls]
 Homepage = "https://RogerThomas.github.io/jero/"
@@ -124,7 +121,8 @@ typeCheckingMode = "strict"
 # outside `uv run` (e.g. an editor/LSP). Without this it can't find jero's deps
 # and emits spurious "unknown import symbol" errors the CLI run never sees.
 venvPath = "."
-venv = ".venv"
+venv = "./.venv"
+exclude = ["./.venv"]
 
 # pytest fixtures use the `_name`-function + `@pytest.fixture(name=...)` pattern, so
 # they read as unused to pyright (pytest injects them by string). Disable the check

@@ -47,6 +47,8 @@ class TestResponse:
     status_code: int
     headers: dict[str, str]
     content: bytes
+    # Every header pair as sent, repeats included; ``headers`` collapses duplicates.
+    multi_headers: list[tuple[str, str]]
 
     @property
     def text(self) -> str:
@@ -73,7 +75,7 @@ class TestSSEEvent:
 class _RequestCycle:
     """Drives one ASGI request: feeds the body once, collects the response."""
 
-    __slots__ = ("_body", "_closed", "_sent", "chunks", "headers", "status")
+    __slots__ = ("_body", "_closed", "_sent", "chunks", "headers", "multi_headers", "status")
 
     def __init__(self, body: bytes) -> None:
         self._body = body
@@ -81,6 +83,7 @@ class _RequestCycle:
         self._sent = False
         self.status = 0
         self.headers: dict[str, str] = {}
+        self.multi_headers: list[tuple[str, str]] = []
         self.chunks: list[bytes] = []
 
     async def receive(self) -> dict[str, Any]:
@@ -95,9 +98,9 @@ class _RequestCycle:
         """Record a response start (status/headers) or body message."""
         if message["type"] == "http.response.start":
             self.status = message["status"]
-            self.headers.update(
-                {k.decode("latin-1"): v.decode("latin-1") for k, v in message["headers"]}
-            )
+            pairs = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in message["headers"]]
+            self.multi_headers += pairs
+            self.headers |= pairs
         elif message["type"] == "http.response.body":
             self.chunks.append(message.get("body", b""))
 
@@ -367,7 +370,10 @@ class TestClient:
         cycle = _RequestCycle(body)
         await self._app(scope, cycle.receive, cycle.send)
         return TestResponse(
-            status_code=cycle.status, headers=cycle.headers, content=b"".join(cycle.chunks)
+            status_code=cycle.status,
+            headers=cycle.headers,
+            content=b"".join(cycle.chunks),
+            multi_headers=cycle.multi_headers,
         )
 
     async def _stream_request(

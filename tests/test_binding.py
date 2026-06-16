@@ -3,7 +3,7 @@
 from msgspec import Struct
 from msgspec.json import decode as json_decode
 
-from jero import BaseApp, Endpoint, Resource, TestClient
+from jero import BaseApp, Endpoint, RawHeaders, Resource, TestClient
 
 
 def test_bad_body_type_is_422(client: TestClient) -> None:
@@ -123,3 +123,58 @@ def test_handler_side_decode_error_is_500() -> None:
     with TestClient(UpstreamDecodeApp()) as client:
         resp = client.get("/upstream-decode")
         assert resp.status_code == 500
+
+
+# --- raw_headers: the opaque header bag, for forwarding / diagnostics ---
+
+
+class Reply(Struct):
+    """Single-string reply for the raw_headers handlers."""
+
+    value: str
+
+
+class Trace(Struct):
+    """Typed headers carrying a trace id (x-trace-id -> x_trace_id)."""
+
+    x_trace_id: str
+
+
+class RawHeadersEndpoint(Endpoint):
+    """GET handler reading a request header through the opaque bag."""
+
+    async def get(self, raw_headers: RawHeaders) -> Reply:
+        """Echo a header looked up with different casing than it was sent."""
+        return Reply(value=raw_headers["X-Trace-Id"])
+
+
+class BothHeadersEndpoint(Endpoint):
+    """GET handler taking the typed headers Struct and the raw bag together."""
+
+    async def get(self, headers: Trace, raw_headers: RawHeaders) -> Reply:
+        """Combine the validated typed header with a raw, case-insensitive lookup."""
+        return Reply(value=f"{headers.x_trace_id}:{raw_headers['x-trace-id']}")
+
+
+class RawHeadersApp(BaseApp):
+    """App wiring the raw_headers endpoints."""
+
+    async def _wire(self) -> None:
+        self._include_endpoint(RawHeadersEndpoint(), path="/raw")
+        self._include_endpoint(BothHeadersEndpoint(), path="/both")
+
+
+def test_raw_headers_handler_sees_request_headers() -> None:
+    """A handler declaring raw_headers reads the request headers, casing-insensitively."""
+    with TestClient(RawHeadersApp()) as client:
+        resp = client.get("/raw", headers={"X-Trace-Id": "trace"})
+        assert resp.status_code == 200
+        assert resp.json() == {"value": "trace"}
+
+
+def test_raw_headers_coexists_with_typed_headers() -> None:
+    """raw_headers and a typed headers Struct bind independently on the same handler."""
+    with TestClient(RawHeadersApp()) as client:
+        resp = client.get("/both", headers={"x-trace-id": "trace"})
+        assert resp.status_code == 200
+        assert resp.json() == {"value": "trace:trace"}

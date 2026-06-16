@@ -5,7 +5,7 @@ from collections.abc import Generator
 import pytest
 from msgspec import Struct
 
-from jero import BaseApp, BytesResponse, JSONResponse, Resource, TestClient
+from jero import BaseApp, BytesResponse, JSONResponse, RawHeaders, Resource, TestClient
 
 
 class Echo(Struct):
@@ -73,3 +73,55 @@ def test_snakecase_key_is_rejected_for_camel_field(client: TestClient) -> None:
         headers={"authorization": "Bearer token"},
     )
     assert bad.status_code == 422
+
+
+# --- Response headers accept a RawHeaders bag (forwarding), not just a dict ---
+
+
+class RawRespResource(Resource):
+    """Resource returning responses whose headers come from a RawHeaders bag."""
+
+    async def read_many(self) -> JSONResponse:
+        """Set response headers from a RawHeaders, preserving its as-sent casing."""
+        return JSONResponse(
+            json=Echo(body="ok"),
+            headers=RawHeaders([("X-Kind", "raw"), ("X-Trace-Id", "trace")]),
+        )
+
+    async def create(self, content: bytes) -> JSONResponse:
+        """Forward a bag carrying a repeated header (the Set-Cookie case)."""
+        return JSONResponse(
+            json=Echo(body=content.decode()),
+            headers=RawHeaders([("Set-Cookie", "first"), ("Set-Cookie", "second")]),
+        )
+
+
+class RawRespApp(BaseApp):
+    """App wiring the RawHeaders-response resource."""
+
+    async def _wire(self) -> None:
+        self._include_resource(RawRespResource(), path="/raw-resp")
+
+
+def test_response_accepts_raw_headers_bag() -> None:
+    """A response built with headers=RawHeaders(...) emits those headers, casing intact."""
+    with TestClient(RawRespApp()) as client:
+        resp = client.get("/raw-resp")
+        assert resp.status_code == 200
+        assert resp.json() == {"body": "ok"}
+        # Names go out with their as-sent casing (the framework does not lowercase them).
+        assert resp.headers["X-Kind"] == "raw"
+        assert resp.headers["X-Trace-Id"] == "trace"
+
+
+def test_response_forwards_repeated_headers_from_raw_bag() -> None:
+    """A RawHeaders response forwards repeated headers (Set-Cookie) a dict can't hold.
+
+    The captured ``headers`` dict collapses repeats, so this asserts on
+    ``multi_headers`` — the faithful wire pair list.
+    """
+    with TestClient(RawRespApp()) as client:
+        resp = client.post("/raw-resp", content=b"ok")
+        assert resp.status_code == 201
+        assert ("Set-Cookie", "first") in resp.multi_headers
+        assert ("Set-Cookie", "second") in resp.multi_headers

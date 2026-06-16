@@ -14,6 +14,7 @@ from jero.core import (
     msgspec_encoder,
 )
 from jero.forms import FilePart, FormPart, NoHeaders
+from jero.headers import RawHeaders
 from jero.streaming import NDJSONStreamingResponse, ServerSentEvent, SSEResponse, StreamingResponse
 from jero.testing import FactoryHarness, TestClient, TestResponse, TestSSEEvent
 
@@ -30,6 +31,7 @@ __all__ = [
     "JSONResponse",
     "NDJSONStreamingResponse",
     "NoHeaders",
+    "RawHeaders",
     "Resource",
     "SSEResponse",
     "ServerSentEvent",

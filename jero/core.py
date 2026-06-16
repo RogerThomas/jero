@@ -52,7 +52,15 @@ import contextlib
 import inspect
 from annotationlib import Format
 from collections import defaultdict
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Sequence
+from collections.abc import (
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from contextlib import (
     AbstractAsyncContextManager,
     AbstractContextManager,
@@ -73,6 +81,7 @@ from msgspec.json import decode as json_decode
 from msgspec.structs import fields as struct_fields
 
 from jero.forms import FilePart, FormPart, NoHeaders
+from jero.headers import RawHeaders
 from jero.streaming import (
     NDJSONStreamingResponse,
     ServerSentEvent,
@@ -119,7 +128,9 @@ type _ReturnKind = Literal[
 type _PayloadKind = Literal["bytes", "struct", "scalar"]
 
 # Argument names the binder understands, shared by every handler kind.
-_SOURCES = frozenset({"json", "content", "form", "params", "path", "headers", "user"})
+_SOURCES = frozenset(
+    {"json", "content", "form", "params", "path", "headers", "user", "raw_headers"}
+)
 # HTTP verbs that forbid a request body, whatever the handler is named.
 _BODYLESS_VERBS = frozenset({"GET", "DELETE"})
 
@@ -152,9 +163,12 @@ class BaseResponse(Struct, kw_only=True):
     Return one of the concrete subclasses; the status code is still the
     verb's (201 for create, 200 otherwise). ``content-length`` is managed
     by the framework and ignored if supplied in ``headers``.
+
+    ``headers`` accepts a plain mapping (the common case) or a ``RawHeaders`` — pass
+    the request's ``RawHeaders`` straight through to forward it, repeats and all.
     """
 
-    headers: dict[str, str] | None = None
+    headers: RawHeaders | Mapping[str, str] | None = None
 
 
 class BytesResponse(BaseResponse):
@@ -219,7 +233,7 @@ class Auth[THeaders: Struct, TUser: Struct](Protocol):
 
 class _StreamResult(Protocol):
     stream: Any
-    headers: dict[str, str] | None
+    headers: RawHeaders | Mapping[str, str] | None
     status: int | None
 
 
@@ -270,6 +284,14 @@ class _SuppressBody:
 
 def _raw_headers(scope: Scope) -> dict[str, str]:
     return {k.decode("latin-1").replace("-", "_"): v.decode("latin-1") for k, v in scope["headers"]}
+
+
+def _wire_header_pairs(scope: Scope) -> list[tuple[str, str]]:
+    """Header pairs with real wire names preserved, for the opaque RawHeaders bag.
+
+    Distinct from _raw_headers, which snake_cases names for msgspec ``convert``.
+    """
+    return [(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope["headers"]]
 
 
 def _mangle_headers(headers: dict[str, str]) -> dict[str, str]:
@@ -587,6 +609,7 @@ class _Sources:
     headers: type[Struct] | None = None
     user: type[Struct] | None = None
     content: bool = False
+    raw_headers: bool = False
     return_kind: _ReturnKind = "json"
 
 
@@ -626,7 +649,7 @@ def _return_kind(ann: object) -> _ReturnKind | None:  # noqa: C901
     return None
 
 
-def _bind_sources(
+def _bind_sources(  # noqa: C901
     cls: type, name: str, fn: Callable[..., Any], http_method: _HttpMethod
 ) -> _Sources:
     """Resolve and validate the Struct types for a handler's arguments."""
@@ -634,6 +657,7 @@ def _bind_sources(
     types: dict[str, type[Struct]] = {}
     form: _FormSpec | None = None
     wants_content = False
+    wants_raw_headers = False
 
     for param in inspect.signature(fn).parameters.values():
         if param.name not in _SOURCES:
@@ -651,6 +675,13 @@ def _bind_sources(
                     f"{cls.__name__}.{name}: 'content' must be annotated as bytes",
                 )
             wants_content = True
+            continue
+        if param.name == "raw_headers":
+            if hints.get("raw_headers") is not RawHeaders:
+                raise WiringError(
+                    f"{cls.__name__}.{name}: 'raw_headers' must be annotated as RawHeaders",
+                )
+            wants_raw_headers = True
             continue
         source_type = _struct_annotation(cls, name, param.name, hints.get(param.name))
         if param.name == "form":
@@ -674,7 +705,13 @@ def _bind_sources(
     if return_kind == "stream-sse" and http_method != "GET":
         raise WiringError(f"{cls.__name__}.{name}: SSEResponse is only allowed on GET handlers")
 
-    return _Sources(**types, form=form, content=wants_content, return_kind=return_kind)
+    return _Sources(
+        **types,
+        form=form,
+        content=wants_content,
+        raw_headers=wants_raw_headers,
+        return_kind=return_kind,
+    )
 
 
 def _parse_template(path: str) -> list[_Segment]:
@@ -826,6 +863,7 @@ class _Binder:
         "_params_type",
         "_path_type",
         "_wants_content",
+        "_wants_raw_headers",
         "_wants_user",
     )
 
@@ -837,6 +875,7 @@ class _Binder:
         self._headers_type = sources.headers
         self._auth = auth
         self._wants_content = sources.content
+        self._wants_raw_headers = sources.raw_headers
         self._wants_user = sources.user is not None
         self._needs_raw = (
             auth is not None or sources.headers is not None or sources.form is not None
@@ -867,20 +906,34 @@ class _Binder:
             )
         if self._wants_content:
             kwargs["content"] = await _read_body(receive)
+        if self._wants_raw_headers:
+            kwargs["raw_headers"] = RawHeaders(_wire_header_pairs(scope))
         return kwargs
 
 
 type _Sender = Callable[[Scope, Receive, Send, Any], Awaitable[None]]
 
 
+def _user_header_items(
+    user_headers: RawHeaders | Mapping[str, str] | None,
+) -> list[tuple[str, str]]:
+    """The user's response header pairs. A RawHeaders forwards every pair (repeats
+    included, e.g. Set-Cookie); a plain mapping yields its items."""
+    if user_headers is None:
+        return []
+    if isinstance(user_headers, RawHeaders):
+        return user_headers.multi_items()
+    return list(user_headers.items())
+
+
 def _response_headers(
-    user_headers: dict[str, str] | None,
+    user_headers: RawHeaders | Mapping[str, str] | None,
     default_content_type: bytes,
     payload_length: int,
 ) -> list[tuple[bytes, bytes]]:
     headers: list[tuple[bytes, bytes]] = []
     has_content_type = False
-    for key, value in (user_headers or {}).items():
+    for key, value in _user_header_items(user_headers):
         lower = key.lower()
         if lower == "content-length":
             continue
@@ -947,12 +1000,12 @@ class _JSONSender:
 
 
 def _stream_headers(
-    user_headers: dict[str, str] | None,
+    user_headers: RawHeaders | Mapping[str, str] | None,
     default_content_type: bytes,
 ) -> list[tuple[bytes, bytes]]:
     headers: list[tuple[bytes, bytes]] = []
     has_content_type = False
-    for key, value in (user_headers or {}).items():
+    for key, value in _user_header_items(user_headers):
         lower = key.lower()
         if lower == "content-length":
             continue

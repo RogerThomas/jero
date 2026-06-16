@@ -74,6 +74,14 @@ class ExactPathEndpoint(Endpoint):
         return P(name=path.id)
 
 
+class BadRawHeadersResource(Resource):
+    """Resource whose raw_headers argument has the wrong annotation."""
+
+    async def read_many(self, raw_headers: dict[str, str]) -> P:  # must be RawHeaders
+        """Handler annotating raw_headers as something other than RawHeaders."""
+        return P(name=raw_headers["name"])
+
+
 class EmptyResource(Resource):
     """Resource defining none of the CRUD methods."""
 
@@ -106,3 +114,9 @@ def test_resource_with_no_crud_methods() -> None:
     """Wiring a resource that defines no CRUD methods fails at startup."""
     with pytest.raises(RuntimeError, match="defines none of"):
         TestClient(_ResourceApp(EmptyResource()))
+
+
+def test_raw_headers_wrong_annotation() -> None:
+    """Wiring a raw_headers argument not annotated as RawHeaders fails at startup."""
+    with pytest.raises(RuntimeError, match="'raw_headers' must be annotated as RawHeaders"):
+        TestClient(_ResourceApp(BadRawHeadersResource()))
