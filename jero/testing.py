@@ -1,9 +1,8 @@
 """In-process test client for jero apps.
 
-Drives the ASGI app directly — no socket, no server. Runs the app's
-lifespan (so ``_wire`` registers resources/endpoints and the dependency
-context stays open) on a dedicated background event loop, and exposes a
-synchronous, requests-style API:
+Drives the ASGI app directly — no socket, no server. Runs the app's lifespan (so ``_wire`` registers
+resources/endpoints and the dependency context stays open) on a dedicated background event loop, and
+exposes a synchronous, requests-style API:
 
     from jero import TestClient
 
@@ -12,8 +11,8 @@ synchronous, requests-style API:
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
 
-The lifespan starts on construction, so routes are live immediately; use
-the context manager (or ``close()``) for deterministic shutdown.
+The lifespan starts on construction, so routes are live immediately; use the context manager (or
+``close()``) for deterministic shutdown.
 """
 
 import asyncio

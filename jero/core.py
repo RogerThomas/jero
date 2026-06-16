@@ -2,48 +2,38 @@
 
 The contract:
 
-- Resources are plain classes with any of the CRUD methods ``create`` /
-  ``read_one`` / ``read_many`` / ``update`` / ``partial_update`` /
-  ``delete``, mapped to POST / GET (item) / GET (collection) / PUT /
-  PATCH / DELETE on the path given to ``_include_resource``.
-  ``read_many`` serves the mount path itself and cannot extend it with
-  trailing segments — items belong to ``read_one``.
-- The mount path is a template: static segments plus ``{slot}`` params
-  (snake_case, matching Struct field names). Handlers bind path values
-  via a ``path`` Struct whose fields must cover every template slot;
-  fields beyond the slots extend the route with trailing segments (the
-  item id). Path Struct fields cannot have defaults.
-- Handler arguments are bound by name: ``json`` (request body),
-  ``params`` (query string), ``path`` (URL segments),
-  ``headers``, and ``user`` (the result of auth). Each must be annotated
-  with a msgspec Struct. Handlers may instead take the raw body as
-  ``content: bytes`` (mutually exclusive with ``json``). Returns are a
-  Struct, list[Struct], ``bytes`` (sent as application/octet-stream), or
-  a ``BytesResponse`` / ``JSONResponse`` to control response headers.
-  msgspec
-  ``rename`` is honored everywhere (e.g. ``Struct, rename="camel"`` for
-  camelCase on the wire, snake_case in code) — define your own base
-  Struct for your wire convention.
+- Resources are plain classes with any of the CRUD methods ``create`` / ``read_one`` /
+  ``read_many`` / ``update`` / ``partial_update`` / ``delete``, mapped to POST / GET (item) /
+  GET (collection) / PUT / PATCH / DELETE on the path given to ``_include_resource``. ``read_many``
+  serves the mount path itself and cannot extend it with trailing segments — items belong to
+  ``read_one``.
+- The mount path is a template: static segments plus ``{slot}`` params (snake_case, matching the
+  Struct field names). Handlers bind path values via a ``path`` Struct whose fields must cover every
+  template slot; fields beyond the slots extend the route with trailing segments (the item id).
+  Path Struct fields cannot have defaults.
+- Handler arguments bind by name: ``json`` (request body), ``params`` (query string), ``path``
+  (URL segments), ``headers``, and ``user`` (the result of auth). Each must be annotated with a
+  msgspec Struct. A handler may instead take the raw body as ``content: bytes`` (mutually exclusive
+  with ``json``). Returns are a Struct, ``list[Struct]``, ``bytes`` (sent as
+  application/octet-stream), or a ``BytesResponse`` / ``JSONResponse`` to control response headers.
+  msgspec ``rename`` is honored everywhere (e.g. ``Struct, rename="camel"`` for camelCase on the
+  wire, snake_case in code) — define your own base Struct for the wire convention.
 - Auth is an object passed to ``_include_resource`` implementing
-  ``authenticate(headers: SomeStruct) -> UserStruct``; raise
-  ``HTTPError(401, ...)`` to reject. When auth is set it runs for every
-  method on the resource, before the body is decoded. Handlers that
-  declare ``user`` receive its result; the annotation is checked against
-  the authenticator's return type at startup.
-- Dependencies are wired by hand in the overridden ``BaseApp._wire`` method
-  (runs once at startup). Open resources with ``self._aenter(cm)`` /
-  ``self._enter(cm)`` — the app holds them on exit stacks and closes them
-  (reverse order) at shutdown. No ``yield``, no DI container.
+  ``authenticate(headers: SomeStruct) -> UserStruct``; raise ``HTTPError(401, ...)`` to reject. When
+  set, it runs for every method on the resource, before the body is decoded. Handlers that declare
+  ``user`` receive its result; the annotation is checked against the authenticator's return type at
+  startup.
+- Dependencies are wired by hand in the overridden ``BaseApp._wire`` method (runs once at startup).
+  Open resources with ``self._aenter(cm)`` / ``self._enter(cm)`` — the app holds them on exit stacks
+  and closes them (reverse order) at shutdown. No ``yield``, no DI container.
 
-All introspection happens once, at ``_include_resource`` time. Routing is
-dict lookups: static routes match exactly; templated routes are bucketed
-by (method, segment count) and matched on their static segments — no
-regexes, no route-table scans, no ordering rules.
+All introspection happens once, at ``_include_resource`` time. Routing is dict lookups: static
+routes match exactly; templated routes are bucketed by (method, segment count) and matched on their
+static segments — no regexes, no route-table scans, no ordering rules.
 
-Error semantics follow REST/HTTP: unmatched URL or path value that fails
-conversion -> 404; malformed query/headers -> 400; malformed JSON body
--> 400; well-formed body failing the schema -> 422; auth failure -> 401;
-wrong method -> 405 with ``Allow``. HEAD is served from GET routes with
+Error semantics follow REST/HTTP: an unmatched URL, or a path value that fails conversion, -> 404;
+malformed query/headers -> 400; malformed JSON body -> 400; a well-formed body failing the schema
+-> 422; auth failure -> 401; wrong method -> 405 with ``Allow``. HEAD is served from GET routes with
 the body suppressed, and OPTIONS answers 204 with ``Allow``.
 """
 
