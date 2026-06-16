@@ -90,6 +90,26 @@ class LifecycleEndpoint(Endpoint):
 
 
 @dataclass
+class NDJSONLifecycleEndpoint(Endpoint):
+    """NDJSON endpoint whose stream records teardown on disconnect."""
+
+    _state: StreamState
+
+    async def _items(self) -> AsyncIterator[Item]:
+        yield Item(name="ready")
+        while True:
+            await asyncio.sleep(60)
+
+    async def _lifecycle(self) -> AsyncGenerator[AsyncIterable[Item]]:
+        yield self._items()
+        self._state.closed = True
+
+    async def get(self) -> NDJSONStreamingResponse[Item]:
+        """Return an NDJSON stream guarded by lifecycle teardown."""
+        return NDJSONStreamingResponse(stream=self._lifecycle())
+
+
+@dataclass
 class ErrorStreamEndpoint(Endpoint):
     """Endpoint whose stream raises mid-iteration; teardown must still run."""
 
@@ -209,6 +229,15 @@ def test_disconnect_runs_lifecycle_teardown() -> None:
     with TestClient(_EndpointApp(LifecycleEndpoint(state))) as client:
         with client.stream_get("/stream") as events:
             assert next(events).data == "ready"
+        assert state.closed
+
+
+def test_ndjson_disconnect_runs_lifecycle_teardown() -> None:
+    """Disconnecting mid-stream runs the NDJSON stream's lifecycle teardown."""
+    state = StreamState()
+    with TestClient(_EndpointApp(NDJSONLifecycleEndpoint(state))) as client:
+        with client.stream_get("/stream") as events:
+            assert next(events) == {"name": "ready"}
         assert state.closed
 
 

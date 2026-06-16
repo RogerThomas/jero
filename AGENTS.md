@@ -40,6 +40,12 @@ These pull against each other constantly; keep all three in mind on every change
   funcs/classes, etc.).
 - pyright **strict** and ruff must stay clean; tests must pass. `task pyright`,
   `task ruff`, `task test` — or run everything at once with `task check`.
+- **Pytest profiles:** the test tasks accept `PYTEST_PROFILE=agent|dev` to select a
+  collection of pytest flags. **Always use `PYTEST_PROFILE=agent` by default** — it
+  produces concise output suited for agent consumption (`task test PYTEST_PROFILE=agent`).
+  If a test fails, re-run that single test in isolation with `PYTEST_PROFILE=dev` for
+  verbose output to help debug, e.g.
+  `task test-one PYTEST_PROFILE=dev -- tests/test_streaming.py::test_x`.
 - **Never suppress a lint/type error to make it pass — always fix the code.**
   Adding *any* ignore/disable — `# pylint: disable=…`, `# noqa`, `# type: ignore`,
   `# pyright: ignore`, a `disable`/`ignore`/`per-file-ignores` entry in config, a

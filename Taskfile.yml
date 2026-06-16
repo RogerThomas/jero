@@ -2,6 +2,13 @@
 
 version: '3'
 
+vars:
+  PYTEST_PROFILE: '{{default "dev" .PYTEST_PROFILE}}'
+  PYTEST_ARGS_DEV: -s -vv -rA --tb=short --color=yes
+  PYTEST_ARGS_AGENT: -x -q --tb=short --no-header --disable-warnings --color=no -p no:cacheprovider
+  PYTEST_ARGS: '{{if eq .PYTEST_PROFILE "agent"}}{{.PYTEST_ARGS_AGENT}}{{else}}{{.PYTEST_ARGS_DEV}}{{end}}'
+  PYTEST_RUN: uv run pytest {{.PYTEST_ARGS}}
+
 tasks:
   install:
     desc: Install the virtual environment and the pre-commit hooks
@@ -16,8 +23,12 @@ tasks:
       - uv run prek run -a
 
   test:
-    desc: Run the test suite with coverage
-    cmd: uv run pytest --cov --cov-config=pyproject.toml --cov-report=xml
+    desc: 'Run the test suite with coverage. PYTEST_PROFILE=agent|dev selects output verbosity.'
+    cmd: '{{.PYTEST_RUN}} --cov --cov-config=pyproject.toml --cov-report=xml {{.CLI_ARGS}}'
+
+  test-one:
+    desc: 'Run a single test in isolation. Usage: task test-one -- tests/test_streaming.py::test_x'
+    cmd: '{{.PYTEST_RUN}} {{.CLI_ARGS}}'
 
   pyright:
     desc: Static type checking
