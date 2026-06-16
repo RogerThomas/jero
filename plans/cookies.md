@@ -1,8 +1,7 @@
 # Plan: Cookie support (Set-Cookie out, Cookie in)
 
-Status: **partially designed, not built.** The shape is locked; four decisions
-(marked **OPEN** below) still need sign-off before building. Captured mid-design
-so we can pivot and resume later.
+Status: **designed, not built.** Shape and all four decisions are locked (see
+the DECIDED notes below). Build in the staged order at the bottom.
 
 ## Goal
 
@@ -40,10 +39,10 @@ class Cookie:
     max_age: int | None = None
     expires: datetime | None = None        # -> IMF-fixdate (RFC 7231)
     domain: str | None = None
-    path: str = "/"                         # OPEN #3
-    secure: bool = False                    # OPEN #1 (default)
-    http_only: bool = True                  # OPEN #1 (default)
-    same_site: Literal["strict", "lax", "none"] | None = "lax"   # OPEN #1 (default)
+    path: str = "/"                         # DECIDED #3
+    secure: bool = False                    # DECIDED #1
+    http_only: bool = True                  # DECIDED #1
+    same_site: Literal["strict", "lax", "none"] | None = "lax"   # DECIDED #1
     partitioned: bool = False               # CHIPS
 
     @classmethod
@@ -81,25 +80,23 @@ exactly like `params`/`headers` (string → typed scalar coercion).
 Wrinkle vs headers: cookie names are **case-sensitive and arbitrary**, so match
 by field name **exactly** — **no dash↔underscore mangle** — with msgspec
 `rename` for names that aren't valid identifiers (`sid-token`). This is a
-deliberate difference from header binding (which mangles). (**OPEN #4** — confirm.)
+deliberate difference from header binding (which mangles). (**DECIDED #4**.)
 
 ## OPEN decisions (need sign-off before building)
 
-1. **Security defaults (the big one).** Recommendation: `http_only=True`,
-   `same_site="lax"`, `secure=False` — secure where it's free (those two), but
-   not forcing HTTPS so local plain-HTTP dev works; opt into `secure=True`.
-   Alternative A: fully secure-by-default (`secure=True` too) — breaks local dev.
-   Alternative B: permissive/all-off like FastAPI/Starlette — friendlier, ships
-   insecure defaults.
-2. **Value encoding.** Recommendation: **validate the value against the legal
-   RFC 6265 cookie-octet set and raise on illegal chars** at emit time —
-   predictable, matches the framework's fail-loud stance, user controls any
-   encoding. Alternatives: auto percent-encode (silently transforms), or lean on
-   stdlib `http.cookies` (inherits its quirky double-quote escaping — rejected).
-3. **`path` default.** Recommendation: default `path="/"` (the near-universal
-   intent; avoids surprise path-scoping). Alternative: `None` (don't emit).
-4. **Request-side name mapping.** Recommendation: exact field-name match +
-   `rename` for non-identifiers, **no mangle**, case-sensitive. Confirm.
+1. **Security defaults — DECIDED:** `http_only=True`, `same_site="lax"`,
+   `secure=False`. Secure where it's free; not forcing HTTPS so local plain-HTTP
+   dev works. Every default is overridable per-cookie at construction
+   (`Cookie("sid", "x", secure=True, http_only=False, same_site="none")`) — the
+   defaults only decide what you get when you don't say.
+2. **Value encoding — DECIDED:** validate the value against the legal RFC 6265
+   cookie-octet set and **raise on illegal chars at emit time**. Predictable,
+   fail-loud, user controls any encoding. (Rejected: auto percent-encode — silently
+   transforms; stdlib `http.cookies` — quirky double-quote escaping.)
+3. **`path` default — DECIDED:** `path="/"` (near-universal intent; avoids
+   surprise path-scoping). Overridable per-cookie like any field.
+4. **Request-side name mapping — DECIDED:** exact field-name match + `rename`
+   for non-identifiers, **no mangle**, case-sensitive.
 
 ## Staged build order (once decisions locked)
 

@@ -12,6 +12,8 @@
 
 **An opinionated, msgspec-first ASGI micro-framework for Python 3.14.**
 
+<em>Nearly Go-fast. Typed end to end. A joy to build on.</em>
+
 <a href="https://github.com/RogerThomas/jero/">GitHub</a> · <a href="https://RogerThomas.github.io/jero/">Documentation</a>
 
 </div>
@@ -39,6 +41,29 @@ It's opinionated on purpose, and makes one bet: that being aggressively prescrip
 
 And no DI container: dependencies are hand-wired in `_wire`; the framework adds only
 lifecycle — the one thing plain Python doesn't give you.
+
+## What you get
+
+- **Resources & Endpoints** — REST CRUD by method name, or bare verbs for one-off routes.
+- **Bind by name, validated by msgspec** — `json`, `params`, `path`, `headers`, `form`,
+  `user`; malformed → 400, schema-invalid → 422, all resolved once at startup.
+- **Typed responses *and* typed headers** — `JSONResponse[Body, Headers]` keeps both
+  schemas (no erasure), `status_code` overrides the status, and `raw_headers` is the
+  escape hatch for cookies and the exotic tail.
+- **Streaming, typed end to end** — NDJSON, Server-Sent Events, and raw byte streams,
+  with lifecycle teardown and client-disconnect handling done for you.
+- **Multipart forms & uploads** — typed parts, file uploads, per-part headers.
+- **Auth checked at startup** — the `user` type is verified against your authenticator
+  before a single request is served, not at runtime.
+- **Lifecycle without a DI container** — hand-wire in `_wire`, open resources on exit
+  stacks, group construction in a `BaseFactory`.
+- **REST semantics for free** — 404/400/422/401/405, auto `HEAD` + `OPTIONS`, camelCase
+  on the wire.
+- **A real test story** — a sync, in-process `TestClient` (no socket), streaming support,
+  and a `factory=` seam for mocking.
+
+Start with **[Getting Started](https://RogerThomas.github.io/jero/getting-started/)**, or
+browse the full [Guide](https://RogerThomas.github.io/jero/).
 
 ## Example
 

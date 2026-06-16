@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/jero-logo.png" alt="jero" width="440">
+  <a href="."><img src="assets/jero-logo.png" alt="jero" width="440"></a>
 </p>
 
 <p align="center"><strong>A fast and modern, msgspec-first ASGI micro-framework for Python 3.14.</strong></p>
@@ -66,6 +66,30 @@ Run it under any ASGI server, e.g. [granian](https://github.com/emmett-framework
 ```bash
 granian --interface asgi myapp:app
 ```
+
+New here? Start with [Getting Started](getting-started.md).
+
+## Highlights
+
+- **Resources & Endpoints** — CRUD by method name, or bare verbs for one-off routes.
+  [→](guide/resources.md)
+- **Bind by name, validated by msgspec** — `json`, `params`, `path`, `headers`, `form`,
+  `user`, plus raw `content` / `raw_headers`. [→](guide/binding.md)
+- **Typed responses *and* typed headers** — `JSONResponse[Body, Headers]` keeps both
+  schemas; `status_code` overrides the status; `raw_headers` is the escape hatch for
+  cookies and exotic names. [→](guide/responses.md)
+- **Streaming, typed end-to-end** — NDJSON, Server-Sent Events, and raw byte streams,
+  with lifecycle teardown and disconnect handling handled for you. [→](guide/streaming.md)
+- **Multipart forms & uploads** — typed parts, file uploads, per-part headers.
+  [→](guide/forms.md)
+- **Auth that's checked at startup** — the `user` type is verified against the
+  authenticator before the app serves a request. [→](guide/auth.md)
+- **Lifecycle without a DI container** — hand-wire in `_wire`, open resources on exit
+  stacks, group construction in a `BaseFactory`. [→](guide/wiring.md)
+- **REST semantics for free** — 404/400/422/401/405, auto `HEAD` + `OPTIONS`, camelCase
+  on the wire. [→](guide/rest.md)
+- **In-process `TestClient`** — sync, no socket, full lifespan, streaming support.
+  [→](guide/testing.md)
 
 ## API reference
 

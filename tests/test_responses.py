@@ -1,6 +1,7 @@
 """Response kinds: bytes in, BytesResponse / JSONResponse out, camelCase."""
 
 from collections.abc import Generator
+from uuid import UUID
 
 import pytest
 from msgspec import Struct
@@ -191,6 +192,43 @@ def test_typed_and_raw_headers_both_emitted(typed_client: TestClient) -> None:
     assert resp.headers["x-trace-id"] == "trace"
     assert ("Set-Cookie", "a=1") in resp.multi_headers
     assert ("Set-Cookie", "b=2") in resp.multi_headers
+
+
+# --- A UUID-valued typed header serializes to its bare text (regression) ---
+
+
+class UUIDHeaders(Struct):
+    """A typed header carrying a UUID — not a str/int/bool/Enum scalar."""
+
+    x_response_id: UUID
+
+
+class UUIDHeaderResource(Resource):
+    """Resource returning a single UUID-valued typed header."""
+
+    async def read_many(self) -> JSONResponse[Echo, UUIDHeaders]:
+        """Set a typed header whose value is a UUID."""
+        return JSONResponse(
+            json=Echo(body="ok"),
+            headers=UUIDHeaders(x_response_id=UUID("019ed22b-3467-7194-809b-215e581bf0d4")),
+        )
+
+
+class UUIDHeaderApp(BaseApp):
+    """App wiring the UUID-header resource."""
+
+    async def _wire(self) -> None:
+        self._include_resource(UUIDHeaderResource(), path="/uuid")
+
+
+def test_uuid_typed_header_is_bare_string() -> None:
+    """A UUID header value is emitted as its bare text, not a quoted JSON scalar.
+
+    Regression for the bug where a UUID (and other stringy extended scalars) fell
+    through to JSON-encoding and arrived wrapped in literal double quotes."""
+    with TestClient(UUIDHeaderApp()) as client:
+        resp = client.get("/uuid")
+        assert resp.headers["x-response-id"] == "019ed22b-3467-7194-809b-215e581bf0d4"
 
 
 # --- status_code overrides the verb's default status ---

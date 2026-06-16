@@ -64,7 +64,7 @@ from types import NoneType, get_original_bases
 from typing import Any, ClassVar, Literal, Protocol, cast, get_args, get_origin, get_type_hints
 from urllib.parse import parse_qsl, unquote
 
-from msgspec import DecodeError, Struct, ValidationError, convert
+from msgspec import DecodeError, Struct, ValidationError, convert, to_builtins
 from msgspec.json import decode as json_decode
 from msgspec.structs import fields as struct_fields
 
@@ -896,8 +896,13 @@ type _Sender = Callable[[Scope, Receive, Send, Any], Awaitable[None]]
 
 
 def _encode_header_value(value: object) -> str:
-    """One header value as a string: scalars plain (``bool`` as ``true``/``false``),
-    Struct/list/other values JSON-encoded."""
+    """One header value as a string: scalars plain (``bool`` as ``true``/``false``,
+    stringy types like UUID/datetime/Decimal as their bare text), Struct/list values
+    JSON-encoded.
+
+    The fallback routes through ``to_builtins`` so an extended scalar collapses to a
+    string (and is emitted bare), while a genuinely structured value becomes a
+    dict/list that is then JSON-encoded — never a quoted JSON scalar."""
     if isinstance(value, str):
         return value
     if isinstance(value, bool):
@@ -906,7 +911,10 @@ def _encode_header_value(value: object) -> str:
         return str(value)
     if isinstance(value, Enum):
         return _encode_header_value(value.value)
-    return msgspec_encoder.encode(value).decode()
+    builtin = to_builtins(value)
+    if isinstance(builtin, str):
+        return builtin
+    return msgspec_encoder.encode(builtin).decode()
 
 
 def _typed_header_items(headers: Struct | None) -> list[tuple[str, str]]:

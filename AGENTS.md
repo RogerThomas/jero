@@ -75,9 +75,19 @@ These pull against each other constantly; keep all three in mind on every change
 - **`Endpoint`** — bare verbs (`get`/`post`/…) for non-resource routes (health,
   webhooks, actions). One path per Endpoint.
 - Handler args bind **by name**, each a msgspec Struct: `json`, `content` (raw
-  bytes, exclusive with `json`), `params` (query), `path` (URL template slots),
-  `headers`, `user` (auth result). Return a Struct, `list[Struct]`, `bytes`, or a
-  `BytesResponse`/`JSONResponse`/streaming response.
+  bytes), `form` (multipart) — the three body sources are mutually exclusive —
+  `params` (query), `path` (URL template slots), `headers` (typed), `raw_headers`
+  (opaque `RawHeaders` bag), `user` (auth result). Return a Struct, `list[Struct]`,
+  `bytes`, or a response wrapper to control headers/status: `JSONResponse[T, H]` /
+  `BytesResponse[H]` / a streaming response (`NDJSONStreamingResponse[T, H]`, …).
+- **Response headers & status**: the wrappers carry a typed `headers` Struct (the
+  header *type* is a parameter `H`; field names inverse-mangle `x_trace_id` →
+  `x-trace-id`, scalars stringify, Structs JSON-encode, None fields omit), a
+  `raw_headers` escape hatch (exotic names, casing, repeats — e.g. `Set-Cookie`),
+  and a `status_code` override (else the verb's default). The buffered wrappers are
+  `@dataclass` (like the streaming ones), generic over body `T` and headers `H` so
+  both schemas survive to the OpenAPI spec — a bare `JSONResponse` (no `[T]`) is a
+  pyright-strict error on purpose.
 - **A JSON body is always a Struct — never a raw `dict`.** The
   `@api.get(...) → return {"a": 1}` idiom is gone: a `dict`/blob return is a
   `WiringError` at startup. JSON in and out is a typed Struct, every time — that's
@@ -85,8 +95,9 @@ These pull against each other constantly; keep all three in mind on every change
 - **Auth**: an object with `authenticate(headers: Struct) -> UserStruct`; the
   user type is checked against handlers at startup.
 - **Wiring / DI**: there is **no DI container** — and that's deliberate, not a
-  gap. You hand-wire classes in `_wire` (subclass `BaseApp[Factory]`, linear
-  async, no yield); a dependency is just a constructor argument. The one thing
+  gap. You hand-wire classes in the overridden `_wire` (`BaseApp` is an `ABC` and
+  `_wire` is abstract; subclass `BaseApp[Factory]`, linear async, no yield); a
+  dependency is just a constructor argument. The one thing
   the language doesn't give you free — lifecycle — is what the framework adds:
   open resources with `self._aenter` / `self._enter` (the app owns two exit
   stacks, closed in reverse at shutdown, even on partial failure), and a
@@ -101,32 +112,43 @@ These pull against each other constantly; keep all three in mind on every change
 
 ## Layout
 
-- `jero/core.py` — the framework. `jero/testing.py` — sync in-process `TestClient`
-  + `FactoryHarness`. `jero/forms.py` / `jero/streaming.py` — form parts and
-  streaming response types.
+- `jero/core.py` — the framework (routing, binding, response senders, lifecycle).
+  `jero/testing.py` — sync in-process `TestClient` + `FactoryHarness`.
+  `jero/forms.py` / `jero/streaming.py` — multipart parts and streaming response
+  types. `jero/headers.py` — the `RawHeaders` opaque bag. `jero/codecs.py` — the
+  shared reusable `msgspec_encoder` / `msgspec_decoder` (imported by `core`,
+  `streaming`, `testing`; SSE wire-formatting lives in `streaming.py` as the
+  un-underscored boundary-crosser `encode_sse`).
 - Runtime deps are intentionally sparse: `msgspec` for typed validation/JSON and
   `python-multipart` for buffered `multipart/form-data` parsing.
 - `tests/` — pytest suite driven through `TestClient` against demo apps in
   `tests/demo_app.py`.
 - `plans/` — design plans for not-yet-built features (e.g. `streaming.md`,
-  `forms.md`), staged for review before implementation.
-- `bugs/` — one markdown note per bug, tracked in `bugs/README.md` (the manifest).
-  **Never delete a fixed bug note** — flip its row to `Done` in the manifest and
-  update the Open/Done counts. A fix isn't done until it has a regression test.
+  `forms.md`, and `cookies.md` — fully designed, all decisions locked), staged for
+  review before implementation.
+- `bugs/` — one markdown note per **not-yet-fixed** bug, tracked in `bugs/README.md`
+  (the manifest). **Only write a note for a bug you're leaving unfixed for later** —
+  if you fix a bug in the same change, *don't* add a note; the regression test is the
+  record. A fix isn't done until it has a regression test. **Never delete a bug note
+  that already exists** — when its bug is fixed, flip its row to `Done` in the manifest
+  and update the Open/Done counts rather than removing it.
 - Demo apps and the competitor/benchmark harness live in a **separate repo**, not here.
 
 ## Status & sharp edges
 
-- **Built**: routing + path-param templates, Resource/Endpoint, all binding
-  sources, auth, REST semantics, response kinds, `BaseApp`/`BaseFactory`
-  lifecycle, `TestClient`, the test suite.
+- **Built**: routing + path-param templates, Resource/Endpoint, all binding sources
+  (incl. typed `headers` and the opaque `raw_headers`), auth, REST semantics,
+  response kinds — generic `JSONResponse[T, H]` / `BytesResponse[H]` / streaming
+  `[T, H]` with typed response headers, `raw_headers`, and `status_code` overrides
+  — `BaseApp`/`BaseFactory` lifecycle, `TestClient`, the test suite.
 - **Performance (validated natively)**: on the authed write path
   (`POST /movies` — bearer auth + JSON decode + encode + 201, C=200), jero ≈
   blacksheep (~43k req/s, a tie), ~2× litestar, ~3× robyn, ~6× idiomatic FastAPI.
   Tight unimodal latency — trustworthy. (The benchmark harness lives in a
   separate repo; run natively rather than under emulation for real figures.)
-- **Unbuilt**: custom status codes, `Location` header on 201. Minor polish: the
-  factory's `es`/`aes` stack injection matches by name with no startup check — a
+- **Unbuilt**: cookies (first-class `Set-Cookie` / `Cookie` — fully designed, all
+  decisions locked in `plans/cookies.md`), `Location` header on 201. Minor polish:
+  the factory's `es`/`aes` stack injection matches by name with no startup check — a
   `WiringError` on an unrecognized param would close that.
 - **Roadmap**: auto-generated **OpenAPI spec + live, hosted docs**. This is the
   reason every endpoint must be statically typed end to end — the schema is
