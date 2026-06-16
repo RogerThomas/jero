@@ -98,13 +98,28 @@ type Send = Callable[[dict[str, Any]], Awaitable[None]]
 type _Handler = Callable[[Scope, Receive, Send, dict[str, str]], Awaitable[None]]
 # A template segment: (is_param, static_value_or_slot_name).
 type _Segment = tuple[bool, str]
-type _StaticRoutes = dict[tuple[str, str], _Handler]
-type _DynamicRoutes = dict[tuple[str, int], list[_Pattern]]
-type _AllowedMethods = dict[str, list[str]]
+type _StaticRoutes = dict[tuple[_HttpMethod, str], _Handler]
+type _DynamicRoutes = dict[tuple[_HttpMethod, int], list[_Pattern]]
+# HTTP methods the framework speaks. GET/POST/PUT/PATCH/DELETE are handler-declarable
+# (see the METHODS tables); HEAD/OPTIONS are synthesized for the Allow header.
+type _HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+type _AllowedMethods = dict[str, list[_HttpMethod]]
 type _MultipartOptionsParser = Callable[[str], tuple[str, dict[str, str]]]
+# How a handler's return value is encoded onto the wire; see _return_kind / _result_sender.
+type _ReturnKind = Literal[
+    "json",
+    "json-response",
+    "bytes",
+    "bytes-response",
+    "stream-bytes",
+    "stream-ndjson",
+    "stream-sse",
+]
+# How a multipart form field's body is decoded; see _payload_kind / _decode_form_payload.
+type _PayloadKind = Literal["bytes", "struct", "scalar"]
 
 # Argument names the binder understands, shared by every handler kind.
-_SOURCES = ("json", "content", "form", "params", "path", "headers", "user")
+_SOURCES = frozenset({"json", "content", "form", "params", "path", "headers", "user"})
 # HTTP verbs that forbid a request body, whatever the handler is named.
 _BODYLESS_VERBS = frozenset({"GET", "DELETE"})
 
@@ -113,8 +128,8 @@ _BODYLESS_VERBS = frozenset({"GET", "DELETE"})
 class _Verb:
     """How one handler method maps onto HTTP."""
 
-    http: str
-    status: int
+    method: _HttpMethod
+    success_status: int
     extends_path: bool  # may path fields beyond the template slots extend the URL?
 
 
@@ -232,8 +247,9 @@ _MultipartError = cast(
 )
 
 
-def _allow_header(allowed: Sequence[str]) -> bytes:
-    methods = [*allowed]  # copy: HEAD/OPTIONS are appended without mutating the caller's list
+def _allow_header(allowed: Sequence[_HttpMethod]) -> bytes:
+    # copy: HEAD/OPTIONS are appended below without mutating the caller's list
+    methods: list[_HttpMethod] = [*allowed]
     if "GET" in methods:
         methods.append("HEAD")
     methods.append("OPTIONS")
@@ -374,7 +390,7 @@ def _strip_list(ann: object) -> tuple[object, bool]:
     return args[0], True
 
 
-def _payload_kind(cls: type, method: str, field_name: str, ann: object) -> str:
+def _payload_kind(cls: type, method: str, field_name: str, ann: object) -> _PayloadKind:
     if ann is bytes:
         return "bytes"
     if _is_struct_payload(ann):
@@ -393,7 +409,7 @@ class _FormField:
     wire_name: str
     payload_type: object
     headers_type: type[Struct]
-    payload_kind: str
+    payload_kind: _PayloadKind
     required: bool
     repeated: bool
     enveloped: bool
@@ -571,21 +587,21 @@ class _Sources:
     headers: type[Struct] | None = None
     user: type[Struct] | None = None
     content: bool = False
-    return_kind: str = "json"
+    return_kind: _ReturnKind = "json"
 
 
-def _return_kind(ann: object) -> str | None:  # noqa: C901
+def _return_kind(ann: object) -> _ReturnKind | None:  # noqa: C901
     if isinstance(ann, type):
         if issubclass(ann, StreamingResponse):
-            return "stream_bytes"
+            return "stream-bytes"
         if issubclass(ann, NDJSONStreamingResponse):
-            return "stream_ndjson"
+            return "stream-ndjson"
         if issubclass(ann, SSEResponse):
-            return "stream_sse"
+            return "stream-sse"
         if issubclass(ann, BytesResponse):
-            return "bytes_response"
+            return "bytes-response"
         if issubclass(ann, JSONResponse):
-            return "json_response"
+            return "json-response"
         if issubclass(ann, BaseResponse):
             return None  # the base is abstract; return a concrete subclass
         if issubclass(ann, Struct):
@@ -595,11 +611,11 @@ def _return_kind(ann: object) -> str | None:  # noqa: C901
     args = get_args(ann)
     origin = get_origin(ann)
     if origin is StreamingResponse:
-        return "stream_bytes"
+        return "stream-bytes"
     if origin is NDJSONStreamingResponse:
-        return "stream_ndjson"
+        return "stream-ndjson"
     if origin is SSEResponse:
-        return "stream_sse"
+        return "stream-sse"
     if (
         origin is list
         and len(args) == 1
@@ -610,7 +626,9 @@ def _return_kind(ann: object) -> str | None:  # noqa: C901
     return None
 
 
-def _bind_sources(cls: type, name: str, fn: Callable[..., Any], http_method: str) -> _Sources:
+def _bind_sources(
+    cls: type, name: str, fn: Callable[..., Any], http_method: _HttpMethod
+) -> _Sources:
     """Resolve and validate the Struct types for a handler's arguments."""
     hints = get_type_hints(fn)
     types: dict[str, type[Struct]] = {}
@@ -653,7 +671,7 @@ def _bind_sources(cls: type, name: str, fn: Callable[..., Any], http_method: str
             f"bytes, BytesResponse, JSONResponse, or a streaming response, "
             f"got {hints.get('return')!r}",
         )
-    if return_kind == "stream_sse" and http_method != "GET":
+    if return_kind == "stream-sse" and http_method != "GET":
         raise WiringError(f"{cls.__name__}.{name}: SSEResponse is only allowed on GET handlers")
 
     return _Sources(**types, form=form, content=wants_content, return_kind=return_kind)
@@ -969,7 +987,7 @@ async def _next_or_disconnect[T](
         while True:
             receive_task: asyncio.Task[dict[str, Any]] = asyncio.create_task(_receive(receive))
             tasks: set[asyncio.Task[Any]] = {next_task, receive_task}
-            done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             if receive_task in done:
                 message = receive_task.result()
                 if message["type"] == "http.disconnect":
@@ -1205,18 +1223,18 @@ class _SSEStreamSender(_StreamSender):
         await send({"type": "http.response.body", "body": b"", "more_body": False})
 
 
-def _result_sender(kind: str, status: int) -> _Sender:
+def _result_sender(kind: _ReturnKind, status: int) -> _Sender:
     if kind == "bytes":
         return _BytesSender(status)
-    if kind == "bytes_response":
+    if kind == "bytes-response":
         return _BytesResponseSender(status)
-    if kind == "json_response":
+    if kind == "json-response":
         return _JSONResponseSender(status)
-    if kind == "stream_bytes":
+    if kind == "stream-bytes":
         return _StreamSender(status, b"application/octet-stream")
-    if kind == "stream_ndjson":
+    if kind == "stream-ndjson":
         return _NDJSONStreamSender(status, b"application/x-ndjson")
-    if kind == "stream_sse":
+    if kind == "stream-sse":
         return _SSEStreamSender(status, b"text/event-stream")
     return _JSONSender(status)
 
@@ -1343,7 +1361,7 @@ class BaseApp[FactoryT = None](_StackScope):
         down (in reverse order) at shutdown.
         """
 
-    def _register(self, method: str, segments: list[_Segment], handler: _Handler) -> None:
+    def _register(self, method: _HttpMethod, segments: list[_Segment], handler: _Handler) -> None:
         params = tuple((i, value) for i, (is_param, value) in enumerate(segments) if is_param)
         if not params:
             route_path = "/".join(value for _, value in segments)
@@ -1395,13 +1413,13 @@ class BaseApp[FactoryT = None](_StackScope):
             fn = getattr(obj, name, None)
             if fn is None:
                 continue
-            sources = _bind_sources(cls, name, fn, verb.http)
+            sources = _bind_sources(cls, name, fn, verb.method)
             self._check_user_source(cls, name, sources.user, compiled_auth)
             segments = _route_segments(
                 cls, name, template, sources.path, extends_path=verb.extends_path
             )
-            handler = _Route(fn, verb.status, sources, compiled_auth)
-            self._register(verb.http, segments, handler)
+            handler = _Route(fn, verb.success_status, sources, compiled_auth)
+            self._register(verb.method, segments, handler)
             registered = True
 
         if not registered:
@@ -1426,17 +1444,18 @@ class BaseApp[FactoryT = None](_StackScope):
         self._include(endpoint, Endpoint.METHODS, path=path, auth=auth)
 
     def _resolve(self, method: str, path: str) -> tuple[_Handler, dict[str, str]] | None:
-        handler = self._static.get((method, path))
+        verb = cast("_HttpMethod", method)  # wire method; a non-route verb simply misses below
+        handler = self._static.get((verb, path))
         if handler is not None:
             return handler, {}
         segments = path.split("/")
-        for pattern in self._dynamic.get((method, len(segments)), ()):
+        for pattern in self._dynamic.get((verb, len(segments)), ()):
             if pattern.matches(segments):
                 values = {name: unquote(segments[i]) for i, name in pattern.params}
                 return pattern.handler, values
         return None
 
-    def _allowed_methods(self, path: str) -> tuple[str, ...]:
+    def _allowed_methods(self, path: str) -> tuple[_HttpMethod, ...]:
         allowed = list(self._allowed.get(path, ()))
         segments = path.split("/")
         for (method, count), bucket in self._dynamic.items():
