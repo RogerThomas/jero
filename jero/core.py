@@ -50,6 +50,7 @@ the body suppressed, and OPTIONS answers 204 with ``Allow``.
 import asyncio
 import contextlib
 import inspect
+from abc import ABC, abstractmethod
 from annotationlib import Format
 from collections import defaultdict
 from collections.abc import (
@@ -1005,6 +1006,15 @@ async def _receive(receive: Receive) -> dict[str, Any]:
     return await receive()
 
 
+async def _cancel_if_task(task: asyncio.Task[Any] | None) -> None:
+    """Cancel a task (if there is one) and await it, swallowing the CancelledError."""
+    if task is None:
+        return
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
 async def _next_or_disconnect[T](
     iterator: AsyncIterator[T],
     receive: Receive,
@@ -1018,22 +1028,16 @@ async def _next_or_disconnect[T](
             if receive_task in done:
                 message = receive_task.result()
                 if message["type"] == "http.disconnect":
-                    next_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await next_task
+                    await _cancel_if_task(next_task)
                     return "disconnect", None
                 continue
-            receive_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await receive_task
+            await _cancel_if_task(receive_task)
             try:
                 return "item", next_task.result()
             except StopAsyncIteration:
                 return "done", None
     except Exception:
-        next_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await next_task
+        await _cancel_if_task(next_task)
         raise
 
 
@@ -1150,17 +1154,6 @@ class _NDJSONStreamSender(_StreamSender):
 
 @dataclass(slots=True)
 class _SSEStreamSender(_StreamSender):
-    async def _cancel_keepalive(self, keepalive_task: asyncio.Task[None] | None) -> None:
-        if keepalive_task is not None:
-            keepalive_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await keepalive_task
-
-    async def _cancel_receive(self, receive_task: asyncio.Task[dict[str, Any]]) -> None:
-        receive_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await receive_task
-
     async def _stream_chunks(
         self,
         iterator: AsyncIterator[object],
@@ -1182,19 +1175,17 @@ class _SSEStreamSender(_StreamSender):
                 if receive_task in done:
                     message = receive_task.result()
                     if message["type"] == "http.disconnect":
-                        await self._cancel_keepalive(keepalive_task)
-                        next_task.cancel()
-                        with contextlib.suppress(asyncio.CancelledError):
-                            await next_task
+                        await _cancel_if_task(keepalive_task)
+                        await _cancel_if_task(next_task)
                         await _close_async_iter(iterator)
                         return
-                    await self._cancel_keepalive(keepalive_task)
+                    await _cancel_if_task(keepalive_task)
                     continue
-                await self._cancel_receive(receive_task)
+                await _cancel_if_task(receive_task)
                 if keepalive_task is not None and keepalive_task in done:
                     await self._send_chunk(send, b": ping\n\n")
                     continue
-                await self._cancel_keepalive(keepalive_task)
+                await _cancel_if_task(keepalive_task)
                 try:
                     item = next_task.result()
                 except StopAsyncIteration:
@@ -1202,9 +1193,7 @@ class _SSEStreamSender(_StreamSender):
                 await self._send_chunk(send, self._chunk(item))
                 next_task = asyncio.create_task(_anext(iterator))
         except Exception:
-            next_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await next_task
+            await _cancel_if_task(next_task)
             raise
 
     def _chunk(self, item: object) -> bytes:
@@ -1342,7 +1331,7 @@ def instantiate_factory[F](factory_cls: type[F], stack: ExitStack, astack: Async
     return factory_cls(**{name: s for name, s in stacks.items() if name in params})
 
 
-class BaseApp[FactoryT = None](_StackScope):
+class BaseApp[FactoryT = None](_StackScope, ABC):
     """Subclass and override ``_wire`` to open resources and include resources/endpoints.
 
     The app owns the two exit stacks. Parameterize with a factory class —
@@ -1381,11 +1370,15 @@ class BaseApp[FactoryT = None](_StackScope):
             return cast("FactoryT", None)
         return cast("FactoryT", instantiate_factory(factory_type, self._stack, self._astack))
 
+    @abstractmethod
     async def _wire(self) -> None:
         """Override to open resources (via ``_enter`` / ``_aenter``) and include them.
 
         Runs once at startup. Anything entered via the helpers is torn
         down (in reverse order) at shutdown.
+
+        Abstract: every ``BaseApp`` subclass must implement it. A subclass that
+        omits it is flagged at its instantiation site by the type checker.
         """
 
     def _register(self, method: _HttpMethod, segments: list[_Segment], handler: _Handler) -> None:

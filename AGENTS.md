@@ -46,6 +46,9 @@ These pull against each other constantly; keep all three in mind on every change
   If a test fails, re-run that single test in isolation with `PYTEST_PROFILE=dev` for
   verbose output to help debug, e.g.
   `task test-one PYTEST_PROFILE=dev -- tests/test_streaming.py::test_x`.
+- **Per-test timeout:** every test has a default `1s` timeout (via `pytest-timeout`);
+  a test that exceeds it fails instead of hanging the run. Override a single slow test
+  with `@pytest.mark.timeout(N)` rather than raising the global default.
 - **Never suppress a lint/type error to make it pass — always fix the code.**
   Adding *any* ignore/disable — `# pylint: disable=…`, `# noqa`, `# type: ignore`,
   `# pyright: ignore`, a `disable`/`ignore`/`per-file-ignores` entry in config, a
