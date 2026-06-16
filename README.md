@@ -12,7 +12,7 @@
 
 **An opinionated, msgspec-first ASGI micro-framework for Python 3.14.**
 
-<em>Nearly Go-fast. Typed end to end. A joy to build on.</em>
+<em>Within a few percent of Go. Typed end to end. A joy to build on.</em>
 
 <a href="https://github.com/RogerThomas/jero/">GitHub</a> · <a href="https://RogerThomas.github.io/jero/">Documentation</a>
 
@@ -36,8 +36,11 @@ It's opinionated on purpose, and makes one bet: that being aggressively prescrip
    wrong. Contracts fail loud at startup with a precise `WiringError`, never quietly
    at runtime.
 3. **Strict typing.** Fully static under pyright-strict — the types *are* the
-   contract, and the source of the coming OpenAPI spec. If you don't like typing,
-   this isn't your framework.
+   contract, and the source of the coming OpenAPI spec. jero leans hard into modern
+   Python typing: PEP 695 generics (`JSONResponse[Body, Headers]`, `BaseApp[Factory]`,
+   `NDJSONStreamingResponse[Movie]`), bounded type parameters with defaults, generic
+   inheritance, and `Protocol`s — so a handler's signature *is* its schema. If you
+   don't like typing, this isn't your framework.
 
 And no DI container: dependencies are hand-wired in `_wire`; the framework adds only
 lifecycle — the one thing plain Python doesn't give you.
@@ -179,8 +182,10 @@ app = App()
 
 ## Performance
 
-jero is fast — very fast. In fact, it co-leads the quickest Python ASGI frameworks
-and lands within a few percent of a hand-written Go (Gin) service on the same box.
+jero is fast — very fast. It co-leads the quickest Python ASGI frameworks, and on a
+narrow, favorable benchmark lands within a few percent of a hand-written Go (Gin)
+service. That near-Go figure is a best case under specific conditions — **not** a
+claim that jero is as fast as Go in general. It isn't, and we're not saying it is.
 
 The numbers below are from the authed write path — `POST /movies` (bearer auth →
 msgspec decode → handler → encode → `201`) — run natively under granian with a single
@@ -197,9 +202,11 @@ at concurrency 200:
 | FastAPI | ≈ 7,300 | 0.17× |
 
 A statistical tie with Blacksheep, ~2× Litestar, ~3× Robyn, and ~6× idiomatic
-FastAPI — at ~97% of raw Go on the same machine (and ~91% on a plain `GET`). These
-are localhost runs and partly client-bound, so treat them as indicative; the
-benchmark harness lives in a separate repo.
+FastAPI — at ~97% of raw Go on the same machine (and ~91% on a plain `GET`). Those
+near-Go ratios hold **only** under these ideal, constrained conditions — single
+worker, Go pinned to one core, localhost, this one hot path, partly client-bound.
+Treat them as indicative, not a general "as fast as Go" claim; the benchmark harness
+lives in a separate repo.
 
 ## Development
 

@@ -24,8 +24,11 @@ It's opinionated on purpose, and makes one bet: that being aggressively prescrip
    wrong. Contracts fail loud at startup with a precise `WiringError`, never quietly
    at runtime.
 3. **Strict typing.** Fully static under pyright-strict — the types *are* the
-   contract, and the source of the coming OpenAPI spec. If you don't like typing,
-   this isn't your framework.
+   contract, and the source of the coming OpenAPI spec. jero leans hard into modern
+   Python typing: PEP 695 generics (`JSONResponse[Body, Headers]`, `BaseApp[Factory]`,
+   `NDJSONStreamingResponse[Movie]`), bounded type parameters with defaults, generic
+   inheritance, and `Protocol`s — so a handler's signature *is* its schema. If you
+   don't like typing, this isn't your framework.
 
 And no DI container: dependencies are hand-wired in `_wire`; the framework adds only
 lifecycle — the one thing plain Python doesn't give you.
