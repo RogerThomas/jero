@@ -65,7 +65,7 @@ from typing import Any, ClassVar, Literal, Protocol, cast, get_args, get_origin,
 from urllib.parse import parse_qsl, unquote
 
 from msgspec import DecodeError, Struct, ValidationError, convert, to_builtins
-from msgspec.json import decode as json_decode
+from msgspec.json import Decoder
 from msgspec.structs import fields as struct_fields
 
 from jero.codecs import msgspec_encoder
@@ -88,7 +88,7 @@ type Send = Callable[[dict[str, Any]], Awaitable[None]]
 type _Handler = Callable[[Scope, Receive, Send, dict[str, str]], Awaitable[None]]
 # A template segment: (is_param, static_value_or_slot_name).
 type _Segment = tuple[bool, str]
-type _StaticRoutes = dict[tuple[_HttpMethod, str], _Handler]
+type _StaticRoutes = dict[tuple[str, str], _Handler]
 type _DynamicRoutes = dict[tuple[_HttpMethod, int], list[_Pattern]]
 # HTTP methods the framework speaks. GET/POST/PUT/PATCH/DELETE are handler-declarable
 # (see the METHODS tables); HEAD/OPTIONS are synthesized for the Allow header.
@@ -106,6 +106,8 @@ type _ReturnKind = Literal[
 ]
 # How a multipart form field's body is decoded; see _payload_kind / _decode_form_payload.
 type _PayloadKind = Literal["bytes", "struct", "scalar"]
+# Resolves a Struct type to its reusable typed JSON decoder (the app's per-type cache).
+type _DecoderFor = Callable[[type[Struct]], Decoder[Struct]]
 
 # Argument names the binder understands, shared by every handler kind.
 _SOURCES = frozenset(
@@ -275,16 +277,6 @@ def _mangle_headers(headers: dict[str, str]) -> dict[str, str]:
     return {key.lower().replace("-", "_"): value for key, value in headers.items()}
 
 
-async def _read_body(receive: Receive) -> bytes:
-    chunks: list[bytes] = []
-    while True:
-        message = await receive()
-        chunks.append(message.get("body", b""))
-        if not message.get("more_body"):
-            break
-    return chunks[0] if len(chunks) == 1 else b"".join(chunks)
-
-
 async def _send_json(
     send: Send,
     status: int,
@@ -314,9 +306,9 @@ def _convert_source(
         raise HTTPError(status, str(exc) if detail is None else detail) from None
 
 
-def _decode_json_body(body: bytes, struct_type: type[Struct]) -> Struct:
+def _decode_json_body(body: bytes, decoder: Decoder[Struct]) -> Struct:
     try:
-        return json_decode(body, type=struct_type)
+        return decoder.decode(body)
     except ValidationError as exc:
         raise HTTPError(422, str(exc)) from None
     except DecodeError as exc:
@@ -409,6 +401,7 @@ class _FormField:
     payload_type: object
     headers_type: type[Struct]
     payload_kind: _PayloadKind
+    decoder: Decoder[Struct] | None  # reusable typed decoder; set iff payload_kind == "struct"
     required: bool
     repeated: bool
     enveloped: bool
@@ -430,7 +423,9 @@ class _Part:
     body: bytes
 
 
-def _compile_form(cls: type, method: str, form_type: type[Struct]) -> _FormSpec:
+def _compile_form(
+    cls: type, method: str, form_type: type[Struct], decoder_for: _DecoderFor
+) -> _FormSpec:
     descriptors: list[_FormField] = []
     for field in struct_fields(form_type):
         field_type, optional = _strip_optional(field.type)
@@ -444,13 +439,18 @@ def _compile_form(cls: type, method: str, form_type: type[Struct]) -> _FormSpec:
         else:
             payload_type = part_types[0]
             headers_type = _struct_annotation(cls, method, f"{field.name}.headers", part_types[1])
+        payload_kind = _payload_kind(cls, method, field.name, payload_type)
+        decoder = (
+            decoder_for(cast("type[Struct]", payload_type)) if payload_kind == "struct" else None
+        )
         descriptors.append(
             _FormField(
                 name=field.name,
                 wire_name=field.encode_name,
                 payload_type=payload_type,
                 headers_type=headers_type,
-                payload_kind=_payload_kind(cls, method, field.name, payload_type),
+                payload_kind=payload_kind,
+                decoder=decoder,
                 required=field.required and not optional and not repeated,
                 repeated=repeated,
                 enveloped=enveloped,
@@ -510,9 +510,9 @@ def _parse_form_parts(body: bytes, raw_headers: dict[str, str]) -> dict[str, lis
 def _decode_form_payload(field: _FormField, part: _Part) -> object:
     if field.payload_kind == "bytes":
         return part.body
-    if field.payload_kind == "struct":
+    if field.decoder is not None:  # struct payload — reuse the prebuilt typed decoder
         try:
-            return json_decode(part.body, type=field.payload_type)
+            return field.decoder.decode(part.body)
         except ValidationError as exc:
             raise HTTPError(422, str(exc)) from None
         except DecodeError as exc:
@@ -580,6 +580,7 @@ class _Sources:
     """The resolved Struct types for one handler's arguments."""
 
     json: type[Struct] | None = None
+    json_decoder: Decoder[Struct] | None = None  # prebuilt decoder for the json body type
     form: _FormSpec | None = None
     params: type[Struct] | None = None
     path: type[Struct] | None = None
@@ -631,7 +632,7 @@ def _return_kind(ann: object) -> _ReturnKind | None:  # noqa: C901
 
 
 def _bind_sources(  # noqa: C901
-    cls: type, name: str, fn: Callable[..., Any], http_method: _HttpMethod
+    cls: type, name: str, fn: Callable[..., Any], http_method: _HttpMethod, decoder_for: _DecoderFor
 ) -> _Sources:
     """Resolve and validate the Struct types for a handler's arguments."""
     hints = get_type_hints(fn)
@@ -666,7 +667,7 @@ def _bind_sources(  # noqa: C901
             continue
         source_type = _struct_annotation(cls, name, param.name, hints.get(param.name))
         if param.name == "form":
-            form = _compile_form(cls, name, source_type)
+            form = _compile_form(cls, name, source_type, decoder_for)
             continue
         types[param.name] = source_type
 
@@ -686,8 +687,12 @@ def _bind_sources(  # noqa: C901
     if return_kind == "stream-sse" and http_method != "GET":
         raise WiringError(f"{cls.__name__}.{name}: SSEResponse is only allowed on GET handlers")
 
+    json_type = types.get("json")
+    json_decoder = decoder_for(json_type) if json_type is not None else None
+
     return _Sources(
         **types,
+        json_decoder=json_decoder,
         form=form,
         content=wants_content,
         raw_headers=wants_raw_headers,
@@ -839,7 +844,8 @@ class _Binder:
         "_auth",
         "_form_spec",
         "_headers_type",
-        "_json_type",
+        "_json_decoder",
+        "_needs_body",
         "_needs_raw",
         "_params_type",
         "_path_type",
@@ -849,7 +855,7 @@ class _Binder:
     )
 
     def __init__(self, sources: _Sources, auth: _CompiledAuth | None) -> None:
-        self._json_type = sources.json
+        self._json_decoder = sources.json_decoder
         self._form_spec = sources.form
         self._params_type = sources.params
         self._path_type = sources.path
@@ -861,8 +867,12 @@ class _Binder:
         self._needs_raw = (
             auth is not None or sources.headers is not None or sources.form is not None
         )
+        # The three body sources are mutually exclusive (checked at wiring); read once.
+        self._needs_body = (
+            sources.json_decoder is not None or sources.form is not None or sources.content
+        )
 
-    async def __call__(
+    async def __call__(  # noqa: C901  — flat per-source binding; inlined body read (perf)
         self, scope: Scope, receive: Receive, path_values: dict[str, str]
     ) -> dict[str, object]:
         kwargs: dict[str, object] = {}
@@ -879,14 +889,20 @@ class _Binder:
         if self._params_type is not None:
             raw_query = dict(parse_qsl(scope["query_string"].decode("latin-1")))
             kwargs["params"] = _convert_source(raw_query, self._params_type, 400)
-        if self._json_type is not None:
-            kwargs["json"] = _decode_json_body(await _read_body(receive), self._json_type)
-        if self._form_spec is not None:
-            kwargs["form"] = _decode_form_body(
-                await _read_body(receive), raw_headers, self._form_spec
-            )
-        if self._wants_content:
-            kwargs["content"] = await _read_body(receive)
+        if self._needs_body:
+            chunks: list[bytes] = []  # inlined body read (was _read_body) to save a coroutine hop
+            while True:
+                message = await receive()
+                chunks.append(message.get("body", b""))
+                if not message.get("more_body"):
+                    break
+            body = chunks[0] if len(chunks) == 1 else b"".join(chunks)
+            if self._json_decoder is not None:
+                kwargs["json"] = _decode_json_body(body, self._json_decoder)
+            elif self._form_spec is not None:
+                kwargs["form"] = _decode_form_body(body, raw_headers, self._form_spec)
+            else:
+                kwargs["content"] = body
         if self._wants_raw_headers:
             kwargs["raw_headers"] = RawHeaders(_wire_header_pairs(scope))
         return kwargs
@@ -1024,8 +1040,21 @@ class _JSONSender:
     _status: int
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send, result: object) -> None:
+        # Inlines _send_json (kept for error paths) to save a coroutine hop on the
+        # hot JSON response path.
         _ = (scope, receive)
-        await _send_json(send, self._status, msgspec_encoder.encode(result))
+        payload = msgspec_encoder.encode(result)
+        await send(
+            {
+                "type": "http.response.start",
+                "status": self._status,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(payload)).encode()),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": payload})
 
 
 def _stream_headers(
@@ -1387,9 +1416,22 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         self._dynamic: _DynamicRoutes = {}
         self._allowed: _AllowedMethods = {}
         self._allow_cache: dict[str, bytes] = {}
+        self._decoders: dict[type[Struct], Decoder[Struct]] = {}
         self._stack = ExitStack()
         self._astack = AsyncExitStack()
         self._factory: FactoryT = factory if factory is not None else self._make_factory()
+
+    def _decoder(self, struct_type: type[Struct]) -> Decoder[Struct]:
+        """The reusable typed JSON decoder for ``struct_type``, built once per app.
+
+        Decoders are keyed by type, so models shared across handlers (a ``WidgetIn``
+        used by both ``create`` and ``update``) share one decoder. Populated only at
+        wiring time; the binder holds the resolved decoder, so the request path does
+        no lookup.
+        """
+        if struct_type not in self._decoders:
+            self._decoders[struct_type] = Decoder(struct_type)
+        return self._decoders[struct_type]
 
     def _resolve_factory_type(self) -> type | None:
         """The factory class from ``BaseApp[...]``, or None if unparameterized."""
@@ -1469,7 +1511,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
             fn = getattr(obj, name, None)
             if fn is None:
                 continue
-            sources = _bind_sources(cls, name, fn, verb.method)
+            sources = _bind_sources(cls, name, fn, verb.method, self._decoder)
             self._check_user_source(cls, name, sources.user, compiled_auth)
             segments = _route_segments(
                 cls, name, template, sources.path, extends_path=verb.extends_path
@@ -1500,11 +1542,13 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         self._include(endpoint, Endpoint.METHODS, path=path, auth=auth)
 
     def _resolve(self, method: str, path: str) -> tuple[_Handler, dict[str, str]] | None:
-        verb = cast("_HttpMethod", method)  # wire method; a non-route verb simply misses below
-        handler = self._static.get((verb, path))
+        # Static hit is the hot path: look it up directly, before narrowing the verb
+        # (a non-route method simply misses). The cast is paid only on the dynamic path.
+        handler = self._static.get((method, path))
         if handler is not None:
             return handler, {}
         segments = path.split("/")
+        verb = cast("_HttpMethod", method)
         for pattern in self._dynamic.get((verb, len(segments)), ()):
             if pattern.matches(segments):
                 values = {name: unquote(segments[i]) for i, name in pattern.params}
@@ -1536,30 +1580,6 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         self._allow_cache = {
             path: _allow_header(self._allowed_methods(path)) for path in self._allowed
         }
-
-    async def _handle_http(self, scope: Scope, receive: Receive, send: Send) -> None:
-        method: str = scope["method"]
-        path: str = scope["path"]
-
-        # GET implies HEAD: serve from the GET route with the body suppressed.
-        resolved = self._resolve("GET" if method == "HEAD" else method, path)
-        if resolved is not None:
-            handler, path_values = resolved
-            await handler(
-                scope, receive, _SuppressBody(send) if method == "HEAD" else send, path_values
-            )
-            return
-
-        allow = self._allow_for(path)
-        if allow is None:
-            await _send_json(send, 404, b'{"error":"not found"}')
-        elif method == "OPTIONS":
-            await send(
-                {"type": "http.response.start", "status": 204, "headers": [(b"allow", allow)]}
-            )
-            await send({"type": "http.response.body", "body": b""})
-        else:
-            await _send_json(send, 405, b'{"error":"method not allowed"}', [(b"allow", allow)])
 
     async def _close_resources(self) -> None:
         await self._astack.aclose()
@@ -1595,9 +1615,30 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         await send({"type": "lifespan.shutdown.complete"})
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http":
-            await self._handle_http(scope, receive, send)
-        elif scope["type"] == "lifespan":
-            await self._handle_lifespan(receive, send)
-        else:
+        if scope["type"] != "http":
+            if scope["type"] == "lifespan":
+                await self._handle_lifespan(receive, send)
+                return
             raise RuntimeError(f"unsupported scope type {scope['type']!r}")
+
+        # HTTP is the hot path; inlined here (was _handle_http) to save a coroutine hop.
+        method: str = scope["method"]
+        path: str = scope["path"]
+        resolved = self._resolve("GET" if method == "HEAD" else method, path)
+        if resolved is not None:
+            handler, path_values = resolved
+            await handler(
+                scope, receive, _SuppressBody(send) if method == "HEAD" else send, path_values
+            )
+            return
+
+        allow = self._allow_for(path)
+        if allow is None:
+            await _send_json(send, 404, b'{"error":"not found"}')
+        elif method == "OPTIONS":
+            await send(
+                {"type": "http.response.start", "status": 204, "headers": [(b"allow", allow)]}
+            )
+            await send({"type": "http.response.body", "body": b""})
+        else:
+            await _send_json(send, 405, b'{"error":"method not allowed"}', [(b"allow", allow)])
