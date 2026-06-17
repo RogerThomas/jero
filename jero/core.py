@@ -968,17 +968,31 @@ def _encode_header_value(value: object) -> str:
     return msgspec_encoder.encode(builtin).decode()
 
 
+# (attr name, inverse-mangled wire name) per header Struct type — computed once,
+# not per request. `msgspec.structs.fields` is ~µs-expensive, so never call it on the
+# hot path; the field set and wire names are fixed per type.
+_HEADER_FIELDS: dict[type[Struct], tuple[tuple[str, str], ...]] = {}
+
+
+def _header_fields(struct_type: type[Struct]) -> tuple[tuple[str, str], ...]:
+    if struct_type not in _HEADER_FIELDS:
+        _HEADER_FIELDS[struct_type] = tuple(
+            (field.name, field.name.replace("_", "-")) for field in struct_fields(struct_type)
+        )
+    return _HEADER_FIELDS[struct_type]
+
+
 def _typed_header_items(headers: Struct | None) -> list[tuple[str, str]]:
     """A typed header Struct as wire pairs: field name inverse-mangled
     (``x_trace_id`` -> ``x-trace-id``), value encoded. None-valued fields omitted."""
     if headers is None:
         return []
     items: list[tuple[str, str]] = []
-    for field in struct_fields(type(headers)):
-        value = getattr(headers, field.name)
+    for attr, wire in _header_fields(type(headers)):
+        value = getattr(headers, attr)
         if value is None:
             continue
-        items.append((field.name.replace("_", "-"), _encode_header_value(value)))
+        items.append((wire, _encode_header_value(value)))
     return items
 
 
