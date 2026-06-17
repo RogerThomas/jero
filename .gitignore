@@ -209,3 +209,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+# temp stuff
+
+get_bench.py
+info_bench.py
