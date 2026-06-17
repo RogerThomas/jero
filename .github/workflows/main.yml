@@ -29,6 +29,9 @@ jobs:
 
   tests-and-type-check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # lets codecov-action mint an OIDC token — tokenless upload, no secret
     strategy:
       matrix:
         python-version: ["3.14"]
@@ -51,11 +54,13 @@ jobs:
       - name: Check typing
         run: uv run pyright
 
-      - name: Upload coverage reports to Codecov with GitHub Action on Python 3.14
+      - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v7
         if: ${{ matrix.python-version == '3.14' }}
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          use_oidc: true
+          files: ./coverage.xml
+          fail_ci_if_error: true
 
   check-docs:
     runs-on: ubuntu-latest
