@@ -1,4 +1,4 @@
-#!/usr/bin/env yeet
+#!yeet
 """In-process benchmark of the request hot path (decode -> handler -> encode).
 
 Drives the app's ASGI interface directly — no socket, no server, no TestClient
