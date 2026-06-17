@@ -1,6 +1,6 @@
 [project]
 name = "jero"
-version = "0.0.14"
+version = "0.0.15"
 description = "An opinionated, msgspec-first ASGI micro-framework"
 authors = [{ name = "Roger Thomas", email = "roger.thomas87@gmail.com" }]
 readme = "README.md"
