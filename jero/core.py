@@ -65,7 +65,7 @@ from typing import Any, ClassVar, Literal, Protocol, cast, get_args, get_origin,
 from urllib.parse import parse_qsl, unquote
 
 from msgspec import DecodeError, Struct, ValidationError, convert, to_builtins
-from msgspec.json import decode as json_decode
+from msgspec.json import Decoder
 from msgspec.structs import fields as struct_fields
 
 from jero.codecs import msgspec_encoder
@@ -106,6 +106,8 @@ type _ReturnKind = Literal[
 ]
 # How a multipart form field's body is decoded; see _payload_kind / _decode_form_payload.
 type _PayloadKind = Literal["bytes", "struct", "scalar"]
+# Resolves a Struct type to its reusable typed JSON decoder (the app's per-type cache).
+type _DecoderFor = Callable[[type[Struct]], Decoder[Struct]]
 
 # Argument names the binder understands, shared by every handler kind.
 _SOURCES = frozenset(
@@ -314,9 +316,9 @@ def _convert_source(
         raise HTTPError(status, str(exc) if detail is None else detail) from None
 
 
-def _decode_json_body(body: bytes, struct_type: type[Struct]) -> Struct:
+def _decode_json_body(body: bytes, decoder: Decoder[Struct]) -> Struct:
     try:
-        return json_decode(body, type=struct_type)
+        return decoder.decode(body)
     except ValidationError as exc:
         raise HTTPError(422, str(exc)) from None
     except DecodeError as exc:
@@ -409,6 +411,7 @@ class _FormField:
     payload_type: object
     headers_type: type[Struct]
     payload_kind: _PayloadKind
+    decoder: Decoder[Struct] | None  # reusable typed decoder; set iff payload_kind == "struct"
     required: bool
     repeated: bool
     enveloped: bool
@@ -430,7 +433,9 @@ class _Part:
     body: bytes
 
 
-def _compile_form(cls: type, method: str, form_type: type[Struct]) -> _FormSpec:
+def _compile_form(
+    cls: type, method: str, form_type: type[Struct], decoder_for: _DecoderFor
+) -> _FormSpec:
     descriptors: list[_FormField] = []
     for field in struct_fields(form_type):
         field_type, optional = _strip_optional(field.type)
@@ -444,13 +449,18 @@ def _compile_form(cls: type, method: str, form_type: type[Struct]) -> _FormSpec:
         else:
             payload_type = part_types[0]
             headers_type = _struct_annotation(cls, method, f"{field.name}.headers", part_types[1])
+        payload_kind = _payload_kind(cls, method, field.name, payload_type)
+        decoder = (
+            decoder_for(cast("type[Struct]", payload_type)) if payload_kind == "struct" else None
+        )
         descriptors.append(
             _FormField(
                 name=field.name,
                 wire_name=field.encode_name,
                 payload_type=payload_type,
                 headers_type=headers_type,
-                payload_kind=_payload_kind(cls, method, field.name, payload_type),
+                payload_kind=payload_kind,
+                decoder=decoder,
                 required=field.required and not optional and not repeated,
                 repeated=repeated,
                 enveloped=enveloped,
@@ -510,9 +520,9 @@ def _parse_form_parts(body: bytes, raw_headers: dict[str, str]) -> dict[str, lis
 def _decode_form_payload(field: _FormField, part: _Part) -> object:
     if field.payload_kind == "bytes":
         return part.body
-    if field.payload_kind == "struct":
+    if field.decoder is not None:  # struct payload — reuse the prebuilt typed decoder
         try:
-            return json_decode(part.body, type=field.payload_type)
+            return field.decoder.decode(part.body)
         except ValidationError as exc:
             raise HTTPError(422, str(exc)) from None
         except DecodeError as exc:
@@ -580,6 +590,7 @@ class _Sources:
     """The resolved Struct types for one handler's arguments."""
 
     json: type[Struct] | None = None
+    json_decoder: Decoder[Struct] | None = None  # prebuilt decoder for the json body type
     form: _FormSpec | None = None
     params: type[Struct] | None = None
     path: type[Struct] | None = None
@@ -631,7 +642,7 @@ def _return_kind(ann: object) -> _ReturnKind | None:  # noqa: C901
 
 
 def _bind_sources(  # noqa: C901
-    cls: type, name: str, fn: Callable[..., Any], http_method: _HttpMethod
+    cls: type, name: str, fn: Callable[..., Any], http_method: _HttpMethod, decoder_for: _DecoderFor
 ) -> _Sources:
     """Resolve and validate the Struct types for a handler's arguments."""
     hints = get_type_hints(fn)
@@ -666,7 +677,7 @@ def _bind_sources(  # noqa: C901
             continue
         source_type = _struct_annotation(cls, name, param.name, hints.get(param.name))
         if param.name == "form":
-            form = _compile_form(cls, name, source_type)
+            form = _compile_form(cls, name, source_type, decoder_for)
             continue
         types[param.name] = source_type
 
@@ -686,8 +697,12 @@ def _bind_sources(  # noqa: C901
     if return_kind == "stream-sse" and http_method != "GET":
         raise WiringError(f"{cls.__name__}.{name}: SSEResponse is only allowed on GET handlers")
 
+    json_type = types.get("json")
+    json_decoder = decoder_for(json_type) if json_type is not None else None
+
     return _Sources(
         **types,
+        json_decoder=json_decoder,
         form=form,
         content=wants_content,
         raw_headers=wants_raw_headers,
@@ -839,7 +854,7 @@ class _Binder:
         "_auth",
         "_form_spec",
         "_headers_type",
-        "_json_type",
+        "_json_decoder",
         "_needs_raw",
         "_params_type",
         "_path_type",
@@ -849,7 +864,7 @@ class _Binder:
     )
 
     def __init__(self, sources: _Sources, auth: _CompiledAuth | None) -> None:
-        self._json_type = sources.json
+        self._json_decoder = sources.json_decoder
         self._form_spec = sources.form
         self._params_type = sources.params
         self._path_type = sources.path
@@ -879,8 +894,8 @@ class _Binder:
         if self._params_type is not None:
             raw_query = dict(parse_qsl(scope["query_string"].decode("latin-1")))
             kwargs["params"] = _convert_source(raw_query, self._params_type, 400)
-        if self._json_type is not None:
-            kwargs["json"] = _decode_json_body(await _read_body(receive), self._json_type)
+        if self._json_decoder is not None:
+            kwargs["json"] = _decode_json_body(await _read_body(receive), self._json_decoder)
         if self._form_spec is not None:
             kwargs["form"] = _decode_form_body(
                 await _read_body(receive), raw_headers, self._form_spec
@@ -1387,9 +1402,22 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         self._dynamic: _DynamicRoutes = {}
         self._allowed: _AllowedMethods = {}
         self._allow_cache: dict[str, bytes] = {}
+        self._decoders: dict[type[Struct], Decoder[Struct]] = {}
         self._stack = ExitStack()
         self._astack = AsyncExitStack()
         self._factory: FactoryT = factory if factory is not None else self._make_factory()
+
+    def _decoder(self, struct_type: type[Struct]) -> Decoder[Struct]:
+        """The reusable typed JSON decoder for ``struct_type``, built once per app.
+
+        Decoders are keyed by type, so models shared across handlers (a ``WidgetIn``
+        used by both ``create`` and ``update``) share one decoder. Populated only at
+        wiring time; the binder holds the resolved decoder, so the request path does
+        no lookup.
+        """
+        if struct_type not in self._decoders:
+            self._decoders[struct_type] = Decoder(struct_type)
+        return self._decoders[struct_type]
 
     def _resolve_factory_type(self) -> type | None:
         """The factory class from ``BaseApp[...]``, or None if unparameterized."""
@@ -1469,7 +1497,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
             fn = getattr(obj, name, None)
             if fn is None:
                 continue
-            sources = _bind_sources(cls, name, fn, verb.method)
+            sources = _bind_sources(cls, name, fn, verb.method, self._decoder)
             self._check_user_source(cls, name, sources.user, compiled_auth)
             segments = _route_segments(
                 cls, name, template, sources.path, extends_path=verb.extends_path
