@@ -5,7 +5,7 @@ Drives the app's ASGI interface directly — no socket, no server, no TestClient
 threading — so the number isolates jero's own per-request work. The app is wired
 through the real ASGI lifespan (public interface), then the POST path is hammered.
 
-Run with ``yeet bench.py`` (or ``./bench.py``); ``--requests`` / ``--trials`` tune it.
+Run with ``yeet bench.py`` (or ``./bench.py``); positional ``REQUESTS`` / ``TRIALS`` tune it.
 Numbers are in-process, so coroutine-hop savings are amplified relative to a real
 server where socket I/O dominates — treat deltas as directional, not absolute.
 """

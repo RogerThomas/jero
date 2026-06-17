@@ -589,6 +589,7 @@ class _Sources:
     content: bool = False
     raw_headers: bool = False
     return_kind: _ReturnKind = "json"
+    arity: int = 0  # number of binding args the handler declares
 
 
 def _return_kind(ann: object) -> _ReturnKind | None:  # noqa: C901
@@ -689,6 +690,7 @@ def _bind_sources(  # noqa: C901
 
     json_type = types.get("json")
     json_decoder = decoder_for(json_type) if json_type is not None else None
+    arity = len(types) + (form is not None) + wants_content + wants_raw_headers
 
     return _Sources(
         **types,
@@ -697,6 +699,7 @@ def _bind_sources(  # noqa: C901
         content=wants_content,
         raw_headers=wants_raw_headers,
         return_kind=return_kind,
+        arity=arity,
     )
 
 
@@ -841,6 +844,7 @@ class _Binder:
     """Resolved per-source binding for one handler; builds its kwargs per request."""
 
     __slots__ = (
+        "_arity",
         "_auth",
         "_form_spec",
         "_headers_type",
@@ -864,6 +868,7 @@ class _Binder:
         self._wants_content = sources.content
         self._wants_raw_headers = sources.raw_headers
         self._wants_user = sources.user is not None
+        self._arity = sources.arity
         self._needs_raw = (
             auth is not None or sources.headers is not None or sources.form is not None
         )
@@ -872,23 +877,38 @@ class _Binder:
             sources.json_decoder is not None or sources.form is not None or sources.content
         )
 
-    async def __call__(  # noqa: C901  — flat per-source binding; inlined body read (perf)
-        self, scope: Scope, receive: Receive, path_values: dict[str, str]
-    ) -> dict[str, object]:
-        kwargs: dict[str, object] = {}
-        raw_headers = _raw_headers(scope) if self._needs_raw else {}
-        if self._auth is not None:
-            user = await self._auth(raw_headers)
-            if self._wants_user:
-                kwargs["user"] = user
+    def _one(
+        self,
+        scope: Scope,
+        raw_headers: dict[str, str],
+        path_values: dict[str, str],
+        user: Struct | None,
+        body: bytes,
+    ) -> object:
+        """Resolve the single declared binding source, skipping the kwargs dict."""
+        if self._json_decoder is not None:
+            return _decode_json_body(body, self._json_decoder)
+        if self._form_spec is not None:
+            return _decode_form_body(body, raw_headers, self._form_spec)
+        if self._wants_content:
+            return body
         if self._path_type is not None:
-            # A path value that fails conversion does not identify a resource.
-            kwargs["path"] = _convert_source(path_values, self._path_type, 404, "not found")
+            return _convert_source(path_values, self._path_type, 404, "not found")
         if self._headers_type is not None:
-            kwargs["headers"] = _convert_source(raw_headers, self._headers_type, 400)
+            return _convert_source(raw_headers, self._headers_type, 400)
         if self._params_type is not None:
             raw_query = dict(parse_qsl(scope["query_string"].decode("latin-1")))
-            kwargs["params"] = _convert_source(raw_query, self._params_type, 400)
+            return _convert_source(raw_query, self._params_type, 400)
+        if self._wants_raw_headers:
+            return RawHeaders(_wire_header_pairs(scope))
+        return user
+
+    async def __call__(  # noqa: C901  — flat per-source binding; inlined body read (perf)
+        self, scope: Scope, receive: Receive, path_values: dict[str, str]
+    ) -> object:
+        raw_headers = _raw_headers(scope) if self._needs_raw else {}
+        user = await self._auth(raw_headers) if self._auth is not None else None
+        body = b""
         if self._needs_body:
             chunks: list[bytes] = []  # inlined body read (was _read_body) to save a coroutine hop
             while True:
@@ -897,12 +917,27 @@ class _Binder:
                 if not message.get("more_body"):
                     break
             body = chunks[0] if len(chunks) == 1 else b"".join(chunks)
-            if self._json_decoder is not None:
-                kwargs["json"] = _decode_json_body(body, self._json_decoder)
-            elif self._form_spec is not None:
-                kwargs["form"] = _decode_form_body(body, raw_headers, self._form_spec)
-            else:
-                kwargs["content"] = body
+        # 0- or 1-source handlers skip the kwargs dict: call positionally (see _Route).
+        if self._arity == 0:
+            return None
+        if self._arity == 1:
+            return self._one(scope, raw_headers, path_values, user, body)
+        kwargs: dict[str, object] = {}
+        if self._wants_user:
+            kwargs["user"] = user
+        if self._path_type is not None:
+            kwargs["path"] = _convert_source(path_values, self._path_type, 404, "not found")
+        if self._headers_type is not None:
+            kwargs["headers"] = _convert_source(raw_headers, self._headers_type, 400)
+        if self._params_type is not None:
+            raw_query = dict(parse_qsl(scope["query_string"].decode("latin-1")))
+            kwargs["params"] = _convert_source(raw_query, self._params_type, 400)
+        if self._json_decoder is not None:
+            kwargs["json"] = _decode_json_body(body, self._json_decoder)
+        elif self._form_spec is not None:
+            kwargs["form"] = _decode_form_body(body, raw_headers, self._form_spec)
+        elif self._wants_content:
+            kwargs["content"] = body
         if self._wants_raw_headers:
             kwargs["raw_headers"] = RawHeaders(_wire_header_pairs(scope))
         return kwargs
@@ -1323,7 +1358,7 @@ def _result_sender(kind: _ReturnKind, status: int) -> _Sender:
 class _Route:
     """A compiled handler: bind sources, call the user fn, send the result."""
 
-    __slots__ = ("_bind", "_fn", "_is_async", "_send_result")
+    __slots__ = ("_arity", "_bind", "_fn", "_is_async", "_send_result")
 
     def __init__(
         self,
@@ -1336,13 +1371,21 @@ class _Route:
         self._is_async = inspect.iscoroutinefunction(fn)
         self._bind = _Binder(sources, auth)
         self._send_result = _result_sender(sources.return_kind, status)
+        self._arity = sources.arity
 
     async def __call__(
         self, scope: Scope, receive: Receive, send: Send, path_values: dict[str, str]
     ) -> None:
         try:
-            kwargs = await self._bind(scope, receive, path_values)
-            result = await self._fn(**kwargs) if self._is_async else self._fn(**kwargs)
+            bound = await self._bind(scope, receive, path_values)
+            # 0/1-source handlers are called positionally (no kwargs dict); see _Binder.
+            if self._arity >= 2:
+                kwargs = cast("dict[str, object]", bound)
+                result = await self._fn(**kwargs) if self._is_async else self._fn(**kwargs)
+            elif self._arity == 1:
+                result = await self._fn(bound) if self._is_async else self._fn(bound)
+            else:
+                result = await self._fn() if self._is_async else self._fn()
         except HTTPError as exc:
             await _send_json(send, exc.status, msgspec_encoder.encode({"error": exc.detail}))
             return
