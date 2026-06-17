@@ -88,7 +88,7 @@ type Send = Callable[[dict[str, Any]], Awaitable[None]]
 type _Handler = Callable[[Scope, Receive, Send, dict[str, str]], Awaitable[None]]
 # A template segment: (is_param, static_value_or_slot_name).
 type _Segment = tuple[bool, str]
-type _StaticRoutes = dict[tuple[_HttpMethod, str], _Handler]
+type _StaticRoutes = dict[tuple[str, str], _Handler]
 type _DynamicRoutes = dict[tuple[_HttpMethod, int], list[_Pattern]]
 # HTTP methods the framework speaks. GET/POST/PUT/PATCH/DELETE are handler-declarable
 # (see the METHODS tables); HEAD/OPTIONS are synthesized for the Allow header.
@@ -275,16 +275,6 @@ def _wire_header_pairs(scope: Scope) -> list[tuple[str, str]]:
 
 def _mangle_headers(headers: dict[str, str]) -> dict[str, str]:
     return {key.lower().replace("-", "_"): value for key, value in headers.items()}
-
-
-async def _read_body(receive: Receive) -> bytes:
-    chunks: list[bytes] = []
-    while True:
-        message = await receive()
-        chunks.append(message.get("body", b""))
-        if not message.get("more_body"):
-            break
-    return chunks[0] if len(chunks) == 1 else b"".join(chunks)
 
 
 async def _send_json(
@@ -855,6 +845,7 @@ class _Binder:
         "_form_spec",
         "_headers_type",
         "_json_decoder",
+        "_needs_body",
         "_needs_raw",
         "_params_type",
         "_path_type",
@@ -876,8 +867,12 @@ class _Binder:
         self._needs_raw = (
             auth is not None or sources.headers is not None or sources.form is not None
         )
+        # The three body sources are mutually exclusive (checked at wiring); read once.
+        self._needs_body = (
+            sources.json_decoder is not None or sources.form is not None or sources.content
+        )
 
-    async def __call__(
+    async def __call__(  # noqa: C901  — flat per-source binding; inlined body read (perf)
         self, scope: Scope, receive: Receive, path_values: dict[str, str]
     ) -> dict[str, object]:
         kwargs: dict[str, object] = {}
@@ -894,14 +889,20 @@ class _Binder:
         if self._params_type is not None:
             raw_query = dict(parse_qsl(scope["query_string"].decode("latin-1")))
             kwargs["params"] = _convert_source(raw_query, self._params_type, 400)
-        if self._json_decoder is not None:
-            kwargs["json"] = _decode_json_body(await _read_body(receive), self._json_decoder)
-        if self._form_spec is not None:
-            kwargs["form"] = _decode_form_body(
-                await _read_body(receive), raw_headers, self._form_spec
-            )
-        if self._wants_content:
-            kwargs["content"] = await _read_body(receive)
+        if self._needs_body:
+            chunks: list[bytes] = []  # inlined body read (was _read_body) to save a coroutine hop
+            while True:
+                message = await receive()
+                chunks.append(message.get("body", b""))
+                if not message.get("more_body"):
+                    break
+            body = chunks[0] if len(chunks) == 1 else b"".join(chunks)
+            if self._json_decoder is not None:
+                kwargs["json"] = _decode_json_body(body, self._json_decoder)
+            elif self._form_spec is not None:
+                kwargs["form"] = _decode_form_body(body, raw_headers, self._form_spec)
+            else:
+                kwargs["content"] = body
         if self._wants_raw_headers:
             kwargs["raw_headers"] = RawHeaders(_wire_header_pairs(scope))
         return kwargs
@@ -1039,8 +1040,21 @@ class _JSONSender:
     _status: int
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send, result: object) -> None:
+        # Inlines _send_json (kept for error paths) to save a coroutine hop on the
+        # hot JSON response path.
         _ = (scope, receive)
-        await _send_json(send, self._status, msgspec_encoder.encode(result))
+        payload = msgspec_encoder.encode(result)
+        await send(
+            {
+                "type": "http.response.start",
+                "status": self._status,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(payload)).encode()),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": payload})
 
 
 def _stream_headers(
@@ -1528,11 +1542,13 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         self._include(endpoint, Endpoint.METHODS, path=path, auth=auth)
 
     def _resolve(self, method: str, path: str) -> tuple[_Handler, dict[str, str]] | None:
-        verb = cast("_HttpMethod", method)  # wire method; a non-route verb simply misses below
-        handler = self._static.get((verb, path))
+        # Static hit is the hot path: look it up directly, before narrowing the verb
+        # (a non-route method simply misses). The cast is paid only on the dynamic path.
+        handler = self._static.get((method, path))
         if handler is not None:
             return handler, {}
         segments = path.split("/")
+        verb = cast("_HttpMethod", method)
         for pattern in self._dynamic.get((verb, len(segments)), ()):
             if pattern.matches(segments):
                 values = {name: unquote(segments[i]) for i, name in pattern.params}
@@ -1564,30 +1580,6 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         self._allow_cache = {
             path: _allow_header(self._allowed_methods(path)) for path in self._allowed
         }
-
-    async def _handle_http(self, scope: Scope, receive: Receive, send: Send) -> None:
-        method: str = scope["method"]
-        path: str = scope["path"]
-
-        # GET implies HEAD: serve from the GET route with the body suppressed.
-        resolved = self._resolve("GET" if method == "HEAD" else method, path)
-        if resolved is not None:
-            handler, path_values = resolved
-            await handler(
-                scope, receive, _SuppressBody(send) if method == "HEAD" else send, path_values
-            )
-            return
-
-        allow = self._allow_for(path)
-        if allow is None:
-            await _send_json(send, 404, b'{"error":"not found"}')
-        elif method == "OPTIONS":
-            await send(
-                {"type": "http.response.start", "status": 204, "headers": [(b"allow", allow)]}
-            )
-            await send({"type": "http.response.body", "body": b""})
-        else:
-            await _send_json(send, 405, b'{"error":"method not allowed"}', [(b"allow", allow)])
 
     async def _close_resources(self) -> None:
         await self._astack.aclose()
@@ -1623,9 +1615,30 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         await send({"type": "lifespan.shutdown.complete"})
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http":
-            await self._handle_http(scope, receive, send)
-        elif scope["type"] == "lifespan":
-            await self._handle_lifespan(receive, send)
-        else:
+        if scope["type"] != "http":
+            if scope["type"] == "lifespan":
+                await self._handle_lifespan(receive, send)
+                return
             raise RuntimeError(f"unsupported scope type {scope['type']!r}")
+
+        # HTTP is the hot path; inlined here (was _handle_http) to save a coroutine hop.
+        method: str = scope["method"]
+        path: str = scope["path"]
+        resolved = self._resolve("GET" if method == "HEAD" else method, path)
+        if resolved is not None:
+            handler, path_values = resolved
+            await handler(
+                scope, receive, _SuppressBody(send) if method == "HEAD" else send, path_values
+            )
+            return
+
+        allow = self._allow_for(path)
+        if allow is None:
+            await _send_json(send, 404, b'{"error":"not found"}')
+        elif method == "OPTIONS":
+            await send(
+                {"type": "http.response.start", "status": 204, "headers": [(b"allow", allow)]}
+            )
+            await send({"type": "http.response.body", "body": b""})
+        else:
+            await _send_json(send, 405, b'{"error":"method not allowed"}', [(b"allow", allow)])
