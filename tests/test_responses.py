@@ -1,6 +1,7 @@
 """Response kinds: bytes in, BytesResponse / JSONResponse out, camelCase."""
 
 from collections.abc import Generator
+from enum import Enum
 from uuid import UUID
 
 import pytest
@@ -137,6 +138,12 @@ class Meta(Struct):
     region: str
 
 
+class Tier(Enum):
+    """An enum value to exercise Enum-valued headers."""
+
+    GOLD = "gold"
+
+
 class RespHeaders(Struct):
     """Typed response headers: field names inverse-mangle to wire names."""
 
@@ -144,6 +151,7 @@ class RespHeaders(Struct):
     x_rate_limit: int
     x_cached: bool
     x_meta: Meta
+    x_tier: Tier
     x_absent: str | None = None
 
 
@@ -155,7 +163,11 @@ class TypedHeaderResource(Resource):
         return JSONResponse(
             json=Echo(body="ok"),
             headers=RespHeaders(
-                x_trace_id="trace", x_rate_limit=100, x_cached=True, x_meta=Meta(region="eu")
+                x_trace_id="trace",
+                x_rate_limit=100,
+                x_cached=True,
+                x_meta=Meta(region="eu"),
+                x_tier=Tier.GOLD,
             ),
             raw_headers=RawHeaders([("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")]),
         )
@@ -183,6 +195,7 @@ def test_typed_headers_mangle_names_and_encode_values(typed_client: TestClient) 
     assert resp.headers["x-rate-limit"] == "100"
     assert resp.headers["x-cached"] == "true"
     assert resp.headers["x-meta"] == '{"region":"eu"}'
+    assert resp.headers["x-tier"] == "gold"
     assert "x-absent" not in resp.headers
 
 

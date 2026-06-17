@@ -40,6 +40,9 @@ dev = [
     "ruff>=0.15.16",
     "zensical>=0.0.26",
 ]
+local-dev = [
+    "yeetr>=2026.6.13",
+]
 
 [build-system]
 requires = ["uv_build>=0.11.0,<0.12.0"]

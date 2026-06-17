@@ -173,6 +173,17 @@ class BadSSEEndpoint(Endpoint):
         return SSEResponse(stream=self._events())
 
 
+class BareSSEEndpoint(Endpoint):
+    """SSE endpoint using the bare (str-default) SSEResponse, no type parameters."""
+
+    async def _events(self) -> AsyncIterator[str]:
+        yield "tick"
+
+    async def get(self) -> SSEResponse:
+        """Return a plain-string SSE stream via the unparameterized response."""
+        return SSEResponse(stream=self._events())
+
+
 class KeepaliveEndpoint(Endpoint):
     """Endpoint emitting SSE keepalive comments on an idle stream."""
 
@@ -275,6 +286,15 @@ def test_sse_on_post_is_wiring_error() -> None:
     """Returning an SSE response from POST fails at startup."""
     with pytest.raises(RuntimeError, match="SSEResponse is only allowed on GET"):
         TestClient(_EndpointApp(BadSSEEndpoint()))
+
+
+def test_bare_sse_response_streams_strings() -> None:
+    """A bare SSEResponse (str default) streams plain-string events."""
+    with (
+        TestClient(_EndpointApp(BareSSEEndpoint())) as client,
+        client.stream_get("/stream") as events,
+    ):
+        assert next(events).data == "tick"
 
 
 def test_sse_keepalive() -> None:

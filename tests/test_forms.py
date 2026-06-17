@@ -349,6 +349,38 @@ def test_form_requires_multipart_content_type(client: TestClient) -> None:
     assert resp.status_code == 415
 
 
+def test_form_without_content_type_is_415(client: TestClient) -> None:
+    """A form request carrying no content-type header at all returns 415."""
+    resp = client.post("/jobs")
+
+    assert resp.status_code == 415
+
+
+def test_multipart_without_boundary_is_415(client: TestClient) -> None:
+    """A multipart content type with no boundary parameter returns 415."""
+    resp = client.post(
+        "/jobs",
+        content=b"data",
+        headers={"content-type": "multipart/form-data"},
+    )
+
+    assert resp.status_code == 415
+
+
+def test_scalar_form_part_bad_value_is_422(client: TestClient) -> None:
+    """A scalar part whose text fails conversion to its field type returns 422."""
+    resp = client.post(
+        "/jobs",
+        data={"jobType": "export-text", "count": "not-an-int", "params": '{"dpi": 125}'},
+        files={
+            "document": ("in.pdf", b"document", "application/pdf"),
+            "options": (None, json_encode({"dpi": 150}), "application/json"),
+        },
+    )
+
+    assert resp.status_code == 422
+
+
 def test_malformed_multipart_is_400(client: TestClient) -> None:
     """A malformed multipart body fails framing with 400."""
     resp = client.post(
