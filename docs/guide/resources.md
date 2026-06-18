@@ -8,6 +8,17 @@ collection or a one-off.
 A `Resource` is a class. Define any of the six CRUD methods; their **names** decide
 the HTTP method and status:
 
+```text
+WidgetResource(path="/widgets")
+
+create          POST    /widgets
+read_many       GET     /widgets
+read_one        GET     /widgets/{widget_id}
+update          PUT     /widgets/{widget_id}
+partial_update  PATCH   /widgets/{widget_id}
+delete          DELETE  /widgets/{widget_id}
+```
+
 | Method            | HTTP            | Default status | Path                |
 | ----------------- | --------------- | -------------- | ------------------- |
 | `create`          | POST            | 201            | the mount path      |
