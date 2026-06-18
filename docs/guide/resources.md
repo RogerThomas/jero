@@ -100,7 +100,7 @@ class WidgetResource(Resource, path="/widgets"):
     ...
 ```
 
-jero reads it once at wiring, so registering is just `self._include_resource(WidgetResource())` — no path passed at the call site. The class is the **single source of truth** for its path, which is exactly what URL reversal (the coming [`Link` / `Location`](links-and-location.md)) and the OpenAPI work read off it.
+jero reads it once at wiring, so registering is just `self._include_resource(WidgetResource())` — no path passed at the call site. The class is the **single source of truth** for its path, which is exactly what URL reversal ([`Link` / `Location`](links-and-location.md)) and the OpenAPI work read off it.
 
 ## Path templates
 

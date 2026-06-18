@@ -1,6 +1,6 @@
 """Typed streaming response wrappers."""
 
-from collections.abc import AsyncGenerator, AsyncIterable, Mapping
+from collections.abc import AsyncGenerator, AsyncIterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,6 +9,10 @@ from msgspec import Struct
 from jero.codecs import msgspec_encoder
 from jero.headers import (
     RawHeaders,  # noqa: TC001  # runtime-evaluated annotation (no future import)
+)
+from jero.links import (
+    Link,  # noqa: TC001  # runtime-evaluated annotation (no future import)
+    Location,  # noqa: TC001  # runtime-evaluated annotation (no future import)
 )
 
 type Source[T] = AsyncIterable[T] | AsyncGenerator[AsyncIterable[T]]
@@ -41,6 +45,8 @@ class _StreamingResponse[T, H: Struct | None = None]:
     headers: H | None = None
     raw_headers: RawHeaders | Mapping[str, str] | None = None
     status_code: int | None = None
+    location: Location | None = None
+    links: Sequence[Link] = ()
 
 
 @dataclass(kw_only=True, slots=True)
