@@ -163,7 +163,7 @@ class Factory(BaseFactory):
 
 
 @dataclass
-class WidgetResource(Resource):
+class WidgetResource(Resource, path="/widgets"):
     """CRUD resource over widgets, delegating to the injected service."""
 
     _service: WidgetService
@@ -194,7 +194,7 @@ class WidgetResource(Resource):
         return Deleted(id=path.widget_id, deleted=True)
 
 
-class WhoAmIEndpoint(Endpoint):
+class WhoAmIEndpoint(Endpoint, path="/me"):
     """Authenticated endpoint returning the current user."""
 
     async def get(self, user: User) -> User:
@@ -202,7 +202,7 @@ class WhoAmIEndpoint(Endpoint):
         return user
 
 
-class HealthEndpoint(Endpoint):
+class HealthEndpoint(Endpoint, path="/healthz"):
     """Unauthenticated health-check endpoint."""
 
     async def get(self) -> Health:
@@ -210,7 +210,7 @@ class HealthEndpoint(Endpoint):
         return Health(status="ok")
 
 
-class RawHealthEndpoint(Endpoint):
+class RawHealthEndpoint(Endpoint, path="/raw-healthz"):
     """Unauthenticated health-check endpoint returning raw JSON."""
 
     async def get(self) -> bytes:
@@ -225,10 +225,10 @@ class DemoApp(BaseApp[Factory]):
         """Build services from the factory and wire the routes."""
         widgets = await self._factory.create_widget_service()
         auth = TokenAuth({"token": User(id="user-id", name="user-name")})
-        self._include_resource(WidgetResource(widgets), path="/widgets", auth=auth)
-        self._include_endpoint(WhoAmIEndpoint(), path="/me", auth=auth)
-        self._include_endpoint(HealthEndpoint(), path="/healthz")
-        self._include_endpoint(RawHealthEndpoint(), path="/raw-healthz")
+        self._include_resource(WidgetResource(widgets), auth=auth)
+        self._include_endpoint(WhoAmIEndpoint(), auth=auth)
+        self._include_endpoint(HealthEndpoint())
+        self._include_endpoint(RawHealthEndpoint())
 
 
 app = DemoApp()
@@ -252,7 +252,7 @@ class AnalyticsService:
 
 
 @dataclass
-class EventsEndpoint(Endpoint):
+class EventsEndpoint(Endpoint, path="/events"):
     """Accepts an event and hands it to the background queue, returning immediately."""
 
     _tasks: BackgroundTasks
@@ -276,4 +276,4 @@ class BackgroundDemoApp(BaseApp):
         """Open the queue, register the handler (its type is inferred), and wire the route."""
         tasks = await self._aenter(BackgroundTasks(drain_timeout=1.0))
         tasks.register(self._analytics.process)
-        self._include_endpoint(EventsEndpoint(tasks), path="/events")
+        self._include_endpoint(EventsEndpoint(tasks))

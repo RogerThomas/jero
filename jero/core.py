@@ -185,7 +185,26 @@ class JSONResponse[T: Struct, H: Struct | None = None](BaseResponse[H]):
     json: T
 
 
-class Resource:
+class _Routable:
+    """Base for the route-defining shapes (``Resource`` / ``Endpoint``).
+
+    A concrete class declares its mount path at definition time —
+    ``class Widgets(Resource, path="/widgets")`` — and it's read off the class at
+    wiring. The path is *optional* here: an intermediate base simply omits it (no
+    ``abstract`` flag needed), and a class with no class-path can still be given one at
+    include time. The class-path is the single source of truth that URL reversal (the
+    coming ``Link`` / ``Location``) reads.
+    """
+
+    path: ClassVar[str]
+
+    def __init_subclass__(cls, *, path: str | None = None, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if path is not None:
+            cls.path = path
+
+
+class Resource(_Routable):
     """One REST resource: subclass and define any of the CRUD methods.
 
     ``read_one`` is the item route (its ``path`` may extend the mount with
@@ -202,7 +221,7 @@ class Resource:
     }
 
 
-class Endpoint:
+class Endpoint(_Routable):
     """One HTTP endpoint at a single path: subclass and define any of
     ``get`` / ``post`` / ``put`` / ``patch`` / ``delete``.
 
@@ -1556,11 +1575,17 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         obj: Resource | Endpoint,
         methods: dict[str, _Verb],
         *,
-        path: str,
+        path: str | None,
         auth: Auth[Any, Any] | None,
     ) -> None:
         cls = type(obj)
-        template = _parse_template(path)
+        resolved_path = path if path is not None else getattr(cls, "path", None)
+        if resolved_path is None:
+            raise WiringError(
+                f"{cls.__name__}: no path — declare it on the class "
+                f"(`class {cls.__name__}(..., path='/...')`) or pass path= when including it.",
+            )
+        template = _parse_template(resolved_path)
         compiled_auth = _CompiledAuth(auth) if auth is not None else None
 
         registered = False
@@ -1584,7 +1609,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         self,
         resource: Resource,
         *,
-        path: str,
+        path: str | None = None,
         auth: Auth[THeaders, TUser] | None = None,
     ) -> None:
         self._include(resource, Resource.METHODS, path=path, auth=auth)
@@ -1593,7 +1618,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         self,
         endpoint: Endpoint,
         *,
-        path: str,
+        path: str | None = None,
         auth: Auth[THeaders, TUser] | None = None,
     ) -> None:
         self._include(endpoint, Endpoint.METHODS, path=path, auth=auth)
