@@ -2,14 +2,14 @@
   <a href="."><img src="assets/jero-logo.png" alt="jero" width="440"></a>
 </p>
 
-<p align="center"><strong>A fast and modern, msgspec-first ASGI micro-framework for Python 3.14.</strong></p>
+<p align="center"><strong>A fast and modern, msgspec-first <a href="https://asgi.readthedocs.io/en/latest/">ASGI</a> micro-framework for Python 3.14.</strong></p>
 
 ---
 
 ## What is jero?
 
 jero is a fast and modern Python web framework for building typed JSON/REST APIs on
-ASGI. You write resources and endpoints as plain classes and annotate handler inputs
+[ASGI](https://asgi.readthedocs.io/en/latest/). You write resources and endpoints as plain classes and annotate handler inputs
 and outputs with [msgspec](https://jcristharif.com/msgspec/) Structs; jero handles
 the rest — routing, request/response validation, serialization, auth, and resource
 lifecycle — and runs under any ASGI server (granian, uvicorn, …).
