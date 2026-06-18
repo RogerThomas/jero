@@ -503,11 +503,7 @@ def _form_part_types(ann: object) -> tuple[object, object | None] | None:
     origin = get_origin(ann)
     if origin is FormPart:
         args = get_args(ann)
-        if len(args) == 2:
-            return args[0], args[1]
-        if len(args) == 1:
-            return args[0], FormPart.__type_params__[1].__default__
-        return None
+        return args[0], args[1]
     if origin is FilePart:
         args = get_args(ann)
         return (bytes, args[0]) if len(args) == 1 else None
