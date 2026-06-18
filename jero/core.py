@@ -40,6 +40,7 @@ the body suppressed, and OPTIONS answers 204 with ``Allow``.
 import asyncio
 import contextlib
 import inspect
+import os
 from abc import ABC, abstractmethod
 from annotationlib import Format
 from collections import defaultdict
@@ -71,7 +72,15 @@ from msgspec.structs import fields as struct_fields
 from jero.codecs import msgspec_encoder
 from jero.forms import FilePart, FormPart, NoHeaders
 from jero.headers import RawHeaders
-from jero.links import Link, Location, OperationTarget, RefTarget, Target, UrlTarget
+from jero.links import (
+    Link,
+    Location,
+    OperationTarget,
+    PathTarget,
+    RefTarget,
+    Target,
+    URLTarget,
+)
 from jero.multipart import MultipartError, MultipartParser, parse_options_header
 from jero.streaming import (
     NDJSONStreamingResponse,
@@ -167,8 +176,9 @@ class BaseResponse[H: Struct | None = None]:
     when set.
 
     ``location`` emits a ``Location`` header and ``links`` a single ``Link`` header,
-    each reverse-routed to a mounted operation (see :mod:`jero.links`); the URLs are
-    relative.
+    each reverse-routed to a mounted operation (see :mod:`jero.links`). The URLs are
+    relative unless ``JERO_BASE_URL`` / ``JERO_TRUST_FORWARDED`` is set in the environment,
+    which makes them absolute (a static origin, or one rebuilt from ``X-Forwarded-*``).
     """
 
     headers: H | None = None
@@ -1248,19 +1258,76 @@ def _validate_ref_params(
         return
     if params is None:
         raise WiringError(f"{label} requires params of type {expected.__name__}")
-    if not isinstance(params, expected):
+    # Exact type, not isinstance: params must be *the* path struct the operation declares.
+    # isinstance would silently accept a subclass; we want an exact-shape contract that
+    # fails loud, so the disable is deliberate (pylint's advice is wrong for this case).
+    if type(params) is not expected:  # pylint: disable=unidiomatic-typecheck
         raise WiringError(
             f"{label} expects params of type {expected.__name__}, got {type(params).__name__}",
         )
+
+
+def _forwarded_first(scope: Scope, name: bytes) -> str | None:
+    """The first value of a (lowercased) request header from the ASGI scope — the
+    left-most entry of any comma list, i.e. the original client-facing value."""
+    for key, value in scope["headers"]:
+        if key == name:
+            return value.decode("latin-1").split(",")[0].strip()
+    return None
+
+
+def _public_base(scope: Scope) -> str:
+    """The public origin (``scheme://host[:port]``) the client used, reconstructed from
+    the ``X-Forwarded-*`` headers (falling back to ``Host`` / the scope). Caller has
+    already decided the proxy is trusted."""
+    proto = _forwarded_first(scope, b"x-forwarded-proto") or scope.get("scheme") or "http"
+    host = _forwarded_first(scope, b"x-forwarded-host") or _forwarded_first(scope, b"host")
+    if host is None:
+        server = scope.get("server")
+        host = f"{server[0]}:{server[1]}" if server else ""
+    port = _forwarded_first(scope, b"x-forwarded-port")
+    default_port = (proto == "https" and port == "443") or (proto == "http" and port == "80")
+    if port and ":" not in host and not default_port:
+        host = f"{host}:{port}"
+    return f"{proto}://{host}"
+
+
+def _forwarded_prefix(scope: Scope) -> str:
+    """The ``X-Forwarded-Prefix`` path the proxy stripped (e.g. ``/api``), or empty."""
+    prefix = _forwarded_first(scope, b"x-forwarded-prefix")
+    return prefix.rstrip("/") if prefix is not None else ""
+
+
+def _forwarded_config_from_env() -> tuple[str | None, bool]:
+    """Read the reverse-routing URL base from the environment — available before the
+    factory exists, so it sidesteps the settings-only-in-the-factory ordering problem.
+
+    ``JERO_BASE_URL`` is a static public origin (absolute URLs against it, no header
+    trust); ``JERO_TRUST_FORWARDED`` (truthy) rebuilds the origin per request from the
+    ``X-Forwarded-*`` headers. They are mutually exclusive — one source for the base."""
+    base_url = os.environ.get("JERO_BASE_URL")
+    trust = os.environ.get("JERO_TRUST_FORWARDED", "").lower() in {"1", "true", "yes", "on"}
+    if base_url is not None and trust:
+        raise WiringError(
+            "JERO_BASE_URL and JERO_TRUST_FORWARDED are mutually exclusive — set one, not "
+            "both (they are two sources for the same reverse-routed URL base)",
+        )
+    return (base_url.rstrip("/") if base_url is not None else None, trust)
 
 
 class _Reverser:
     """The wiring-time reverse registry: maps each mounted operation (by its function,
     and by its optional ``ref`` name) to the path it resolves to. Built as routes are
     included; queried at response send to turn a ``Location`` / ``Link`` target into a
-    URL. Deliberately not a dataclass — it owns two mutating indexes filled at wiring."""
+    URL. Deliberately not a dataclass — it owns two mutating indexes filled at wiring.
 
-    def __init__(self) -> None:
+    The URL base is read once from the environment (see :func:`_forwarded_config_from_env`):
+    ``base_url`` → a static absolute origin; ``trust_forwarded`` → the public origin rebuilt
+    per request from ``X-Forwarded-*``; neither → a relative path."""
+
+    def __init__(self, *, base_url: str | None, trust_forwarded: bool) -> None:
+        self._base_url = base_url
+        self._trust_forwarded = trust_forwarded
         self._ops: dict[Callable[..., object], _RouteRef] = {}
         self._refs: dict[tuple[str, str], _RouteRef] = {}
 
@@ -1286,21 +1353,36 @@ class _Reverser:
                 raise WiringError(f"duplicate ref {ref_name!r} for operation {op_name!r}")
             self._refs[key] = route_ref
 
-    def resolve(self, target: Target) -> str:
-        """Turn a ``Location`` / ``Link`` target into a relative URL: a literal passes
-        through, an operation or ref resolves to its path with ``params`` filling slots."""
-        if isinstance(target, UrlTarget):
+    def _public_prefix(self, scope: Scope) -> str:
+        """The string prepended to a reversed path: a static ``base_url``, else the
+        proxy's public origin + ``X-Forwarded-Prefix`` when trusted, else empty (relative)."""
+        if self._base_url is not None:
+            return self._base_url
+        if self._trust_forwarded:
+            return _public_base(scope) + _forwarded_prefix(scope)
+        return ""
+
+    def resolve(self, target: Target, scope: Scope) -> str:
+        """Turn a ``Location`` / ``Link`` target into a URL: an absolute literal passes
+        through verbatim; a relative literal, an operation, or a ref all pick up the app's
+        URL base (static origin, or the trusted proxy's, plus prefix) when configured."""
+        if isinstance(target, URLTarget):
             return target.url
+        if isinstance(target, PathTarget):
+            return self._public_prefix(scope) + target.path
         if isinstance(target, OperationTarget):
             if target.operation not in self._ops:
                 raise WiringError(f"{target.operation.__qualname__} is not a mounted operation")
-            return _build_url(self._ops[target.operation], target.params)
-        key = (target.name, target.operation)
-        if key not in self._refs:
-            raise WiringError(f"no mounted operation for ref {target.name!r}.{target.operation!r}")
-        route_ref = self._refs[key]
-        _validate_ref_params(route_ref.path_type, target.params, target)
-        return _build_url(route_ref, target.params)
+            route_ref = self._ops[target.operation]
+        else:
+            key = (target.name, target.operation)
+            if key not in self._refs:
+                raise WiringError(
+                    f"no mounted operation for ref {target.name!r}.{target.operation!r}"
+                )
+            route_ref = self._refs[key]
+            _validate_ref_params(route_ref.path_type, target.params, target)
+        return self._public_prefix(scope) + _build_url(route_ref, target.params)
 
 
 def _format_link(url: str, link: Link) -> str:
@@ -1313,15 +1395,17 @@ def _format_link(url: str, link: Link) -> str:
 
 
 def _link_header_pairs(
-    reverser: _Reverser, location: Location | None, links: Sequence[Link]
+    reverser: _Reverser, scope: Scope, location: Location | None, links: Sequence[Link]
 ) -> list[tuple[bytes, bytes]]:
     """The resolved ``Location`` / ``Link`` header pairs for a response (empty when the
     response sets neither). Links join into one header value, per RFC 8288."""
     pairs: list[tuple[bytes, bytes]] = []
     if location is not None:
-        pairs.append((b"location", reverser.resolve(location.target).encode("latin-1")))
+        pairs.append((b"location", reverser.resolve(location.target, scope).encode("latin-1")))
     if links:
-        value = ", ".join(_format_link(reverser.resolve(link.target), link) for link in links)
+        value = ", ".join(
+            _format_link(reverser.resolve(link.target, scope), link) for link in links
+        )
         pairs.append((b"link", value.encode("latin-1")))
     return pairs
 
@@ -1344,12 +1428,12 @@ class _BytesResponseSender:
     async def __call__(
         self, scope: Scope, receive: Receive, send: Send, result: BytesResponse[Any]
     ) -> None:
-        _ = (scope, receive)
+        _ = receive
         status = result.status_code if result.status_code is not None else self._status
         headers = _response_headers(
             result.headers, result.raw_headers, b"application/octet-stream", len(result.content)
         )
-        headers += _link_header_pairs(self._reverser, result.location, result.links)
+        headers += _link_header_pairs(self._reverser, scope, result.location, result.links)
         await _send_payload(send, status, result.content, headers)
 
 
@@ -1361,13 +1445,13 @@ class _JSONResponseSender:
     async def __call__(
         self, scope: Scope, receive: Receive, send: Send, result: JSONResponse[Any, Any]
     ) -> None:
-        _ = (scope, receive)
+        _ = receive
         status = result.status_code if result.status_code is not None else self._status
         payload = msgspec_encoder.encode(result.json)
         headers = _response_headers(
             result.headers, result.raw_headers, b"application/json", len(payload)
         )
-        headers += _link_header_pairs(self._reverser, result.location, result.links)
+        headers += _link_header_pairs(self._reverser, scope, result.location, result.links)
         await _send_payload(send, status, payload, headers)
 
 
@@ -1516,7 +1600,7 @@ class _StreamSender:
     ) -> None:
         status = result.status_code if result.status_code is not None else self._status
         headers = _stream_headers(result.headers, result.raw_headers, self._content_type)
-        headers += _link_header_pairs(self._reverser, result.location, result.links)
+        headers += _link_header_pairs(self._reverser, scope, result.location, result.links)
         if scope["method"] == "HEAD":
             await send({"type": "http.response.start", "status": status, "headers": headers})
             await send({"type": "http.response.body", "body": b""})
@@ -1615,7 +1699,7 @@ class _SSEStreamSender(_StreamSender):
         sse = cast("SSEResponse[Any]", result)
         status = result.status_code if result.status_code is not None else self._status
         headers = _stream_headers(result.headers, result.raw_headers, self._content_type)
-        headers += _link_header_pairs(self._reverser, result.location, result.links)
+        headers += _link_header_pairs(self._reverser, scope, result.location, result.links)
         if scope["method"] == "HEAD":
             await send({"type": "http.response.start", "status": status, "headers": headers})
             await send({"type": "http.response.body", "body": b""})
@@ -1757,6 +1841,10 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
     Pass ``factory=`` to supply a prebuilt factory instead of building one — the
     seam for tests, which inject a ``create_autospec`` stand-in
     (``MyApp(factory=mock_factory)``) so the real services are never constructed.
+
+    Reverse-routed ``Location`` / ``Link`` URLs are relative unless the environment sets
+    ``JERO_BASE_URL`` (a static public origin) or ``JERO_TRUST_FORWARDED`` (rebuild the
+    origin per request from ``X-Forwarded-*``); see :func:`_forwarded_config_from_env`.
     """
 
     def __init__(self, *, factory: FactoryT | None = None) -> None:
@@ -1765,7 +1853,8 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         self._allowed: _AllowedMethods = {}
         self._allow_cache: dict[str, bytes] = {}
         self._decoders: dict[type[Struct], Decoder[Struct]] = {}
-        self._reverser = _Reverser()
+        base_url, trust_forwarded = _forwarded_config_from_env()
+        self._reverser = _Reverser(base_url=base_url, trust_forwarded=trust_forwarded)
         self._stack = ExitStack()
         self._astack = AsyncExitStack()
         self._factory: FactoryT = factory if factory is not None else self._make_factory()

@@ -6,7 +6,8 @@ target three ways:
 - ``from_operation(Class.operation, params=...)`` — the blessed, typed form. The method
   reference carries the class (its path) and the operation; the wrong ``params`` Struct
   is caught **at construction**.
-- ``from_url(url)`` — a literal URL, no reversal.
+- ``from_path(path)`` / ``from_url(url)`` — a literal root-relative path (composed with the
+  app's URL base, like a reversed operation) or a verbatim fully-qualified URL.
 - ``from_ref("name.operation", params=...)`` — a string escape hatch for genuine
   circular imports between feature modules; opt in per class with ``ref=``.
 
@@ -46,13 +47,21 @@ class RefTarget:
 
 
 @dataclass(frozen=True, slots=True)
-class UrlTarget:
-    """A reversal target that is already a literal URL — no reversal."""
+class URLTarget:
+    """A fully-qualified URL, used verbatim — never rewritten."""
 
     url: str
 
 
-type Target = OperationTarget | RefTarget | UrlTarget
+@dataclass(frozen=True, slots=True)
+class PathTarget:
+    """A root-relative path that picks up the app's URL base (static origin or the
+    proxy's, plus prefix) the same way a reversed operation does."""
+
+    path: str
+
+
+type Target = OperationTarget | RefTarget | URLTarget | PathTarget
 
 
 # Path Struct type per operation function, introspected once: get_type_hints is
@@ -85,7 +94,10 @@ def _validate_operation_params(operation: Callable[..., object], params: Struct 
         return
     if params is None:
         raise TypeError(f"{label} requires params of type {expected.__name__}")
-    if not isinstance(params, expected):
+    # Exact type, not isinstance: params must be *the* path struct the operation declares.
+    # isinstance would silently accept a subclass; we want an exact-shape contract that
+    # fails loud, so the disable is deliberate (pylint's advice is wrong for this case).
+    if type(params) is not expected:  # pylint: disable=unidiomatic-typecheck
         raise TypeError(
             f"{label} expects params of type {expected.__name__}, got {type(params).__name__}",
         )
@@ -115,8 +127,14 @@ class Location:
 
     @classmethod
     def from_url(cls, url: str) -> Self:
-        """Point at a literal URL (relative or absolute) — no reversal."""
-        return cls(UrlTarget(url))
+        """Point at a fully-qualified URL, used verbatim — never rewritten."""
+        return cls(URLTarget(url))
+
+    @classmethod
+    def from_path(cls, path: str) -> Self:
+        """Point at a root-relative path; it picks up the app's URL base (absolute origin /
+        prefix) the same way a reversed operation does."""
+        return cls(PathTarget(path))
 
     @classmethod
     def from_ref(cls, ref: str, *, params: Struct | None = None) -> Self:
@@ -153,8 +171,16 @@ class Link:
     def from_url(
         cls, url: str, *, rel: str, title: str | None = None, media_type: str | None = None
     ) -> Self:
-        """Link to a literal URL (relative or absolute) with relation ``rel``."""
-        return cls(UrlTarget(url), rel, title, media_type)
+        """Link to a fully-qualified URL, used verbatim — never rewritten."""
+        return cls(URLTarget(url), rel, title, media_type)
+
+    @classmethod
+    def from_path(
+        cls, path: str, *, rel: str, title: str | None = None, media_type: str | None = None
+    ) -> Self:
+        """Link to a root-relative path; it picks up the app's URL base the same way a
+        reversed operation does."""
+        return cls(PathTarget(path), rel, title, media_type)
 
     @classmethod
     def from_ref(

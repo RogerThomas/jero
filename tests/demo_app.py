@@ -320,7 +320,9 @@ class JobsResource(Resource, path="/jobs", ref="jobs"):
                 Link.from_operation(
                     JobsResource.read_one, rel="self", params=JobPath(job_id=json.id)
                 ),
-                Link.from_url("/docs/jobs", rel="help", title="Job docs", media_type="text/html"),
+                # a path link picks up the app's URL base; a full url is verbatim.
+                Link.from_path("/docs/jobs", rel="help", title="Job docs", media_type="text/html"),
+                Link.from_url("https://status.example.com", rel="status"),
             ],
         )
 
@@ -339,7 +341,11 @@ class JobLinkEndpoint(Endpoint, path="/job-link"):
 
 class LinksDemoApp(BaseApp):
     """Demonstrates reverse-routed ``Location`` / ``Link``: typed ``from_operation``, a
-    literal ``from_url``, and the ``from_ref`` string escape hatch across 'modules'."""
+    literal ``from_path`` / ``from_url``, and the ``from_ref`` string hatch across 'modules'.
+
+    Whether the emitted URLs are relative or absolute is decided by the environment
+    (``JERO_BASE_URL`` / ``JERO_TRUST_FORWARDED``), read once at construction — the app
+    itself needs no extra wiring."""
 
     async def _wire(self) -> None:
         """Wire the jobs resource and the cross-module link endpoint."""
