@@ -48,7 +48,7 @@ contention and shared-state effects, so each number reflects that framework alon
 | :------------ | :------------------------------ |
 | Machine       | Apple M3 Max, 36 GB             |
 | Concurrency   | 100 VUs                         |
-| Duration      | 5s per run                      |
+| Duration      | 30s per run                     |
 | Best-of-N     | 3 runs                          |
 | Workers       | 1 (Go pinned to `GOMAXPROCS=1`) |
 | Python server | Granian, single worker          |
