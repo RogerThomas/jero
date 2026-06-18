@@ -19,7 +19,17 @@ from msgspec import Struct
 from msgspec.json import decode as json_decode
 from msgspec.json import encode as json_encode
 
-from jero import BackgroundTasks, BaseApp, BaseFactory, Endpoint, HTTPError, Resource
+from jero import (
+    BackgroundTasks,
+    BaseApp,
+    BaseFactory,
+    Endpoint,
+    HTTPError,
+    JSONResponse,
+    Link,
+    Location,
+    Resource,
+)
 
 
 class Camel(Struct, rename="camel"):
@@ -277,3 +287,61 @@ class BackgroundDemoApp(BaseApp):
         tasks = await self._aenter(BackgroundTasks(drain_timeout=1.0))
         tasks.register(self._analytics.process)
         self._include_endpoint(EventsEndpoint(tasks))
+
+
+class Job(Camel):
+    """A created job; its id flows into the reversed ``Location`` / ``Link`` URLs."""
+
+    id: str
+
+
+class JobPath(Camel):
+    """Path Struct for a single job — its ``job_id`` fills the reversed URL slot."""
+
+    job_id: str
+
+
+class JobsResource(Resource, path="/jobs", ref="jobs"):
+    """Jobs collection. ``create`` returns 201 with a ``Location`` reverse-routed to
+    ``read_one`` and a ``Link`` header (self + a literal help link). ``ref="jobs"`` lets
+    another module address it by string via ``Link.from_ref('jobs.read_one')``."""
+
+    async def read_one(self, path: JobPath) -> Job:
+        """Return a single job by path id (the reversal target)."""
+        return Job(id=path.job_id)
+
+    async def create(self, json: Job) -> JSONResponse[Job]:
+        """Create a job, pointing the response at the new resource."""
+        return JSONResponse(
+            json=json,
+            status_code=201,
+            location=Location.from_operation(JobsResource.read_one, params=JobPath(job_id=json.id)),
+            links=[
+                Link.from_operation(
+                    JobsResource.read_one, rel="self", params=JobPath(job_id=json.id)
+                ),
+                Link.from_url("/docs/jobs", rel="help", title="Job docs", media_type="text/html"),
+            ],
+        )
+
+
+class JobLinkEndpoint(Endpoint, path="/job-link"):
+    """A second 'module' that can't import ``JobsResource`` (imagine an import cycle), so
+    it addresses the jobs route by string ref instead of by the operation reference."""
+
+    async def get(self) -> JSONResponse[Job]:
+        """Return a job carrying a cross-module ``Link`` resolved through the ref."""
+        return JSONResponse(
+            json=Job(id="job-id"),
+            links=[Link.from_ref("jobs.read_one", rel="related", params=JobPath(job_id="job-id"))],
+        )
+
+
+class LinksDemoApp(BaseApp):
+    """Demonstrates reverse-routed ``Location`` / ``Link``: typed ``from_operation``, a
+    literal ``from_url``, and the ``from_ref`` string escape hatch across 'modules'."""
+
+    async def _wire(self) -> None:
+        """Wire the jobs resource and the cross-module link endpoint."""
+        self._include_resource(JobsResource())
+        self._include_endpoint(JobLinkEndpoint())

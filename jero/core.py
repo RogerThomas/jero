@@ -71,6 +71,7 @@ from msgspec.structs import fields as struct_fields
 from jero.codecs import msgspec_encoder
 from jero.forms import FilePart, FormPart, NoHeaders
 from jero.headers import RawHeaders
+from jero.links import Link, Location, OperationTarget, RefTarget, Target, UrlTarget
 from jero.multipart import MultipartError, MultipartParser, parse_options_header
 from jero.streaming import (
     NDJSONStreamingResponse,
@@ -164,11 +165,17 @@ class BaseResponse[H: Struct | None = None]:
 
     ``status_code`` overrides the verb's default status (201 for create, else 200)
     when set.
+
+    ``location`` emits a ``Location`` header and ``links`` a single ``Link`` header,
+    each reverse-routed to a mounted operation (see :mod:`jero.links`); the URLs are
+    relative.
     """
 
     headers: H | None = None
     raw_headers: RawHeaders | Mapping[str, str] | None = None
     status_code: int | None = None
+    location: Location | None = None
+    links: Sequence[Link] = ()
 
 
 @dataclass(kw_only=True, slots=True)
@@ -233,18 +240,27 @@ class _Routable:
 
     A concrete class declares its mount path at definition time —
     ``class Widgets(Resource, path="/widgets")`` — and it's read off the class at
-    wiring. The path is *optional* here: an intermediate base simply omits it (no
-    ``abstract`` flag needed), and a class with no class-path can still be given one at
-    include time. The class-path is the single source of truth that URL reversal (the
-    coming ``Link`` / ``Location``) reads.
+    wiring. ``path`` is required on the concrete shapes (omitting it is a type error);
+    it stays *optional* here only so the ``Resource`` / ``Endpoint`` base definitions
+    themselves type-check. The class-path is the single source of truth that URL
+    reversal (``Link`` / ``Location``) reads.
+
+    ``ref`` is an optional string handle for that reversal: set it to address the class
+    from ``Link.from_ref("name.operation")`` when importing the class would form an
+    import cycle. Prefer ``from_operation`` everywhere else.
     """
 
     path: ClassVar[str]
+    ref: ClassVar[str | None] = None
 
-    def __init_subclass__(cls, *, path: str | None = None, **kwargs: object) -> None:
+    def __init_subclass__(
+        cls, *, path: str | None = None, ref: str | None = None, **kwargs: object
+    ) -> None:
         super().__init_subclass__(**kwargs)
         if path is not None:
             cls.path = path
+        if ref is not None:
+            cls.ref = ref
 
 
 class Resource(_Routable):
@@ -278,6 +294,7 @@ class Resource(_Routable):
         cls,
         *,
         path: str,
+        ref: str | None = None,
         meta: ResourceMeta | None = None,
         meta_create: OperationMeta | None = None,
         meta_read_one: OperationMeta | None = None,
@@ -287,7 +304,8 @@ class Resource(_Routable):
         meta_delete: OperationMeta | None = None,
         **kwargs: object,
     ) -> None:
-        super().__init_subclass__(path=path, **kwargs)  # path handling lives on _Routable
+        # path / ref handling lives on _Routable
+        super().__init_subclass__(path=path, ref=ref, **kwargs)
         _validate_meta(
             cls,
             meta,
@@ -341,6 +359,7 @@ class Endpoint(_Routable):
         cls,
         *,
         path: str,
+        ref: str | None = None,
         meta: EndpointMeta | None = None,
         meta_get: OperationMeta | None = None,
         meta_post: OperationMeta | None = None,
@@ -349,7 +368,8 @@ class Endpoint(_Routable):
         meta_delete: OperationMeta | None = None,
         **kwargs: object,
     ) -> None:
-        super().__init_subclass__(path=path, **kwargs)  # path handling lives on _Routable
+        # path / ref handling lives on _Routable
+        super().__init_subclass__(path=path, ref=ref, **kwargs)
         _validate_meta(
             cls,
             meta,
@@ -388,6 +408,8 @@ class _StreamResult(Protocol):
     headers: Struct | None
     raw_headers: RawHeaders | Mapping[str, str] | None
     status_code: int | None
+    location: Location | None
+    links: Sequence[Link]
 
 
 def _allow_header(allowed: Sequence[_HttpMethod]) -> bytes:
@@ -1193,6 +1215,117 @@ async def _send_payload(
     await send({"type": "http.response.body", "body": payload})
 
 
+@dataclass(frozen=True, slots=True)
+class _RouteRef:
+    """A mounted operation, as the reverse registry stores it: the compiled path
+    segments (template slots + any trailing id, by wire name) and the path Struct type."""
+
+    segments: tuple[_Segment, ...]
+    path_type: type[Struct] | None
+
+
+def _build_url(route_ref: _RouteRef, params: Struct | None) -> str:
+    segments = route_ref.segments
+    if params is None:
+        if any(is_param for is_param, _ in segments):
+            raise WiringError("reverse target needs params to fill its path slots")
+        return "/".join(value for _, value in segments)
+    data = to_builtins(params)
+    return "/".join(
+        _encode_header_value(data[value]) if is_param else value for is_param, value in segments
+    )
+
+
+def _validate_ref_params(
+    expected: type[Struct] | None, params: Struct | None, target: RefTarget
+) -> None:
+    """The deferred params-type check for ``from_ref`` (its string can't carry the type
+    statically, so this runs at resolution, against the registered path Struct)."""
+    label = f"{target.name}.{target.operation}"
+    if expected is None:
+        if params is not None:
+            raise WiringError(f"{label} takes no path params")
+        return
+    if params is None:
+        raise WiringError(f"{label} requires params of type {expected.__name__}")
+    if not isinstance(params, expected):
+        raise WiringError(
+            f"{label} expects params of type {expected.__name__}, got {type(params).__name__}",
+        )
+
+
+class _Reverser:
+    """The wiring-time reverse registry: maps each mounted operation (by its function,
+    and by its optional ``ref`` name) to the path it resolves to. Built as routes are
+    included; queried at response send to turn a ``Location`` / ``Link`` target into a
+    URL. Deliberately not a dataclass — it owns two mutating indexes filled at wiring."""
+
+    def __init__(self) -> None:
+        self._ops: dict[Callable[..., object], _RouteRef] = {}
+        self._refs: dict[tuple[str, str], _RouteRef] = {}
+
+    def register(
+        self,
+        operation: Callable[..., object],
+        ref_name: str | None,
+        op_name: str,
+        route_ref: _RouteRef,
+    ) -> None:
+        """Index one mounted operation, by its function and (if set) its ``ref`` name.
+        A function mounted at two paths, or a duplicate ``ref``, is a loud ``WiringError``."""
+        existing = self._ops.get(operation)
+        if existing is not None and existing != route_ref:
+            raise WiringError(
+                f"ambiguous reverse target: {operation.__qualname__} is mounted at more "
+                f"than one path (shared via a mixin?); use ref= to address it instead",
+            )
+        self._ops[operation] = route_ref
+        if ref_name is not None:
+            key = (ref_name, op_name)
+            if key in self._refs:
+                raise WiringError(f"duplicate ref {ref_name!r} for operation {op_name!r}")
+            self._refs[key] = route_ref
+
+    def resolve(self, target: Target) -> str:
+        """Turn a ``Location`` / ``Link`` target into a relative URL: a literal passes
+        through, an operation or ref resolves to its path with ``params`` filling slots."""
+        if isinstance(target, UrlTarget):
+            return target.url
+        if isinstance(target, OperationTarget):
+            if target.operation not in self._ops:
+                raise WiringError(f"{target.operation.__qualname__} is not a mounted operation")
+            return _build_url(self._ops[target.operation], target.params)
+        key = (target.name, target.operation)
+        if key not in self._refs:
+            raise WiringError(f"no mounted operation for ref {target.name!r}.{target.operation!r}")
+        route_ref = self._refs[key]
+        _validate_ref_params(route_ref.path_type, target.params, target)
+        return _build_url(route_ref, target.params)
+
+
+def _format_link(url: str, link: Link) -> str:
+    parts = [f"<{url}>", f'rel="{link.rel}"']
+    if link.title is not None:
+        parts.append(f'title="{link.title}"')
+    if link.media_type is not None:
+        parts.append(f'type="{link.media_type}"')
+    return "; ".join(parts)
+
+
+def _link_header_pairs(
+    reverser: _Reverser, location: Location | None, links: Sequence[Link]
+) -> list[tuple[bytes, bytes]]:
+    """The resolved ``Location`` / ``Link`` header pairs for a response (empty when the
+    response sets neither). Links join into one header value, per RFC 8288."""
+    pairs: list[tuple[bytes, bytes]] = []
+    if location is not None:
+        pairs.append((b"location", reverser.resolve(location.target).encode("latin-1")))
+    if links:
+        value = ", ".join(_format_link(reverser.resolve(link.target), link) for link in links)
+        pairs.append((b"link", value.encode("latin-1")))
+    return pairs
+
+
 @dataclass(slots=True)
 class _BytesSender:
     _status: int
@@ -1206,6 +1339,7 @@ class _BytesSender:
 @dataclass(slots=True)
 class _BytesResponseSender:
     _status: int
+    _reverser: _Reverser
 
     async def __call__(
         self, scope: Scope, receive: Receive, send: Send, result: BytesResponse[Any]
@@ -1215,12 +1349,14 @@ class _BytesResponseSender:
         headers = _response_headers(
             result.headers, result.raw_headers, b"application/octet-stream", len(result.content)
         )
+        headers += _link_header_pairs(self._reverser, result.location, result.links)
         await _send_payload(send, status, result.content, headers)
 
 
 @dataclass(slots=True)
 class _JSONResponseSender:
     _status: int
+    _reverser: _Reverser
 
     async def __call__(
         self, scope: Scope, receive: Receive, send: Send, result: JSONResponse[Any, Any]
@@ -1231,6 +1367,7 @@ class _JSONResponseSender:
         headers = _response_headers(
             result.headers, result.raw_headers, b"application/json", len(payload)
         )
+        headers += _link_header_pairs(self._reverser, result.location, result.links)
         await _send_payload(send, status, payload, headers)
 
 
@@ -1354,6 +1491,7 @@ async def _finish_lifecycle[T](lifecycle: AsyncIterator[AsyncIterable[T]] | None
 class _StreamSender:
     _status: int
     _content_type: bytes
+    _reverser: _Reverser
 
     def _chunk(self, item: object) -> bytes:
         if not isinstance(item, bytes):
@@ -1378,6 +1516,7 @@ class _StreamSender:
     ) -> None:
         status = result.status_code if result.status_code is not None else self._status
         headers = _stream_headers(result.headers, result.raw_headers, self._content_type)
+        headers += _link_header_pairs(self._reverser, result.location, result.links)
         if scope["method"] == "HEAD":
             await send({"type": "http.response.start", "status": status, "headers": headers})
             await send({"type": "http.response.body", "body": b""})
@@ -1476,6 +1615,7 @@ class _SSEStreamSender(_StreamSender):
         sse = cast("SSEResponse[Any]", result)
         status = result.status_code if result.status_code is not None else self._status
         headers = _stream_headers(result.headers, result.raw_headers, self._content_type)
+        headers += _link_header_pairs(self._reverser, result.location, result.links)
         if scope["method"] == "HEAD":
             await send({"type": "http.response.start", "status": status, "headers": headers})
             await send({"type": "http.response.body", "body": b""})
@@ -1503,19 +1643,19 @@ class _SSEStreamSender(_StreamSender):
         await send({"type": "http.response.body", "body": b"", "more_body": False})
 
 
-def _result_sender(kind: _ReturnKind, status: int) -> _Sender:
+def _result_sender(kind: _ReturnKind, status: int, reverser: _Reverser) -> _Sender:
     if kind == "bytes":
         return _BytesSender(status)
     if kind == "bytes-response":
-        return _BytesResponseSender(status)
+        return _BytesResponseSender(status, reverser)
     if kind == "json-response":
-        return _JSONResponseSender(status)
+        return _JSONResponseSender(status, reverser)
     if kind == "stream-bytes":
-        return _StreamSender(status, b"application/octet-stream")
+        return _StreamSender(status, b"application/octet-stream", reverser)
     if kind == "stream-ndjson":
-        return _NDJSONStreamSender(status, b"application/x-ndjson")
+        return _NDJSONStreamSender(status, b"application/x-ndjson", reverser)
     if kind == "stream-sse":
-        return _SSEStreamSender(status, b"text/event-stream")
+        return _SSEStreamSender(status, b"text/event-stream", reverser)
     return _JSONSender(status)
 
 
@@ -1530,11 +1670,12 @@ class _Route:
         status: int,
         sources: _Sources,
         auth: _CompiledAuth | None,
+        reverser: _Reverser,
     ) -> None:
         self._fn = fn
         self._is_async = inspect.iscoroutinefunction(fn)
         self._bind = _Binder(sources, auth)
-        self._send_result = _result_sender(sources.return_kind, status)
+        self._send_result = _result_sender(sources.return_kind, status, reverser)
         self._arity = sources.arity
 
     async def __call__(
@@ -1624,6 +1765,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         self._allowed: _AllowedMethods = {}
         self._allow_cache: dict[str, bytes] = {}
         self._decoders: dict[type[Struct], Decoder[Struct]] = {}
+        self._reverser = _Reverser()
         self._stack = ExitStack()
         self._astack = AsyncExitStack()
         self._factory: FactoryT = factory if factory is not None else self._make_factory()
@@ -1728,8 +1870,11 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
             segments = _route_segments(
                 cls, name, template, sources.path, extends_path=verb.extends_path
             )
-            handler = _Route(fn, verb.success_status, sources, compiled_auth)
+            handler = _Route(fn, verb.success_status, sources, compiled_auth, self._reverser)
             self._register(verb.method, segments, handler)
+            self._reverser.register(
+                fn.__func__, cls.ref, name, _RouteRef(tuple(segments), sources.path)
+            )
             registered = True
 
         if not registered:
