@@ -22,6 +22,9 @@ A jero app is a `BaseApp` subclass that wires up *resources* (REST collections) 
 [msgspec](https://jcristharif.com/msgspec/) `Struct`s — the types *are* the
 request/response contract.
 
+jero has no route decorators. Instead of writing `@app.get(...)`, you define a class,
+declare its path on the class, and let method names carry the HTTP semantics.
+
 ```python
 from msgspec import Struct
 
@@ -65,6 +68,13 @@ curl localhost:8000/widgets/abc
 That's the whole loop: a `Struct` for the URL slots (`path`), a `Struct` for the
 response, and a method name (`read_one`) that maps to `GET`.
 
+The `Struct` requirement is deliberate. JSON request bodies, JSON responses, query
+params, path params, headers, forms, auth users, and response headers all use typed
+contracts. That is what gives jero validation, fast msgspec serialization, startup
+errors for invalid wiring, and the source material for the coming OpenAPI generator.
+If a handler returns a raw `dict`, jero can't prove or document its shape, so it is a
+startup error.
+
 ## The mental model
 
 - A **`Resource`** is a class with any of the CRUD methods `create` / `read_one` /
@@ -80,6 +90,7 @@ response, and a method name (`read_one`) that maps to `GET`.
   headers or status. See [Responses & headers](guide/responses.md).
 - **Dependencies are hand-wired** in `_wire` — no DI container. The framework adds the
   one thing plain Python doesn't: resource lifecycle. See [Wiring & lifecycle](guide/wiring.md).
+- For a complete application shape, see the [complete example](guide/complete-example.md).
 
 ## Test it without a server
 
@@ -100,6 +111,8 @@ def test_read_one():
 ## Where next
 
 - [Resources & Endpoints](guide/resources.md) — the routing model and path templates.
+- [Complete example](guide/complete-example.md) — factory, service, auth, lifecycle,
+  resource methods, typed binding, and typed responses together.
 - [Request binding](guide/binding.md) — every way to get data into a handler.
 - [Responses & headers](guide/responses.md) — typed bodies, typed headers, status codes.
 - [Streaming](guide/streaming.md) — NDJSON, Server-Sent Events, and raw byte streams.
