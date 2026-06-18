@@ -57,7 +57,9 @@ jobs:
         uses: ./.github/actions/setup-python-env
 
       - name: Build documentation
-        run: uv run zensical build --clean
+        run: |
+          uv run zensical build --clean
+          uv run yeet ./scripts/build_agent_docs.py
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
