@@ -9,7 +9,7 @@ from typing import Literal
 
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, FilePart, FormPart
+from jero import BaseApp, Endpoint, FilePart, FormPart, RawHeaders
 
 
 class JobConfig(Struct):
@@ -63,12 +63,13 @@ Plain field types give you just the value. When you need a part's `content_type`
 per-part headers, or (for files) the `filename`, wrap the type:
 
 ```python
-class FormPart[T, H: Struct = NoHeaders](Struct):
+class FormPart[T, H: Struct | None = None](Struct):
     data: T
     content_type: str | None
     headers: H
+    raw_headers: RawHeaders
 
-class FilePart[H: Struct = NoHeaders](FormPart[bytes, H]):
+class FilePart[H: Struct | None = None](FormPart[bytes, H]):
     filename: str           # required; a file part without one is a 422
 ```
 
@@ -93,7 +94,8 @@ class Upload(Struct):
     blob: FormPart[bytes, Checksum]
 ```
 
-`NoHeaders` is the default when a part declares none.
+`None` is the default when a part declares no typed headers. Use `raw_headers` when
+you need the part headers exactly as sent, including original casing or repeats.
 
 ## Error semantics
 

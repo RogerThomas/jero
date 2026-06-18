@@ -60,7 +60,7 @@ from contextlib import (
 from dataclasses import dataclass
 from enum import Enum
 from io import BytesIO
-from types import NoneType, get_original_bases
+from types import NoneType, UnionType, get_original_bases
 from typing import Any, ClassVar, Literal, Protocol, cast, get_args, get_origin, get_type_hints
 from urllib.parse import parse_qsl, unquote
 
@@ -69,7 +69,7 @@ from msgspec.json import Decoder
 from msgspec.structs import fields as struct_fields
 
 from jero.codecs import msgspec_encoder
-from jero.forms import FilePart, FormPart, NoHeaders
+from jero.forms import FilePart, FormPart
 from jero.headers import RawHeaders
 from jero.multipart import MultipartError, MultipartParser, parse_options_header
 from jero.streaming import (
@@ -499,11 +499,15 @@ def _is_scalar_payload(ann: object) -> bool:
     return get_origin(ann) is Literal
 
 
-def _form_part_types(ann: object) -> tuple[object, object] | None:
+def _form_part_types(ann: object) -> tuple[object, object | None] | None:
     origin = get_origin(ann)
     if origin is FormPart:
         args = get_args(ann)
-        return (args[0], args[1]) if len(args) == 2 else None
+        if len(args) == 2:
+            return args[0], args[1]
+        if len(args) == 1:
+            return args[0], FormPart.__type_params__[1].__default__
+        return None
     if origin is FilePart:
         args = get_args(ann)
         return (bytes, args[0]) if len(args) == 1 else None
@@ -515,6 +519,9 @@ def _form_part_types(ann: object) -> tuple[object, object] | None:
 
 
 def _strip_optional(ann: object) -> tuple[object, bool]:
+    origin = get_origin(ann)
+    if origin is not UnionType:
+        return ann, False
     args = get_args(ann)
     if len(args) != 2 or not any(_is_none_type(arg) for arg in args):
         return ann, False
@@ -549,7 +556,7 @@ class _FormField:
     name: str
     wire_name: str
     payload_type: object
-    headers_type: type[Struct]
+    headers_type: type[Struct] | None
     payload_kind: _PayloadKind
     decoder: Decoder[Struct] | None  # reusable typed decoder; set iff payload_kind == "struct"
     required: bool
@@ -570,6 +577,7 @@ class _Part:
     filename: str | None
     content_type: str | None
     headers: dict[str, str]
+    raw_headers: RawHeaders
     body: bytes
 
 
@@ -585,10 +593,15 @@ def _compile_form(
         file = item_type is FilePart or get_origin(item_type) is FilePart
         if part_types is None:
             payload_type = item_type
-            headers_type = NoHeaders
+            headers_type = None
         else:
             payload_type = part_types[0]
-            headers_type = _struct_annotation(cls, method, f"{field.name}.headers", part_types[1])
+            headers_ann = part_types[1]
+            headers_type = (
+                None
+                if headers_ann is None
+                else _struct_annotation(cls, method, f"{field.name}.headers", headers_ann)
+            )
         payload_kind = _payload_kind(cls, method, field.name, payload_type)
         decoder = (
             decoder_for(cast("type[Struct]", payload_type)) if payload_kind == "struct" else None
@@ -649,6 +662,7 @@ def _parse_form_parts(body: bytes, raw_headers: dict[str, str]) -> dict[str, lis
                     filename=raw_part.filename,
                     content_type=_part_content_type(headers),
                     headers=headers,
+                    raw_headers=RawHeaders(raw_part.headerlist),
                     body=raw_part.raw,
                 )
             )
@@ -680,8 +694,8 @@ def _decode_form_value(field: _FormField, part: _Part) -> object:
     if not field.enveloped:
         return data
     headers = (
-        NoHeaders()
-        if field.headers_type is NoHeaders
+        None
+        if field.headers_type is None
         else _convert_source(_mangle_headers(part.headers), field.headers_type, 400)
     )
     if field.file:
@@ -691,9 +705,15 @@ def _decode_form_value(field: _FormField, part: _Part) -> object:
             data=cast("bytes", data),
             content_type=part.content_type,
             headers=headers,
+            raw_headers=part.raw_headers,
             filename=part.filename,
         )
-    return FormPart(data=data, content_type=part.content_type, headers=headers)
+    return FormPart(
+        data=data,
+        content_type=part.content_type,
+        headers=headers,
+        raw_headers=part.raw_headers,
+    )
 
 
 def _decode_form_body(body: bytes, raw_headers: dict[str, str], spec: _FormSpec) -> Struct:

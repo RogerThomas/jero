@@ -19,7 +19,16 @@ from msgspec import Struct
 from msgspec.json import decode as json_decode
 from msgspec.json import encode as json_encode
 
-from jero import BackgroundTasks, BaseApp, BaseFactory, Endpoint, HTTPError, Resource
+from jero import (
+    BackgroundTasks,
+    BaseApp,
+    BaseFactory,
+    Endpoint,
+    FormPart,
+    HTTPError,
+    RawHeaders,
+    Resource,
+)
 
 
 class Camel(Struct, rename="camel"):
@@ -83,6 +92,22 @@ class Health(Camel):
     """Health-check response body."""
 
     status: str
+
+
+class RawForm(Camel):
+    """Multipart form whose part exposes raw part headers."""
+
+    blob: FormPart[bytes]
+
+
+class RawFormHeaders(Camel):
+    """Response echoing request and form-part raw headers."""
+
+    request_header_names: list[str]
+    part_header_names: list[str]
+    part_checksum_values: list[str]
+    part_content_type: str | None
+    part_typed_headers: bool
 
 
 def _body(resp: niquests.Response) -> bytes:
@@ -218,6 +243,20 @@ class RawHealthEndpoint(Endpoint, path="/raw-healthz"):
         return b'{"status":"ok"}'
 
 
+class RawFormEndpoint(Endpoint, path="/form-raw-headers"):
+    """Unauthenticated endpoint echoing request and form-part raw headers."""
+
+    async def post(self, form: RawForm, raw_headers: RawHeaders) -> RawFormHeaders:
+        """Return the raw request headers and the raw headers on the blob part."""
+        return RawFormHeaders(
+            request_header_names=raw_headers.keys(),
+            part_header_names=form.blob.raw_headers.keys(),
+            part_checksum_values=form.blob.raw_headers.getlist("x-checksum"),
+            part_content_type=form.blob.content_type,
+            part_typed_headers=form.blob.headers is not None,
+        )
+
+
 class DemoApp(BaseApp[Factory]):
     """Factory-injected demo app: authed widgets, authed /me, open /healthz."""
 
@@ -229,6 +268,7 @@ class DemoApp(BaseApp[Factory]):
         self._include_endpoint(WhoAmIEndpoint(), auth=auth)
         self._include_endpoint(HealthEndpoint())
         self._include_endpoint(RawHealthEndpoint())
+        self._include_endpoint(RawFormEndpoint())
 
 
 app = DemoApp()
