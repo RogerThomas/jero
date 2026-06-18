@@ -215,3 +215,5 @@ __marimo__/
 
 get_bench.py
 info_bench.py
+profile_shapes.py
+benchmark-results.txt

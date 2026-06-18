@@ -19,7 +19,9 @@ It's opinionated on purpose, and makes one bet: that being aggressively prescrip
 *and* a joy to build on. Three pillars, all non-negotiable:
 
 1. **Speed.** Introspection happens once, at startup. The request path is dict
-   lookup → msgspec decode → call → encode, and nothing else is ever added to it.
+   lookup → msgspec decode → call → encode, and nothing else is ever added to it. In a
+   side-by-side benchmark it's the fastest Python ASGI framework across every workload
+   tested — see [Performance](performance.md).
 2. **Opinionated DX.** One blessed way to do each thing, encoded so you can't get it
    wrong. Contracts fail loud at startup with a precise `WiringError`, never quietly
    at runtime.
@@ -93,6 +95,8 @@ New here? Start with [Getting Started](getting-started.md).
   on the wire. [→](guide/rest.md)
 - **In-process `TestClient`** — sync, no socket, full lifespan, streaming support.
   [→](guide/testing.md)
+- **Fastest Python ASGI framework tested** — benchmarked side by side against Python, Go,
+  and Bun frameworks, with the full methodology shown. [→](performance.md)
 
 ## API reference
 

@@ -62,7 +62,7 @@ request/response contract, and they're verified at startup.
 <table>
 <tr>
 <td>⚡&nbsp;<strong>Fast</strong></td>
-<td>Co-leads the fastest Python ASGI frameworks — within a few percent of Go on the hot path (see <a href="#performance">Performance</a>). All introspection happens once, at startup; the request path is just dict lookup → decode → call → encode.</td>
+<td>The fastest Python ASGI framework across every workload in our <a href="#performance">benchmark</a>. All introspection happens once, at startup; the request path is just dict lookup → decode → call → encode.</td>
 </tr>
 <tr>
 <td>🎯&nbsp;<strong>Opinionated</strong></td>
@@ -177,31 +177,28 @@ app = App()
 
 ## Performance
 
-jero is fast — very fast. It co-leads the quickest Python ASGI frameworks, and on a
-narrow, favorable benchmark lands within a few percent of a hand-written Go (Gin)
-service. That near-Go figure is a best case under specific conditions — **not** a
-claim that jero is as fast as Go in general. It isn't, and we're not saying it is.
+In a side-by-side benchmark against seven other frameworks — Python (Litestar, FastAPI,
+Blacksheep, Robyn, Flask), Go (Gin), and Bun (Elysia) — **jero is the fastest Python
+framework in every scenario tested.** On the pure framework hot path (a typed JSON
+`GET`) it tops the table outright, ahead of both the Go and the Bun service:
 
-The numbers below are from the authed write path — `POST /movies` (bearer auth →
-msgspec decode → handler → encode → `201`) — run natively under granian with a single
-worker (Go pinned to `GOMAXPROCS=1`), driven by [oha](https://github.com/hatoo/oha)
-at concurrency 200:
+| Framework      | `GET /info` req/s | Relative to jero |
+| :------------- | :---------------- | :--------------- |
+| **jero**       | **43.4k**         | **1.00×**        |
+| blacksheep     | 39.7k             | 0.91×            |
+| gin *(Go)*     | 39.2k             | 0.90×            |
+| elysia *(Bun)* | 38.6k             | 0.89×            |
+| litestar       | 33.8k             | 0.78×            |
+| fastapi        | 25.7k             | 0.59×            |
 
-| Framework | Requests/sec | Relative to jero |
-| --- | --: | --: |
-| Go / Gin *(reference)* | ≈ 45,200 | 1.03× |
-| **jero** | **≈ 44,000** | **1.00×** |
-| Blacksheep | ≈ 43,000 | 0.98× |
-| Litestar | ≈ 22,000 | 0.50× |
-| Robyn | ≈ 15,000 | 0.34× |
-| FastAPI | ≈ 7,300 | 0.17× |
+On I/O-bound paths — proxying an upstream, reading from a database — Go pulls well clear,
+because there the bottleneck is the HTTP-client and database-driver ecosystem, not the
+framework. jero stays the fastest Python option, but it isn't as fast as Go in general,
+and we're not claiming it is.
 
-A statistical tie with Blacksheep, ~2× Litestar, ~3× Robyn, and ~6× idiomatic
-FastAPI — at ~97% of raw Go on the same machine (and ~91% on a plain `GET`). Those
-near-Go ratios hold **only** under these ideal, constrained conditions — single
-worker, Go pinned to one core, localhost, this one hot path, partly client-bound.
-Treat them as indicative, not a general "as fast as Go" claim; the benchmark harness
-lives in a separate repo.
+These are favourable, constrained conditions — single worker, single core, localhost,
+best-of-N — and a microbenchmark is not your application. See the full methodology and
+all four scenarios in the **[Performance docs](https://RogerThomas.github.io/jero/performance/)**.
 
 ## Development
 
