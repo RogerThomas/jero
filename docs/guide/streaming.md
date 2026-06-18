@@ -28,7 +28,7 @@ class Movie(Struct):
     title: str
 
 
-class MoviesEndpoint(Endpoint):
+class MoviesEndpoint(Endpoint, path="/movies"):
     async def _movies(self) -> AsyncIterator[Movie]:
         for title in ("first", "second"):     # stream rows from a DB cursor, etc.
             yield Movie(title=title)
@@ -39,7 +39,7 @@ class MoviesEndpoint(Endpoint):
 
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_endpoint(MoviesEndpoint(), path="/movies")
+        self._include_endpoint(MoviesEndpoint())
 
 
 app = App()
@@ -62,7 +62,7 @@ class Movie(Struct):
     title: str
 
 
-class EventsEndpoint(Endpoint):
+class EventsEndpoint(Endpoint, path="/events"):
     async def _events(self) -> AsyncIterator[Movie | ServerSentEvent[Movie]]:
         yield Movie(title="first")                                    # data: {...}
         yield ServerSentEvent(data=Movie(title="second"), event="added", id="2")
@@ -73,7 +73,7 @@ class EventsEndpoint(Endpoint):
 
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_endpoint(EventsEndpoint(), path="/events")
+        self._include_endpoint(EventsEndpoint())
 
 
 app = App()
@@ -98,7 +98,7 @@ from collections.abc import AsyncIterator
 from jero import BaseApp, Endpoint, StreamingResponse
 
 
-class CsvEndpoint(Endpoint):
+class CsvEndpoint(Endpoint, path="/export"):
     async def _chunks(self) -> AsyncIterator[bytes]:
         yield b"id,name\n"
         yield b"1,gizmo\n"
@@ -109,7 +109,7 @@ class CsvEndpoint(Endpoint):
 
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_endpoint(CsvEndpoint(), path="/export")
+        self._include_endpoint(CsvEndpoint())
 
 
 app = App()
@@ -134,7 +134,7 @@ class Movie(Struct):
     title: str
 
 
-class ExportEndpoint(Endpoint):
+class ExportEndpoint(Endpoint, path="/movies/export"):
     async def _rows(self) -> AsyncIterator[Movie]:
         yield Movie(title="first")
         yield Movie(title="second")
@@ -150,7 +150,7 @@ class ExportEndpoint(Endpoint):
 
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_endpoint(ExportEndpoint(), path="/movies/export")
+        self._include_endpoint(ExportEndpoint())
 
 
 app = App()

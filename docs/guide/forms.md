@@ -30,7 +30,7 @@ class JobAccepted(Struct):
     size: int
 
 
-class UploadEndpoint(Endpoint):
+class UploadEndpoint(Endpoint, path="/jobs"):
     async def post(self, form: CreateJob) -> JobAccepted:
         dpi = form.config.dpi
         upload = form.document            # a FilePart
@@ -39,7 +39,7 @@ class UploadEndpoint(Endpoint):
 
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_endpoint(UploadEndpoint(), path="/jobs")
+        self._include_endpoint(UploadEndpoint())
 
 
 app = App()

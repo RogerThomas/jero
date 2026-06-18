@@ -79,7 +79,7 @@ class HeaderResult(Camel):
     default_blob_headers: NoHeaders
 
 
-class UploadEndpoint(Endpoint):
+class UploadEndpoint(Endpoint, path="/jobs"):
     """Endpoint binding a form with every part kind."""
 
     async def post(self, form: CreateJob) -> JobAccepted:
@@ -107,7 +107,7 @@ class ParamsOnlyForm(Camel):
     params: JobConfig
 
 
-class ParamsOnlyEndpoint(Endpoint):
+class ParamsOnlyEndpoint(Endpoint, path="/params"):
     """Endpoint binding a form with only a bare-Struct part."""
 
     async def post(self, form: ParamsOnlyForm) -> JobConfig:
@@ -115,7 +115,7 @@ class ParamsOnlyEndpoint(Endpoint):
         return form.params
 
 
-class HeadersEndpoint(Endpoint):
+class HeadersEndpoint(Endpoint, path="/headers"):
     """Endpoint binding a form whose parts carry typed headers."""
 
     async def post(self, form: HeaderForm) -> HeaderResult:
@@ -132,12 +132,12 @@ class UploadApp(BaseApp):
     """App wiring the form endpoints."""
 
     async def _wire(self) -> None:
-        self._include_endpoint(UploadEndpoint(), path="/jobs")
-        self._include_endpoint(ParamsOnlyEndpoint(), path="/params")
-        self._include_endpoint(HeadersEndpoint(), path="/headers")
+        self._include_endpoint(UploadEndpoint())
+        self._include_endpoint(ParamsOnlyEndpoint())
+        self._include_endpoint(HeadersEndpoint())
 
 
-class BodyOnPostResource(Resource):
+class BodyOnPostResource(Resource, path="/x"):
     """Resource illegally declaring both 'json' and 'form' on one handler."""
 
     async def create(self, json: JobConfig, form: CreateJob) -> JobConfig:
@@ -147,7 +147,7 @@ class BodyOnPostResource(Resource):
         return json
 
 
-class BodyOnGetResource(Resource):
+class BodyOnGetResource(Resource, path="/x"):
     """Resource illegally taking a 'form' on a bodyless GET handler."""
 
     async def read_many(self, form: CreateJob) -> JobAccepted:
@@ -175,7 +175,7 @@ class UnsupportedForm(Camel):
     values: dict[str, str]
 
 
-class UnsupportedFormResource(Resource):
+class UnsupportedFormResource(Resource, path="/x"):
     """Resource whose form field type is not a valid part payload."""
 
     async def create(self, form: UnsupportedForm) -> JobConfig:
@@ -193,7 +193,7 @@ class ResourceApp(BaseApp):
         super().__init__()
 
     async def _wire(self) -> None:
-        self._include_resource(self._resource, path="/x")
+        self._include_resource(self._resource)
 
 
 @pytest.fixture(name="client")

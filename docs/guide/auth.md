@@ -79,12 +79,12 @@ class Health(Struct):
     status: str
 
 
-class HealthEndpoint(Endpoint):
+class HealthEndpoint(Endpoint, path="/healthz"):
     async def get(self) -> Health:              # GET /healthz, open
         return Health(status="ok")
 
 
-class WhoAmIEndpoint(Endpoint):
+class WhoAmIEndpoint(Endpoint, path="/me"):
     async def get(self, user: User) -> User:    # receives the authenticate() result
         return user
 
@@ -92,8 +92,8 @@ class WhoAmIEndpoint(Endpoint):
 class App(BaseApp):
     async def _wire(self) -> None:
         auth = TokenAuth({"token": User(id="user-id", name="user-name")})
-        self._include_endpoint(WhoAmIEndpoint(), path="/me", auth=auth)
-        self._include_endpoint(HealthEndpoint(), path="/healthz")   # no auth
+        self._include_endpoint(WhoAmIEndpoint(), auth=auth)
+        self._include_endpoint(HealthEndpoint())   # no auth
 
 
 app = App()

@@ -37,14 +37,14 @@ class WidgetPath(Struct):
     widget_id: str
 
 
-class Widgets(Resource):
+class Widgets(Resource, path="/widgets"):
     async def read_one(self, path: WidgetPath) -> Widget:  # GET /widgets/{widget_id}
         return Widget(id=path.widget_id, name="gizmo")
 
 
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_resource(Widgets(), path="/widgets")
+        self._include_resource(Widgets())
 
 
 app = App()
@@ -148,7 +148,7 @@ class WidgetService:
 
 
 @dataclass
-class WidgetResource(Resource):
+class WidgetResource(Resource, path="/widgets"):
     _service: WidgetService
 
     # called as: POST /widgets
@@ -169,7 +169,7 @@ class Factory(BaseFactory):
 class App(BaseApp[Factory]):
     async def _wire(self) -> None:
         widget_service = await self._factory.create_widget_service()
-        self._include_resource(WidgetResource(widget_service), path="/widgets")
+        self._include_resource(WidgetResource(widget_service))
 
 
 app = App()

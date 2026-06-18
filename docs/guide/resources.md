@@ -35,7 +35,7 @@ class WidgetPath(Struct):
     widget_id: str
 
 
-class WidgetResource(Resource):
+class WidgetResource(Resource, path="/widgets"):
     async def create(self, json: WidgetIn) -> Widget:           # POST /widgets
         return Widget(id="widget-id", name=json.name)
 
@@ -51,7 +51,7 @@ class WidgetResource(Resource):
 
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_resource(WidgetResource(), path="/widgets")
+        self._include_resource(WidgetResource())
 
 
 app = App()
@@ -76,20 +76,31 @@ class Health(Struct):
     status: str
 
 
-class HealthEndpoint(Endpoint):
+class HealthEndpoint(Endpoint, path="/healthz"):
     async def get(self) -> Health:        # GET /healthz
         return Health(status="ok")
 
 
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_endpoint(HealthEndpoint(), path="/healthz")
+        self._include_endpoint(HealthEndpoint())
 
 
 app = App()
 ```
 
 Use endpoints for health checks, webhooks, and actions that aren't a resource.
+
+## Declaring the path
+
+A route declares its path **on the class**, at definition time:
+
+```python
+class WidgetResource(Resource, path="/widgets"):
+    ...
+```
+
+jero reads it once at wiring, so registering is just `self._include_resource(WidgetResource())` — no path passed at the call site. The class is the **single source of truth** for its path, which is exactly what URL reversal (the coming [`Link` / `Location`](links-and-location.md)) and the OpenAPI work read off it.
 
 ## Path templates
 
@@ -112,7 +123,7 @@ class CollectionPath(Struct):
     item_id: str
 
 
-class ItemResource(Resource):
+class ItemResource(Resource, path="/collections/{collection_id}/items"):
     # GET /collections/{collection_id}/items/{item_id}
     async def read_one(self, path: CollectionPath) -> Item:
         return Item(id=path.item_id)
@@ -120,7 +131,7 @@ class ItemResource(Resource):
 
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_resource(ItemResource(), path="/collections/{collection_id}/items")
+        self._include_resource(ItemResource())
 
 
 app = App()
@@ -144,13 +155,52 @@ Resources and endpoints are wired in `BaseApp._wire`:
 ```python
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_resource(WidgetResource(), path="/widgets")
-        self._include_endpoint(HealthEndpoint(), path="/healthz")
+        self._include_resource(WidgetResource())
+        self._include_endpoint(HealthEndpoint())
 ```
 
 Routing is pure dict lookup: static routes match exactly; templated routes are
 bucketed by `(method, segment-count)` and matched on their static segments — no
 regexes, no route-table scans, no ordering rules. All of it is resolved **once**, at
 wiring time.
+
+## Metadata (for the coming OpenAPI spec)
+
+Alongside the path, a route can declare OpenAPI metadata at class definition. `meta`
+applies to every operation; `meta_<operation>` to one (`meta_get`, `meta_create`, …):
+
+```python
+from msgspec import Struct
+
+from jero import BaseApp, Endpoint, EndpointMeta, OperationMeta
+
+
+class Widget(Struct):
+    id: str
+
+
+class WidgetsEndpoint(
+    Endpoint,
+    path="/widgets",
+    meta=EndpointMeta(tags=["widgets"]),                    # all operations
+    meta_get=OperationMeta(operation_id="listWidgets"),     # this operation
+):
+    async def get(self) -> list[Widget]:
+        return [Widget(id="widget-id")]
+
+
+class App(BaseApp):
+    async def _wire(self) -> None:
+        self._include_endpoint(WidgetsEndpoint())
+
+
+app = App()
+```
+
+The three types — `EndpointMeta`, `ResourceMeta`, `OperationMeta` — carry `tags`,
+`operation_id`, and the like (`operation_id` lives only on `OperationMeta`, so it can't
+cascade to every operation). They're stored on the class and don't affect routing today:
+they're the authoring input to an **upcoming auto OpenAPI spec generator**, which will
+derive the rest of the spec from your types and handler docstrings.
 
 See [Wiring & lifecycle](wiring.md) for how resources get their dependencies.

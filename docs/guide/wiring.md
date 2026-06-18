@@ -14,7 +14,7 @@ services and register routes. It's linear `async` code — no `yield`, no magic:
 class App(BaseApp):
     async def _wire(self) -> None:
         service = WidgetService(...)
-        self._include_resource(WidgetResource(service), path="/widgets")
+        self._include_resource(WidgetResource(service))
 ```
 
 A resource's dependencies are constructor arguments you pass in. Want to share a
@@ -31,7 +31,7 @@ class App(BaseApp):
     async def _wire(self) -> None:
         client = await self._aenter(niquests.AsyncSession())  # closed at shutdown
         cache = self._enter(open_cache())                     # sync context manager
-        self._include_resource(WidgetResource(client, cache), path="/widgets")
+        self._include_resource(WidgetResource(client, cache))
 ```
 
 `_aenter(cm)` enters an async context manager; `_enter(cm)` a sync one. Both return the
@@ -56,7 +56,7 @@ class Factory(BaseFactory):
 class App(BaseApp[Factory]):
     async def _wire(self) -> None:
         widgets = await self._factory.create_widget_service()
-        self._include_resource(WidgetResource(widgets), path="/widgets")
+        self._include_resource(WidgetResource(widgets))
 ```
 
 The factory's `create_*` methods use the same `_enter` / `_aenter` helpers — anything
@@ -104,7 +104,7 @@ async def open_txn() -> AsyncIterator[None]:
     yield
 
 
-class WidgetResource(Resource):
+class WidgetResource(Resource, path="/widgets"):
     async def create(self, json: WidgetIn) -> Widget:
         async with open_txn():
             return Widget(id="widget-id", name=json.name)
@@ -112,7 +112,7 @@ class WidgetResource(Resource):
 
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_resource(WidgetResource(), path="/widgets")
+        self._include_resource(WidgetResource())
 
 
 app = App()

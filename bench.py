@@ -33,7 +33,7 @@ class Movie(Struct):
     language: str
 
 
-class MoviesEndpoint(Endpoint):
+class MoviesEndpoint(Endpoint, path="/movies"):
     """Echoes the decoded body — exercises decode + handler call + encode."""
 
     async def post(self, json: Movie) -> Movie:
@@ -45,7 +45,7 @@ class App(BaseApp):
     """The benchmark app: one POST endpoint."""
 
     async def _wire(self) -> None:
-        self._include_endpoint(MoviesEndpoint(), path="/movies")
+        self._include_endpoint(MoviesEndpoint())
 
 
 _BODY = encode(

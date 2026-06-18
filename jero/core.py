@@ -185,11 +185,76 @@ class JSONResponse[T: Struct, H: Struct | None = None](BaseResponse[H]):
     json: T
 
 
-class Resource:
+class EndpointMeta(Struct):
+    """OpenAPI metadata shared by all of an ``Endpoint``'s operations."""
+
+    tags: Sequence[str] = ()
+
+
+class ResourceMeta(Struct):
+    """OpenAPI metadata shared by all of a ``Resource``'s operations."""
+
+    tags: Sequence[str] = ()
+
+
+class OperationMeta(Struct):
+    """OpenAPI metadata for a single operation (``meta_get``, ``meta_create``, …).
+
+    ``operation_id`` lives here, never on the class-level ``meta`` — operation ids must
+    be unique, so they can't sensibly cascade to every operation.
+    """
+
+    tags: Sequence[str] = ()
+    operation_id: str | None = None
+
+
+def _validate_meta(
+    cls: type,
+    meta: object,
+    class_meta_type: type,
+    operations: dict[str, object],
+) -> None:
+    """Fail loud if a shape is given the wrong meta type — ``EndpointMeta`` only on an
+    ``Endpoint``, ``ResourceMeta`` only on a ``Resource``, ``OperationMeta`` per operation.
+    """
+    if meta is not None and not isinstance(meta, class_meta_type):
+        raise WiringError(
+            f"{cls.__name__}: meta must be {class_meta_type.__name__}, got {type(meta).__name__}",
+        )
+    for name, value in operations.items():
+        if value is not None and not isinstance(value, OperationMeta):
+            raise WiringError(
+                f"{cls.__name__}: {name} must be OperationMeta, got {type(value).__name__}",
+            )
+
+
+class _Routable:
+    """Base for the route-defining shapes (``Resource`` / ``Endpoint``).
+
+    A concrete class declares its mount path at definition time —
+    ``class Widgets(Resource, path="/widgets")`` — and it's read off the class at
+    wiring. The path is *optional* here: an intermediate base simply omits it (no
+    ``abstract`` flag needed), and a class with no class-path can still be given one at
+    include time. The class-path is the single source of truth that URL reversal (the
+    coming ``Link`` / ``Location``) reads.
+    """
+
+    path: ClassVar[str]
+
+    def __init_subclass__(cls, *, path: str | None = None, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if path is not None:
+            cls.path = path
+
+
+class Resource(_Routable):
     """One REST resource: subclass and define any of the CRUD methods.
 
     ``read_one`` is the item route (its ``path`` may extend the mount with
     the item id); ``read_many`` is the collection (its path is exact).
+
+    Optional OpenAPI metadata is declared at class definition: ``meta`` applies to every
+    operation, ``meta_<op>`` to one (``meta_create``, ``meta_read_one``, …).
     """
 
     METHODS: ClassVar[dict[str, _Verb]] = {
@@ -201,14 +266,60 @@ class Resource:
         "delete": _Verb("DELETE", 200, extends_path=True),
     }
 
+    meta: ClassVar[ResourceMeta | None] = None
+    meta_create: ClassVar[OperationMeta | None] = None
+    meta_read_one: ClassVar[OperationMeta | None] = None
+    meta_read_many: ClassVar[OperationMeta | None] = None
+    meta_update: ClassVar[OperationMeta | None] = None
+    meta_partial_update: ClassVar[OperationMeta | None] = None
+    meta_delete: ClassVar[OperationMeta | None] = None
 
-class Endpoint:
+    def __init_subclass__(
+        cls,
+        *,
+        path: str | None = None,
+        meta: ResourceMeta | None = None,
+        meta_create: OperationMeta | None = None,
+        meta_read_one: OperationMeta | None = None,
+        meta_read_many: OperationMeta | None = None,
+        meta_update: OperationMeta | None = None,
+        meta_partial_update: OperationMeta | None = None,
+        meta_delete: OperationMeta | None = None,
+        **kwargs: object,
+    ) -> None:
+        super().__init_subclass__(path=path, **kwargs)  # path handling lives on _Routable
+        _validate_meta(
+            cls,
+            meta,
+            ResourceMeta,
+            {
+                "meta_create": meta_create,
+                "meta_read_one": meta_read_one,
+                "meta_read_many": meta_read_many,
+                "meta_update": meta_update,
+                "meta_partial_update": meta_partial_update,
+                "meta_delete": meta_delete,
+            },
+        )
+        cls.meta = meta
+        cls.meta_create = meta_create
+        cls.meta_read_one = meta_read_one
+        cls.meta_read_many = meta_read_many
+        cls.meta_update = meta_update
+        cls.meta_partial_update = meta_partial_update
+        cls.meta_delete = meta_delete
+
+
+class Endpoint(_Routable):
     """One HTTP endpoint at a single path: subclass and define any of
     ``get`` / ``post`` / ``put`` / ``patch`` / ``delete``.
 
     Unlike :class:`Resource` there are no CRUD semantics — the method name
     *is* the verb, every verb returns 200, and the path is exact (no
     trailing extension). A different path is a different ``Endpoint``.
+
+    Optional OpenAPI metadata is declared at class definition: ``meta`` applies to every
+    operation, ``meta_<verb>`` to one (``meta_get``, ``meta_post``, …).
     """
 
     METHODS: ClassVar[dict[str, _Verb]] = {
@@ -218,6 +329,45 @@ class Endpoint:
         "patch": _Verb("PATCH", 200, extends_path=False),
         "delete": _Verb("DELETE", 200, extends_path=False),
     }
+
+    meta: ClassVar[EndpointMeta | None] = None
+    meta_get: ClassVar[OperationMeta | None] = None
+    meta_post: ClassVar[OperationMeta | None] = None
+    meta_put: ClassVar[OperationMeta | None] = None
+    meta_patch: ClassVar[OperationMeta | None] = None
+    meta_delete: ClassVar[OperationMeta | None] = None
+
+    def __init_subclass__(
+        cls,
+        *,
+        path: str | None = None,
+        meta: EndpointMeta | None = None,
+        meta_get: OperationMeta | None = None,
+        meta_post: OperationMeta | None = None,
+        meta_put: OperationMeta | None = None,
+        meta_patch: OperationMeta | None = None,
+        meta_delete: OperationMeta | None = None,
+        **kwargs: object,
+    ) -> None:
+        super().__init_subclass__(path=path, **kwargs)  # path handling lives on _Routable
+        _validate_meta(
+            cls,
+            meta,
+            EndpointMeta,
+            {
+                "meta_get": meta_get,
+                "meta_post": meta_post,
+                "meta_put": meta_put,
+                "meta_patch": meta_patch,
+                "meta_delete": meta_delete,
+            },
+        )
+        cls.meta = meta
+        cls.meta_get = meta_get
+        cls.meta_post = meta_post
+        cls.meta_put = meta_put
+        cls.meta_patch = meta_patch
+        cls.meta_delete = meta_delete
 
 
 class Auth[THeaders: Struct, TUser: Struct](Protocol):
@@ -1556,10 +1706,15 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         obj: Resource | Endpoint,
         methods: dict[str, _Verb],
         *,
-        path: str,
         auth: Auth[Any, Any] | None,
     ) -> None:
         cls = type(obj)
+        path = getattr(cls, "path", None)
+        if path is None:
+            raise WiringError(
+                f"{cls.__name__}: no path — declare it on the class, "
+                f"e.g. `class {cls.__name__}(..., path='/...')`.",
+            )
         template = _parse_template(path)
         compiled_auth = _CompiledAuth(auth) if auth is not None else None
 
@@ -1584,19 +1739,17 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         self,
         resource: Resource,
         *,
-        path: str,
         auth: Auth[THeaders, TUser] | None = None,
     ) -> None:
-        self._include(resource, Resource.METHODS, path=path, auth=auth)
+        self._include(resource, Resource.METHODS, auth=auth)
 
     def _include_endpoint[THeaders: Struct, TUser: Struct](
         self,
         endpoint: Endpoint,
         *,
-        path: str,
         auth: Auth[THeaders, TUser] | None = None,
     ) -> None:
-        self._include(endpoint, Endpoint.METHODS, path=path, auth=auth)
+        self._include(endpoint, Endpoint.METHODS, auth=auth)
 
     def _resolve(self, method: str, path: str) -> tuple[_Handler, dict[str, str]] | None:
         # Static hit is the hot path: look it up directly, before narrowing the verb

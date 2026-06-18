@@ -41,7 +41,7 @@ class Page(Struct):
     offset: int = 0
 
 
-class WidgetResource(Resource):
+class WidgetResource(Resource, path="/widgets"):
     # PUT /widgets/{widget_id}?limit=...&offset=...
     async def update(self, path: WidgetPath, params: Page, json: WidgetIn) -> Widget:
         return Widget(id=path.widget_id, name=json.name)
@@ -49,7 +49,7 @@ class WidgetResource(Resource):
 
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_resource(WidgetResource(), path="/widgets")
+        self._include_resource(WidgetResource())
 
 
 app = App()
@@ -77,14 +77,14 @@ class Receipt(Struct):
     size: int
 
 
-class UploadResource(Resource):
+class UploadResource(Resource, path="/uploads"):
     async def create(self, content: bytes) -> Receipt:   # POST /uploads
         return Receipt(size=len(content))
 
 
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_resource(UploadResource(), path="/uploads")
+        self._include_resource(UploadResource())
 
 
 app = App()
@@ -117,14 +117,14 @@ class TraceEcho(Struct):
     trace_id: str
 
 
-class TraceEndpoint(Endpoint):
+class TraceEndpoint(Endpoint, path="/trace"):
     async def get(self, headers: Trace) -> TraceEcho:    # GET /trace
         return TraceEcho(trace_id=headers.x_trace_id)
 
 
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_endpoint(TraceEndpoint(), path="/trace")
+        self._include_endpoint(TraceEndpoint())
 
 
 app = App()
@@ -145,7 +145,7 @@ class Echo(Struct):
     cookie_count: int
 
 
-class HeadersEndpoint(Endpoint):
+class HeadersEndpoint(Endpoint, path="/echo"):
     async def get(self, raw_headers: RawHeaders) -> Echo:    # GET /echo
         trace_id = raw_headers["X-Trace-Id"]         # case-insensitive lookup
         cookies = raw_headers.getlist("Cookie")      # repeats preserved
@@ -154,7 +154,7 @@ class HeadersEndpoint(Endpoint):
 
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_endpoint(HeadersEndpoint(), path="/echo")
+        self._include_endpoint(HeadersEndpoint())
 
 
 app = App()

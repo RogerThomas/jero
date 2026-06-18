@@ -51,7 +51,7 @@ class Headers(Struct):
     x_token: int
 
 
-class IntResource(Resource):
+class IntResource(Resource, path="/things"):
     """Resource binding integer path, body, and header sources."""
 
     async def read_one(self, path: IntPath) -> Body:
@@ -67,7 +67,7 @@ class IntApp(BaseApp):
     """App wiring IntResource at /things."""
 
     async def _wire(self) -> None:
-        self._include_resource(IntResource(), path="/things")
+        self._include_resource(IntResource())
 
 
 def test_path_value_that_fails_conversion_is_404() -> None:
@@ -87,7 +87,7 @@ def test_bad_header_is_400() -> None:
 # --- Esoteric: errors raised inside a handler are server faults (500) ---
 
 
-class UpstreamValidationEndpoint(Endpoint):
+class UpstreamValidationEndpoint(Endpoint, path="/upstream-validation"):
     """Endpoint that triggers a validation error while decoding upstream data."""
 
     async def get(self) -> Body:
@@ -95,7 +95,7 @@ class UpstreamValidationEndpoint(Endpoint):
         return json_decode(b'{"n": "not-an-int"}', type=Body)
 
 
-class UpstreamDecodeEndpoint(Endpoint):
+class UpstreamDecodeEndpoint(Endpoint, path="/upstream-decode"):
     """Endpoint that triggers a decode error on malformed upstream data."""
 
     async def get(self) -> Body:
@@ -107,8 +107,8 @@ class UpstreamDecodeApp(BaseApp):
     """App wiring the upstream-error endpoints."""
 
     async def _wire(self) -> None:
-        self._include_endpoint(UpstreamValidationEndpoint(), path="/upstream-validation")
-        self._include_endpoint(UpstreamDecodeEndpoint(), path="/upstream-decode")
+        self._include_endpoint(UpstreamValidationEndpoint())
+        self._include_endpoint(UpstreamDecodeEndpoint())
 
 
 def test_handler_side_validation_error_is_500() -> None:
@@ -140,7 +140,7 @@ class Trace(Struct):
     x_trace_id: str
 
 
-class RawHeadersEndpoint(Endpoint):
+class RawHeadersEndpoint(Endpoint, path="/raw"):
     """GET handler reading a request header through the opaque bag."""
 
     async def get(self, raw_headers: RawHeaders) -> Reply:
@@ -148,7 +148,7 @@ class RawHeadersEndpoint(Endpoint):
         return Reply(value=raw_headers["X-Trace-Id"])
 
 
-class BothHeadersEndpoint(Endpoint):
+class BothHeadersEndpoint(Endpoint, path="/both"):
     """GET handler taking the typed headers Struct and the raw bag together."""
 
     async def get(self, headers: Trace, raw_headers: RawHeaders) -> Reply:
@@ -160,8 +160,8 @@ class RawHeadersApp(BaseApp):
     """App wiring the raw_headers endpoints."""
 
     async def _wire(self) -> None:
-        self._include_endpoint(RawHeadersEndpoint(), path="/raw")
-        self._include_endpoint(BothHeadersEndpoint(), path="/both")
+        self._include_endpoint(RawHeadersEndpoint())
+        self._include_endpoint(BothHeadersEndpoint())
 
 
 def test_raw_headers_handler_sees_request_headers() -> None:

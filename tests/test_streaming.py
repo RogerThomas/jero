@@ -33,7 +33,7 @@ class StreamState:
     iterated: bool = False
 
 
-class NDJSONEndpoint(Endpoint):
+class NDJSONEndpoint(Endpoint, path="/stream"):
     """Endpoint streaming a finite sequence of items as NDJSON."""
 
     async def _items(self) -> AsyncIterator[Item]:
@@ -45,7 +45,7 @@ class NDJSONEndpoint(Endpoint):
         return NDJSONStreamingResponse(stream=self._items())
 
 
-class BytesEndpoint(Endpoint):
+class BytesEndpoint(Endpoint, path="/stream"):
     """Endpoint streaming raw byte chunks with a custom content type."""
 
     async def _chunks(self) -> AsyncIterator[bytes]:
@@ -57,7 +57,7 @@ class BytesEndpoint(Endpoint):
         return StreamingResponse(stream=self._chunks(), raw_headers={"content-type": "text/csv"})
 
 
-class SSEEndpoint(Endpoint):
+class SSEEndpoint(Endpoint, path="/stream"):
     """Endpoint streaming server-sent events, including a typed event."""
 
     async def _events(self) -> AsyncIterator[Item | ServerSentEvent[Item]]:
@@ -70,7 +70,7 @@ class SSEEndpoint(Endpoint):
 
 
 @dataclass
-class LifecycleEndpoint(Endpoint):
+class LifecycleEndpoint(Endpoint, path="/stream"):
     """Endpoint whose stream records teardown on disconnect."""
 
     _state: StreamState
@@ -90,7 +90,7 @@ class LifecycleEndpoint(Endpoint):
 
 
 @dataclass
-class NDJSONLifecycleEndpoint(Endpoint):
+class NDJSONLifecycleEndpoint(Endpoint, path="/stream"):
     """NDJSON endpoint whose stream records teardown on disconnect."""
 
     _state: StreamState
@@ -110,7 +110,7 @@ class NDJSONLifecycleEndpoint(Endpoint):
 
 
 @dataclass
-class ErrorStreamEndpoint(Endpoint):
+class ErrorStreamEndpoint(Endpoint, path="/stream"):
     """Endpoint whose stream raises mid-iteration; teardown must still run."""
 
     _state: StreamState
@@ -130,7 +130,7 @@ class ErrorStreamEndpoint(Endpoint):
         return NDJSONStreamingResponse(stream=self._lifecycle())
 
 
-class SetupErrorEndpoint(Endpoint):
+class SetupErrorEndpoint(Endpoint, path="/stream"):
     """Endpoint that raises during stream setup before any item is yielded."""
 
     async def _items(self) -> AsyncIterator[Item]:
@@ -148,7 +148,7 @@ class SetupErrorEndpoint(Endpoint):
 
 
 @dataclass
-class HeadEndpoint(Endpoint):
+class HeadEndpoint(Endpoint, path="/stream"):
     """Endpoint recording whether its stream body was iterated."""
 
     _state: StreamState
@@ -162,7 +162,7 @@ class HeadEndpoint(Endpoint):
         return NDJSONStreamingResponse(stream=self._items())
 
 
-class BadSSEEndpoint(Endpoint):
+class BadSSEEndpoint(Endpoint, path="/stream"):
     """Endpoint illegally returning an SSE response from POST."""
 
     async def _events(self) -> AsyncIterator[str]:
@@ -173,7 +173,7 @@ class BadSSEEndpoint(Endpoint):
         return SSEResponse(stream=self._events())
 
 
-class BareSSEEndpoint(Endpoint):
+class BareSSEEndpoint(Endpoint, path="/stream"):
     """SSE endpoint using the bare (str-default) SSEResponse, no type parameters."""
 
     async def _events(self) -> AsyncIterator[str]:
@@ -184,7 +184,7 @@ class BareSSEEndpoint(Endpoint):
         return SSEResponse(stream=self._events())
 
 
-class KeepaliveEndpoint(Endpoint):
+class KeepaliveEndpoint(Endpoint, path="/stream"):
     """Endpoint emitting SSE keepalive comments on an idle stream."""
 
     async def _events(self) -> AsyncIterator[str]:
@@ -206,7 +206,7 @@ class _EndpointApp(BaseApp):
         super().__init__()
 
     async def _wire(self) -> None:
-        self._include_endpoint(self._endpoint, path="/stream")
+        self._include_endpoint(self._endpoint)
 
 
 def test_finite_ndjson_stream() -> None:
