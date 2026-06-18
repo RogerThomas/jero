@@ -1,6 +1,6 @@
 [project]
 name = "jero"
-version = "0.0.23"
+version = "0.0.24"
 description = "An opinionated, msgspec-first ASGI micro-framework"
 authors = [{ name = "Roger Thomas", email = "roger.thomas87@gmail.com" }]
 readme = "README.md"
@@ -39,10 +39,8 @@ dev = [
     "pytest-mock>=3.15.1",
     "pytest-timeout>=2.4.0",
     "ruff>=0.15.16",
-    "zensical>=0.0.26",
-]
-local-dev = [
     "yeetr>=2026.6.13",
+    "zensical>=0.0.26",
 ]
 
 [build-system]
