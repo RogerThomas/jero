@@ -66,6 +66,7 @@ class HeaderForm(Camel):
 
     upload: FilePart[UploadHeaders]
     blob: FormPart[bytes, UploadHeaders]
+    config: FormPart[JobConfig, UploadHeaders]
     default_file: FilePart
     default_blob: FormPart[bytes]
 
@@ -75,6 +76,8 @@ class HeaderResult(Camel):
 
     upload_checksum: str
     blob_checksum: str
+    config_checksum: str
+    config_dpi: int
     default_file_headers: bool
     default_blob_headers: bool
     upload_header_names: list[str]
@@ -125,6 +128,8 @@ class HeadersEndpoint(Endpoint, path="/headers"):
         return HeaderResult(
             upload_checksum=form.upload.headers.x_checksum,
             blob_checksum=form.blob.headers.x_checksum,
+            config_checksum=form.config.headers.x_checksum,
+            config_dpi=form.config.data.dpi,
             default_file_headers=form.default_file.headers is not None,
             default_blob_headers=form.default_blob.headers is not None,
             upload_header_names=form.upload.raw_headers.keys(),
@@ -226,6 +231,11 @@ def _headers_form_body(*, include_upload_checksum: bool = True) -> bytes:
             b"X-Extra: second\r\n",
             b"\r\nblob\r\n",
             b"--" + boundary + b"\r\n",
+            b'Content-Disposition: form-data; name="config"\r\n',
+            b"Content-Type: application/json\r\n",
+            b"X-Checksum: config-checksum\r\n",
+            b'\r\n{"dpi": 400}\r\n',
+            b"--" + boundary + b"\r\n",
             b'Content-Disposition: form-data; name="defaultFile"; filename="default.txt"\r\n',
             b"\r\ndefault-file\r\n",
             b"--" + boundary + b"\r\n",
@@ -298,6 +308,8 @@ def test_form_part_and_file_part_bind_typed_headers(client: TestClient) -> None:
     assert resp.json() == {
         "uploadChecksum": "file-checksum",
         "blobChecksum": "blob-checksum",
+        "configChecksum": "config-checksum",
+        "configDpi": 400,
         "defaultFileHeaders": False,
         "defaultBlobHeaders": False,
         "uploadHeaderNames": ["Content-Disposition", "Content-Type", "X-Checksum"],
