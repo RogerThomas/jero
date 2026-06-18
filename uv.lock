@@ -224,10 +224,8 @@ dev = [
     { name = "pytest-mock" },
     { name = "pytest-timeout" },
     { name = "ruff" },
-    { name = "zensical" },
-]
-local-dev = [
     { name = "yeetr" },
+    { name = "zensical" },
 ]
 
 [package.metadata]
@@ -250,9 +248,9 @@ dev = [
     { name = "pytest-mock", specifier = ">=3.15.1" },
     { name = "pytest-timeout", specifier = ">=2.4.0" },
     { name = "ruff", specifier = ">=0.15.16" },
+    { name = "yeetr", specifier = ">=2026.6.13" },
     { name = "zensical", specifier = ">=0.0.26" },
 ]
-local-dev = [{ name = "yeetr", specifier = ">=2026.6.13" }]
 
 [[package]]
 name = "jh2"

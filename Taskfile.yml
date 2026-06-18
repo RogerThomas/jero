@@ -98,4 +98,6 @@ tasks:
 
   docs-test:
     desc: Build the documentation strictly (fail on warnings)
-    cmd: uv run zensical build -s
+    cmds:
+      - uv run zensical build -s
+      - uv run yeet ./scripts/build_agent_docs.py

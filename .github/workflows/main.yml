@@ -70,4 +70,6 @@ jobs:
         uses: ./.github/actions/setup-python-env
 
       - name: Check if documentation can be built
-        run: uv run zensical build -s
+        run: |
+          uv run zensical build -s
+          uv run yeet ./scripts/build_agent_docs.py
