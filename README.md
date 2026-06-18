@@ -110,7 +110,7 @@ the factory type (`BaseApp[Factory]`), exposing it as `self._factory` in `_wire`
 ```python
 from dataclasses import dataclass
 
-import httpx
+import niquests
 from msgspec import Struct
 from msgspec.json import decode as json_decode
 from msgspec.json import encode as json_encode
@@ -134,7 +134,7 @@ class Widget(WidgetIn):
 class WidgetService:
     """Owns the upstream HTTP client; built once by the factory."""
 
-    _client: httpx.AsyncClient
+    _client: niquests.AsyncSession
 
     async def fetch(self, widget_id: str) -> Widget:
         resp = await self._client.get(f"/widgets/{widget_id}")
@@ -143,7 +143,7 @@ class WidgetService:
         return json_decode(resp.content, type=Widget)
 
     async def create(self, data: WidgetIn) -> Widget:
-        resp = await self._client.post("/widgets", content=json_encode(data))
+        resp = await self._client.post("/widgets", data=json_encode(data))
         return json_decode(resp.content, type=Widget)
 
 
@@ -162,7 +162,7 @@ class WidgetResource(Resource):
 
 class Factory(BaseFactory):
     async def create_widget_service(self) -> WidgetService:
-        client = await self._aenter(httpx.AsyncClient(base_url="https://api.example.com"))
+        client = await self._aenter(niquests.AsyncSession(base_url="https://api.example.com"))
         return WidgetService(client)
 
 

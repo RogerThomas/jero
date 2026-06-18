@@ -93,5 +93,5 @@ def test_repr_shows_as_sent_pairs() -> None:
 
 
 def test_registered_as_mapping(raw: RawHeaders) -> None:
-    """RawHeaders is a Mapping, so it drops into httpx(headers=...)."""
+    """RawHeaders is a Mapping, so it drops into niquests(headers=...)."""
     assert isinstance(raw, Mapping)

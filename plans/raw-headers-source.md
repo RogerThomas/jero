@@ -45,7 +45,7 @@ class GatewayResource(Resource):
     async def create(self, json: Payload, raw_headers: RawHeaders) -> Reply:
         trace = raw_headers["X-Trace-Id"]            # == raw_headers["x-traceid"]
         return await self._upstream.post(
-            "/work", json=json, headers=raw_headers,  # Mapping → drops into httpx
+            "/work", json=json, headers=raw_headers,  # Mapping → drops into niquests
         )
 ```
 
@@ -58,7 +58,7 @@ async def create(self, headers: Auth, raw_headers: RawHeaders) -> Reply: ...
 ## The `RawHeaders` type (`jero/headers.py`, exported)
 
 Immutable, case-insensitive, casing-preserving, multi-value-aware. Mirrors the
-well-understood Starlette `Headers` shape so it's familiar and interops with httpx.
+well-understood Starlette `Headers` shape so it's familiar and interops with niquests.
 
 ```python
 class RawHeaders:
@@ -84,7 +84,7 @@ class RawHeaders:
     def __repr__(self) -> str: ...                 # shows as-sent casing
 ```
 
-- Register as `collections.abc.Mapping[str, str]` so `httpx(headers=raw_headers)`
+- Register as `collections.abc.Mapping[str, str]` so `niquests(headers=raw_headers)`
   works for the common case; `headers=raw_headers.multi_items()` when repeated
   headers must survive.
 - Case-insensitive comparison: lowercase both sides on lookup. Storage keeps

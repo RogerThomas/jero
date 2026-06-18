@@ -108,6 +108,13 @@ These pull against each other constantly; keep all three in mind on every change
   `BaseFactory` (stacks injected) groups construction. Past that there's nothing
   to "resolve." Per-request resources are an `async with` inside the handler.
   Do **not** add an injection/resolver system.
+- **Background tasks**: `BackgroundTasks` is an in-process, fire-and-forget queue
+  (not durable). Build it in `_wire` and open it with `_aenter` (it's an async CM —
+  worker starts at startup, drains at shutdown); `register(handler)` infers the item
+  type from the handler's one Struct param; endpoints `await tasks.add(item)`. One
+  handler per type (`allow_one_to_many=True` to fan out); `drain_timeout: float | None`
+  controls shutdown (float = drain best-effort then drop, None = drop now). Enter it
+  *after* the resources its handlers use, so it drains before they're torn down.
 - REST error semantics throughout (404/400/422/401/405, auto HEAD + OPTIONS);
   camelCase on the wire via msgspec `rename`.
 - **Naming convention**: foundations you extend once are `Base*` (`BaseApp`,
@@ -119,7 +126,8 @@ These pull against each other constantly; keep all three in mind on every change
 - `jero/core.py` — the framework (routing, binding, response senders, lifecycle).
   `jero/testing.py` — sync in-process `TestClient` + `FactoryHarness`.
   `jero/forms.py` / `jero/streaming.py` — multipart parts and streaming response
-  types. `jero/headers.py` — the `RawHeaders` opaque bag. `jero/codecs.py` — the
+  types. `jero/background.py` — the in-process `BackgroundTasks` queue.
+  `jero/headers.py` — the `RawHeaders` opaque bag. `jero/codecs.py` — the
   shared reusable `msgspec_encoder` / `msgspec_decoder` (imported by `core`,
   `streaming`, `testing`; SSE wire-formatting lives in `streaming.py` as the
   un-underscored boundary-crosser `encode_sse`).
@@ -144,7 +152,8 @@ These pull against each other constantly; keep all three in mind on every change
   (incl. typed `headers` and the opaque `raw_headers`), auth, REST semantics,
   response kinds — generic `JSONResponse[T, H]` / `BytesResponse[H]` / streaming
   `[T, H]` with typed response headers, `raw_headers`, and `status_code` overrides
-  — `BaseApp`/`BaseFactory` lifecycle, `TestClient`, the test suite.
+  — `BaseApp`/`BaseFactory` lifecycle, in-process `BackgroundTasks`, `TestClient`,
+  the test suite.
 - **Performance (validated natively)**: on the authed write path
   (`POST /movies` — bearer auth + JSON decode + encode + 201, C=200), jero ≈
   blacksheep (~43k req/s, a tie), ~2× litestar, ~3× robyn, ~6× idiomatic FastAPI.

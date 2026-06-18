@@ -47,6 +47,43 @@ Pass `auth=` when including a resource or endpoint. It then runs for **every** m
 on that resource, before the body is decoded:
 
 ```python
+from dataclasses import dataclass
+
+from msgspec import Struct
+
+from jero import BaseApp, Endpoint, HTTPError
+
+
+class Credentials(Struct):
+    authorization: str
+
+
+class User(Struct):
+    id: str
+    name: str
+
+
+@dataclass
+class TokenAuth:
+    _users: dict[str, User]
+
+    async def authenticate(self, headers: Credentials) -> User:
+        token = headers.authorization.removeprefix("Bearer ").strip()
+        user = self._users.get(token)
+        if user is None:
+            raise HTTPError(401, "invalid token")
+        return user
+
+
+class Health(Struct):
+    status: str
+
+
+class HealthEndpoint(Endpoint):
+    async def get(self) -> Health:              # GET /healthz, open
+        return Health(status="ok")
+
+
 class WhoAmIEndpoint(Endpoint):
     async def get(self, user: User) -> User:    # receives the authenticate() result
         return user
@@ -55,9 +92,11 @@ class WhoAmIEndpoint(Endpoint):
 class App(BaseApp):
     async def _wire(self) -> None:
         auth = TokenAuth({"token": User(id="user-id", name="user-name")})
-        self._include_resource(WidgetResource(...), path="/widgets", auth=auth)
         self._include_endpoint(WhoAmIEndpoint(), path="/me", auth=auth)
         self._include_endpoint(HealthEndpoint(), path="/healthz")   # no auth
+
+
+app = App()
 ```
 
 ## The `user` argument is type-checked at startup

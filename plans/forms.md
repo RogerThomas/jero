@@ -158,7 +158,7 @@ Reject unsupported payloads (raw dict/list, non-Struct JSON) with a precise
 
 ## TestClient
 
-Grow httpx-style multipart posting: `files=` (file parts) and `data=` (text/other
+Grow niquests-style multipart posting: `files=` (file parts) and `data=` (text/other
 parts), e.g.
 `client.post("/jobs", data={"jobType": "export-text"}, files={"document": ("in.pdf", b"...", "application/pdf")})`.
 Encodes a `multipart/form-data` body with a boundary. (Verb-named methods

@@ -14,12 +14,12 @@ send a valid bearer token and only mock service behaviour.
 
 from dataclasses import dataclass
 
-import httpx2
+import niquests
 from msgspec import Struct
 from msgspec.json import decode as json_decode
 from msgspec.json import encode as json_encode
 
-from jero import BaseApp, BaseFactory, Endpoint, HTTPError, Resource
+from jero import BackgroundTasks, BaseApp, BaseFactory, Endpoint, HTTPError, Resource
 
 
 class Camel(Struct, rename="camel"):
@@ -85,47 +85,57 @@ class Health(Camel):
     status: str
 
 
+def _body(resp: niquests.Response) -> bytes:
+    """The response body, guarding niquests' optional ``content``."""
+    content = resp.content
+    if content is None:
+        raise HTTPError(502, "empty upstream response")
+    return content
+
+
 @dataclass
 class WidgetService:
     """The unit boundary: owns the upstream client; mocked in HTTP tests."""
 
-    _client: httpx2.AsyncClient
+    _client: niquests.AsyncSession
     _base_url: str
+
+    async def _request(
+        self, method: str, path: str, body: bytes | None = None
+    ) -> niquests.Response:
+        """Issue one upstream request; non-streaming, so the result is a ``Response``."""
+        return await self._client.request(method, f"{self._base_url}{path}", data=body)
 
     async def list_widgets(self, limit: int, offset: int) -> list[Widget]:
         """Fetch a page of widgets from the upstream catalog."""
-        resp = await self._client.get(f"{self._base_url}/widgets?limit={limit}&offset={offset}")
-        return json_decode(resp.content, type=list[Widget])
+        resp = await self._request("GET", f"/widgets?limit={limit}&offset={offset}")
+        return json_decode(_body(resp), type=list[Widget])
 
     async def get_widget(self, widget_id: str) -> Widget:
         """Fetch one widget, raising 404 when the upstream has none."""
-        resp = await self._client.get(f"{self._base_url}/widgets/{widget_id}")
+        resp = await self._request("GET", f"/widgets/{widget_id}")
         if resp.status_code == 404:
             raise HTTPError(404, "widget not found")
-        return json_decode(resp.content, type=Widget)
+        return json_decode(_body(resp), type=Widget)
 
     async def create_widget(self, data: WidgetIn) -> Widget:
         """Create a widget upstream and return the stored record."""
-        resp = await self._client.post(f"{self._base_url}/widgets", content=json_encode(data))
-        return json_decode(resp.content, type=Widget)
+        resp = await self._request("POST", "/widgets", json_encode(data))
+        return json_decode(_body(resp), type=Widget)
 
     async def replace_widget(self, widget_id: str, data: WidgetIn) -> Widget:
         """Replace a widget upstream and return the stored record."""
-        resp = await self._client.put(
-            f"{self._base_url}/widgets/{widget_id}", content=json_encode(data)
-        )
-        return json_decode(resp.content, type=Widget)
+        resp = await self._request("PUT", f"/widgets/{widget_id}", json_encode(data))
+        return json_decode(_body(resp), type=Widget)
 
     async def patch_widget(self, widget_id: str, data: WidgetPatch) -> Widget:
         """Partially update a widget upstream and return the stored record."""
-        resp = await self._client.patch(
-            f"{self._base_url}/widgets/{widget_id}", content=json_encode(data)
-        )
-        return json_decode(resp.content, type=Widget)
+        resp = await self._request("PATCH", f"/widgets/{widget_id}", json_encode(data))
+        return json_decode(_body(resp), type=Widget)
 
     async def delete_widget(self, widget_id: str) -> None:
         """Delete a widget upstream."""
-        await self._client.delete(f"{self._base_url}/widgets/{widget_id}")
+        await self._request("DELETE", f"/widgets/{widget_id}")
 
 
 @dataclass
@@ -148,7 +158,7 @@ class Factory(BaseFactory):
 
     async def create_widget_service(self) -> WidgetService:
         """Build a WidgetService with a client opened on the app's stack."""
-        client = await self._aenter(httpx2.AsyncClient())
+        client = await self._aenter(niquests.AsyncSession())
         return WidgetService(client, "http://base-url")
 
 
@@ -222,3 +232,48 @@ class DemoApp(BaseApp[Factory]):
 
 
 app = DemoApp()
+
+
+class AnalyticsEvent(Camel):
+    """An event recorded off the request path by the background worker."""
+
+    name: str
+
+
+@dataclass
+class AnalyticsService:
+    """Processes analytics events in the background, recording each into a sink."""
+
+    processed: list[str]
+
+    async def process(self, event: AnalyticsEvent) -> None:
+        """Handle one event — its type is inferred from this parameter at registration."""
+        self.processed.append(event.name)
+
+
+@dataclass
+class EventsEndpoint(Endpoint):
+    """Accepts an event and hands it to the background queue, returning immediately."""
+
+    _tasks: BackgroundTasks
+
+    async def post(self, json: AnalyticsEvent) -> AnalyticsEvent:
+        """Enqueue the event for background processing."""
+        await self._tasks.add(json)
+        return json
+
+
+class BackgroundDemoApp(BaseApp):
+    """Demonstrates background tasks: ``POST /events`` enqueues an ``AnalyticsEvent`` that
+    a single worker processes via the registered handler. The queue is entered *after*
+    the service its handler uses, so it drains before that service is torn down."""
+
+    def __init__(self, analytics: AnalyticsService) -> None:
+        self._analytics = analytics
+        super().__init__()
+
+    async def _wire(self) -> None:
+        """Open the queue, register the handler (its type is inferred), and wire the route."""
+        tasks = await self._aenter(BackgroundTasks(drain_timeout=1.0))
+        tasks.register(self._analytics.process)
+        self._include_endpoint(EventsEndpoint(tasks), path="/events")

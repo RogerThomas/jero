@@ -16,6 +16,7 @@ nav = [
         { "Request binding" = "guide/binding.md" },
         { "Responses & headers" = "guide/responses.md" },
         { "Streaming" = "guide/streaming.md" },
+        { "Background tasks" = "guide/background-tasks.md" },
         { "Forms & uploads" = "guide/forms.md" },
         { "Authentication" = "guide/auth.md" },
         { "Wiring & lifecycle" = "guide/wiring.md" },

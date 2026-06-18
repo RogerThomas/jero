@@ -14,14 +14,40 @@ headers or status.
 | `bytes`        | `application/octet-stream`                 |
 
 ```python
-async def read_one(self, path: WidgetPath) -> Widget:          # JSON object
-    ...
+from msgspec import Struct
 
-async def read_many(self) -> list[Widget]:                     # JSON array
-    ...
+from jero import BaseApp, Endpoint, Resource
 
-async def export(self) -> bytes:                               # octet-stream
-    ...
+
+class Widget(Struct):
+    id: str
+    name: str
+
+
+class WidgetPath(Struct):
+    widget_id: str
+
+
+class WidgetResource(Resource):
+    async def read_one(self, path: WidgetPath) -> Widget:      # JSON object
+        return Widget(id=path.widget_id, name="gizmo")
+
+    async def read_many(self) -> list[Widget]:                 # JSON array
+        return [Widget(id="widget-id", name="gizmo")]
+
+
+class ExportEndpoint(Endpoint):
+    async def get(self) -> bytes:                              # octet-stream
+        return b"id,name\n"
+
+
+class App(BaseApp):
+    async def _wire(self) -> None:
+        self._include_resource(WidgetResource(), path="/widgets")
+        self._include_endpoint(ExportEndpoint(), path="/export")
+
+
+app = App()
 ```
 
 A JSON body is **always** a `Struct` (or a list of them) — never a raw `dict`. A
@@ -129,8 +155,31 @@ Every wrapper carries `status_code: int | None`. Leave it `None` to use the verb
 default (201 for `create`, else 200); set it to override:
 
 ```python
-async def create(self, json: WidgetIn) -> JSONResponse[Widget]:
-    return JSONResponse(json=widget, status_code=202)   # Accepted
+from msgspec import Struct
+
+from jero import BaseApp, JSONResponse, Resource
+
+
+class WidgetIn(Struct):
+    name: str
+
+
+class Widget(WidgetIn):
+    id: str
+
+
+class WidgetResource(Resource):
+    async def create(self, json: WidgetIn) -> JSONResponse[Widget]:
+        widget = Widget(id="widget-id", name=json.name)
+        return JSONResponse(json=widget, status_code=202)   # Accepted
+
+
+class App(BaseApp):
+    async def _wire(self) -> None:
+        self._include_resource(WidgetResource(), path="/widgets")
+
+
+app = App()
 ```
 
 `status_code` is available on `BytesResponse` and the [streaming responses](streaming.md)

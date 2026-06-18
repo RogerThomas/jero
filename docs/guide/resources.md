@@ -20,7 +20,7 @@ the HTTP method and status:
 ```python
 from msgspec import Struct
 
-from jero import Resource
+from jero import BaseApp, Resource
 
 
 class WidgetIn(Struct):
@@ -37,16 +37,24 @@ class WidgetPath(Struct):
 
 class WidgetResource(Resource):
     async def create(self, json: WidgetIn) -> Widget:           # POST /widgets
-        ...
+        return Widget(id="widget-id", name=json.name)
 
     async def read_many(self) -> list[Widget]:                  # GET  /widgets
-        ...
+        return [Widget(id="widget-id", name="gizmo")]
 
     async def read_one(self, path: WidgetPath) -> Widget:       # GET  /widgets/{widget_id}
-        ...
+        return Widget(id=path.widget_id, name="gizmo")
 
     async def delete(self, path: WidgetPath) -> Widget:         # DELETE /widgets/{widget_id}
-        ...
+        return Widget(id=path.widget_id, name="gizmo")
+
+
+class App(BaseApp):
+    async def _wire(self) -> None:
+        self._include_resource(WidgetResource(), path="/widgets")
+
+
+app = App()
 ```
 
 `read_many` serves the mount path itself and **cannot** extend it with trailing
@@ -90,6 +98,15 @@ A handler binds the slots through a `path` Struct whose fields must cover **ever
 slot:
 
 ```python
+from msgspec import Struct
+
+from jero import BaseApp, Resource
+
+
+class Item(Struct):
+    id: str
+
+
 class CollectionPath(Struct):
     collection_id: str
     item_id: str
@@ -97,7 +114,16 @@ class CollectionPath(Struct):
 
 class ItemResource(Resource):
     # GET /collections/{collection_id}/items/{item_id}
-    async def read_one(self, path: CollectionPath) -> Item: ...
+    async def read_one(self, path: CollectionPath) -> Item:
+        return Item(id=path.item_id)
+
+
+class App(BaseApp):
+    async def _wire(self) -> None:
+        self._include_resource(ItemResource(), path="/collections/{collection_id}/items")
+
+
+app = App()
 ```
 
 Rules, all checked at startup with a precise `WiringError`:

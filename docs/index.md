@@ -87,6 +87,8 @@ New here? Start with [Getting Started](getting-started.md).
   with lifecycle teardown and disconnect handling handled for you. [→](guide/streaming.md)
 - **Multipart forms & uploads** — typed parts, file uploads, per-part headers.
   [→](guide/forms.md)
+- **Background tasks** — drop a typed `Struct` on an in-process queue; a worker dispatches
+  it to the handler registered for its type, drained at shutdown. [→](guide/background-tasks.md)
 - **Auth that's checked at startup** — the `user` type is verified against the
   authenticator before the app serves a request. [→](guide/auth.md)
 - **Lifecycle without a DI container** — hand-wire in `_wire`, open resources on exit

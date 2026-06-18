@@ -28,12 +28,13 @@ Documentation = "https://RogerThomas.github.io/jero/"
 [dependency-groups]
 dev = [
     "deptry>=0.24.0",
-    "httpx2[http2]>=2.3.0",
     "mkdocstrings-python>=1.0.3",
     "prek>=0.2.0",
     "pylint>=4.0.4",
     "pyright>=1.1.410",
+    "niquests>=3.19.1",
     "pytest>=9.0.3",
+    "pytest-asyncio>=1.0.0",
     "pytest-cov>=7.0.0",
     "pytest-mock>=3.15.1",
     "pytest-timeout>=2.4.0",
@@ -58,6 +59,8 @@ pythonpath = ["."]
 # Default per-test timeout (seconds); a hung test fails instead of blocking the run.
 # Override on a single test with @pytest.mark.timeout(N).
 timeout = 1
+# Async tests are marked with @pytest.mark.asyncio; each gets a fresh event loop.
+asyncio_mode = "strict"
 
 [tool.coverage.run]
 branch = true
@@ -69,6 +72,10 @@ skip_empty = true
 [tool.ruff]
 target-version = "py314"
 line-length = 100
+# scratch_pad.py is a throwaway sketch kept for reuse; exclude it from all checks.
+# force-exclude so it's skipped even when pre-commit passes the path explicitly.
+extend-exclude = ["scratch_pad.py"]
+force-exclude = true
 
 [tool.ruff.lint]
 select = [
@@ -130,7 +137,7 @@ typeCheckingMode = "strict"
 # and emits spurious "unknown import symbol" errors the CLI run never sees.
 venvPath = "."
 venv = "./.venv"
-exclude = ["./.venv"]
+exclude = ["./.venv", "scratch_pad.py"]
 
 # pytest fixtures use the `_name`-function + `@pytest.fixture(name=...)` pattern, so
 # they read as unused to pyright (pytest injects them by string). Disable the check
@@ -140,7 +147,13 @@ root = "tests"
 extraPaths = ["."]
 reportUnusedFunction = "none"
 
+[tool.deptry]
+# scratch_pad.py is a throwaway sketch kept for reuse; don't scan its imports.
+extend_exclude = ['scratch_pad\.py']
+
 [tool.pylint.main]
+# scratch_pad.py is a throwaway sketch kept for reuse; don't lint it.
+ignore-paths = ['.*scratch_pad\.py$']
 disable = [
     "R0902",
     "R0903",

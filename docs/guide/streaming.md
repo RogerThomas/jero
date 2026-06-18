@@ -19,6 +19,8 @@ incrementally:
 ```python
 from collections.abc import AsyncIterator
 
+from msgspec import Struct
+
 from jero import BaseApp, Endpoint, NDJSONStreamingResponse
 
 
@@ -28,8 +30,8 @@ class Movie(Struct):
 
 class MoviesEndpoint(Endpoint):
     async def _movies(self) -> AsyncIterator[Movie]:
-        async for row in db.stream("select ..."):
-            yield Movie(title=row.title)
+        for title in ("first", "second"):     # stream rows from a DB cursor, etc.
+            yield Movie(title=title)
 
     async def get(self) -> NDJSONStreamingResponse[Movie]:
         return NDJSONStreamingResponse(stream=self._movies())
@@ -49,7 +51,15 @@ app = App()
 `ServerSentEvent` to control the `event` / `id` / `retry` fields:
 
 ```python
+from collections.abc import AsyncIterator
+
+from msgspec import Struct
+
 from jero import BaseApp, Endpoint, SSEResponse, ServerSentEvent
+
+
+class Movie(Struct):
+    title: str
 
 
 class EventsEndpoint(Endpoint):
@@ -83,11 +93,26 @@ SSEResponse(stream=self._events(), keepalive=15.0)   # ": ping" every 15s idle
 For anything else — CSV, a proxied download — stream `bytes`:
 
 ```python
-from jero import StreamingResponse
+from collections.abc import AsyncIterator
+
+from jero import BaseApp, Endpoint, StreamingResponse
 
 
-async def get(self) -> StreamingResponse:
-    return StreamingResponse(stream=self._chunks(), raw_headers={"content-type": "text/csv"})
+class CsvEndpoint(Endpoint):
+    async def _chunks(self) -> AsyncIterator[bytes]:
+        yield b"id,name\n"
+        yield b"1,gizmo\n"
+
+    async def get(self) -> StreamingResponse:
+        return StreamingResponse(stream=self._chunks(), raw_headers={"content-type": "text/csv"})
+
+
+class App(BaseApp):
+    async def _wire(self) -> None:
+        self._include_endpoint(CsvEndpoint(), path="/export")
+
+
+app = App()
 ```
 
 ## Setup & teardown (lifecycle)
@@ -98,18 +123,37 @@ lifecycle generator**: yield the stream once, then do teardown after. The framew
 guarantees the teardown runs, even on client disconnect or a mid-stream error:
 
 ```python
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+
+from msgspec import Struct
+
+from jero import BaseApp, Endpoint, NDJSONStreamingResponse
+
+
+class Movie(Struct):
+    title: str
+
+
 class ExportEndpoint(Endpoint):
-    async def _rows(self, cursor) -> AsyncIterator[Movie]:
-        async for row in cursor:
-            yield Movie(title=row.title)
+    async def _rows(self) -> AsyncIterator[Movie]:
+        yield Movie(title="first")
+        yield Movie(title="second")
 
     async def _lifecycle(self) -> AsyncGenerator[AsyncIterable[Movie]]:
-        async with db.cursor() as cursor:     # opened before streaming
-            yield self._rows(cursor)
-        # runs after the stream finishes — or is abandoned
+        # open the resource (a DB cursor, an upstream connection) before streaming
+        yield self._rows()
+        # runs after the stream finishes — or is abandoned: close the resource here
 
     async def get(self) -> NDJSONStreamingResponse[Movie]:
         return NDJSONStreamingResponse(stream=self._lifecycle())
+
+
+class App(BaseApp):
+    async def _wire(self) -> None:
+        self._include_endpoint(ExportEndpoint(), path="/movies/export")
+
+
+app = App()
 ```
 
 This is the one blessed way to scope a resource to a stream: a simple stream if you

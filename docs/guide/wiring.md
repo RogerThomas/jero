@@ -29,8 +29,8 @@ everything in reverse order at shutdown, even if `_wire` fails partway:
 ```python
 class App(BaseApp):
     async def _wire(self) -> None:
-        client = await self._aenter(httpx.AsyncClient())   # closed at shutdown
-        cache = self._enter(open_cache())                  # sync context manager
+        client = await self._aenter(niquests.AsyncSession())  # closed at shutdown
+        cache = self._enter(open_cache())                     # sync context manager
         self._include_resource(WidgetResource(client, cache), path="/widgets")
 ```
 
@@ -49,7 +49,7 @@ from jero import BaseApp, BaseFactory
 
 class Factory(BaseFactory):
     async def create_widget_service(self) -> WidgetService:
-        client = await self._aenter(httpx.AsyncClient(base_url="https://api.example.com"))
+        client = await self._aenter(niquests.AsyncSession(base_url="https://api.example.com"))
         return WidgetService(client)
 
 
@@ -82,9 +82,40 @@ Lifecycle bound to a single request is just an `async with` inside the handler â
 framework machinery needed:
 
 ```python
-async def create(self, json: WidgetIn) -> Widget:
-    async with open_txn() as txn:
-        return await txn.insert(json)
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from msgspec import Struct
+
+from jero import BaseApp, Resource
+
+
+class WidgetIn(Struct):
+    name: str
+
+
+class Widget(WidgetIn):
+    id: str
+
+
+@asynccontextmanager
+async def open_txn() -> AsyncIterator[None]:
+    # acquire a per-request resource (a DB transaction, say); released on exit
+    yield
+
+
+class WidgetResource(Resource):
+    async def create(self, json: WidgetIn) -> Widget:
+        async with open_txn():
+            return Widget(id="widget-id", name=json.name)
+
+
+class App(BaseApp):
+    async def _wire(self) -> None:
+        self._include_resource(WidgetResource(), path="/widgets")
+
+
+app = App()
 ```
 
 ## Why no resolver

@@ -24,6 +24,14 @@ from msgspec import Struct
 from jero import BaseApp, Resource
 
 
+class WidgetIn(Struct):
+    name: str
+
+
+class Widget(WidgetIn):
+    id: str
+
+
 class WidgetPath(Struct):
     widget_id: str
 
@@ -36,7 +44,7 @@ class Page(Struct):
 class WidgetResource(Resource):
     # PUT /widgets/{widget_id}?limit=...&offset=...
     async def update(self, path: WidgetPath, params: Page, json: WidgetIn) -> Widget:
-        ...
+        return Widget(id=path.widget_id, name=json.name)
 
 
 class App(BaseApp):
@@ -60,8 +68,26 @@ validation and a schema for the coming OpenAPI spec.
 For non-JSON or opaque bodies, take `content: bytes`:
 
 ```python
-async def create(self, content: bytes) -> Receipt:
-    ...
+from msgspec import Struct
+
+from jero import BaseApp, Resource
+
+
+class Receipt(Struct):
+    size: int
+
+
+class UploadResource(Resource):
+    async def create(self, content: bytes) -> Receipt:   # POST /uploads
+        return Receipt(size=len(content))
+
+
+class App(BaseApp):
+    async def _wire(self) -> None:
+        self._include_resource(UploadResource(), path="/uploads")
+
+
+app = App()
 ```
 
 ## Query & path — `params`, `path`
@@ -77,13 +103,31 @@ For the conventional case, model the headers you act on as a typed `Struct`. Wir
 names map to fields by lower-casing and turning `-` into `_`:
 
 ```python
+from msgspec import Struct
+
+from jero import BaseApp, Endpoint
+
+
 class Trace(Struct):
     x_trace_id: str            # reads the "X-Trace-Id" header
     user_agent: str | None = None
 
 
-async def get(self, headers: Trace) -> Resp:
-    ...
+class TraceEcho(Struct):
+    trace_id: str
+
+
+class TraceEndpoint(Endpoint):
+    async def get(self, headers: Trace) -> TraceEcho:    # GET /trace
+        return TraceEcho(trace_id=headers.x_trace_id)
+
+
+class App(BaseApp):
+    async def _wire(self) -> None:
+        self._include_endpoint(TraceEndpoint(), path="/trace")
+
+
+app = App()
 ```
 
 When you need the headers exactly as sent — original casing, repeats, or names that
@@ -91,13 +135,29 @@ aren't valid identifiers — take `raw_headers: RawHeaders`. It's an immutable,
 case-insensitive `Mapping` that preserves every pair:
 
 ```python
-from jero import RawHeaders
+from msgspec import Struct
+
+from jero import BaseApp, Endpoint, RawHeaders
 
 
-async def get(self, raw_headers: RawHeaders) -> Resp:
-    trace = raw_headers["X-Trace-Id"]          # case-insensitive lookup
-    cookies = raw_headers.getlist("Set-Cookie")  # repeats preserved
-    ...
+class Echo(Struct):
+    trace_id: str
+    cookie_count: int
+
+
+class HeadersEndpoint(Endpoint):
+    async def get(self, raw_headers: RawHeaders) -> Echo:    # GET /echo
+        trace_id = raw_headers["X-Trace-Id"]         # case-insensitive lookup
+        cookies = raw_headers.getlist("Cookie")      # repeats preserved
+        return Echo(trace_id=trace_id, cookie_count=len(cookies))
+
+
+class App(BaseApp):
+    async def _wire(self) -> None:
+        self._include_endpoint(HeadersEndpoint(), path="/echo")
+
+
+app = App()
 ```
 
 Use the typed `headers` Struct for values you act on; reach for `raw_headers` only for

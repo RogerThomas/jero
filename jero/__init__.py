@@ -1,5 +1,6 @@
 """jero — an opinionated, msgspec-first ASGI micro-framework."""
 
+from jero.background import BackgroundTasks
 from jero.codecs import msgspec_decoder, msgspec_encoder
 from jero.core import (
     Auth,
@@ -19,6 +20,7 @@ from jero.testing import FactoryHarness, TestClient, TestResponse, TestSSEEvent
 
 __all__ = [
     "Auth",
+    "BackgroundTasks",
     "BaseApp",
     "BaseFactory",
     "BytesResponse",

@@ -13,7 +13,7 @@ class RawHeaders:
     reading values you act on (model those in a typed ``headers`` Struct). Lookups
     are case-insensitive (``raw["X-Trace-Id"] == raw["x-traceid"]``); iteration,
     ``items`` and ``repr`` keep the casing as sent. Registers as
-    ``Mapping[str, str]`` so it drops straight into ``httpx(headers=...)``; pass
+    ``Mapping[str, str]`` so it drops straight into ``niquests(headers=...)``; pass
     :meth:`multi_items` instead when repeated headers must survive.
     """
 
