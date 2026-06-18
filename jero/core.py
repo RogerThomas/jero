@@ -277,7 +277,7 @@ class Resource(_Routable):
     def __init_subclass__(
         cls,
         *,
-        path: str | None = None,
+        path: str,
         meta: ResourceMeta | None = None,
         meta_create: OperationMeta | None = None,
         meta_read_one: OperationMeta | None = None,
@@ -340,7 +340,7 @@ class Endpoint(_Routable):
     def __init_subclass__(
         cls,
         *,
-        path: str | None = None,
+        path: str,
         meta: EndpointMeta | None = None,
         meta_get: OperationMeta | None = None,
         meta_post: OperationMeta | None = None,
