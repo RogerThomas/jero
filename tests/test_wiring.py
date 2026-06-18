@@ -159,32 +159,32 @@ def test_path_must_start_with_slash() -> None:
 # --- Path template & route-segment validations ---
 
 
-class ReadManyResource(Resource):
-    """Minimal collection resource, mounted at deliberately-bad paths in tests."""
+class ReadManyMixin:
+    """Minimal collection handler, mixed into resources mounted at deliberately-bad paths."""
 
     async def read_many(self) -> P:
         """Collection handler (never reached — wiring fails first)."""
         return P(name="name")
 
 
-class _NoSlashMount(ReadManyResource, path="x"):
-    """ReadManyResource at a path without a leading slash."""
+class _NoSlashMount(ReadManyMixin, Resource, path="x"):
+    """ReadManyMixin at a path without a leading slash."""
 
 
-class _BadSlotMount(ReadManyResource, path="/x/{1bad}"):
-    """ReadManyResource at a path with a non-identifier slot."""
+class _BadSlotMount(ReadManyMixin, Resource, path="/x/{1bad}"):
+    """ReadManyMixin at a path with a non-identifier slot."""
 
 
-class _DupSlotMount(ReadManyResource, path="/x/{id}/{id}"):
-    """ReadManyResource at a path with a duplicate slot."""
+class _DupSlotMount(ReadManyMixin, Resource, path="/x/{id}/{id}"):
+    """ReadManyMixin at a path with a duplicate slot."""
 
 
-class _UnbalancedMount(ReadManyResource, path="/x/{id"):
-    """ReadManyResource at a path with an unbalanced brace."""
+class _UnbalancedMount(ReadManyMixin, Resource, path="/x/{id"):
+    """ReadManyMixin at a path with an unbalanced brace."""
 
 
-class _UncoveredSlotMount(ReadManyResource, path="/x/{id}"):
-    """ReadManyResource at a templated path with no covering 'path' Struct."""
+class _UncoveredSlotMount(ReadManyMixin, Resource, path="/x/{id}"):
+    """ReadManyMixin at a templated path with no covering 'path' Struct."""
 
 
 class DefaultedPath(Struct):
