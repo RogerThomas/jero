@@ -77,9 +77,9 @@ from jero.links import (
     Location,
     OperationTarget,
     PathTarget,
-    RefTarget,
     Target,
     URLTarget,
+    validate_path_params,
 )
 from jero.multipart import MultipartError, MultipartParser, parse_options_header
 from jero.streaming import (
@@ -1236,35 +1236,14 @@ class _RouteRef:
 
 def _build_url(route_ref: _RouteRef, params: Struct | None) -> str:
     segments = route_ref.segments
+    # params is None only for slot-less routes: both validators reject a None against a
+    # route with path slots before we get here, so there is never a param to fill.
     if params is None:
-        if any(is_param for is_param, _ in segments):
-            raise WiringError("reverse target needs params to fill its path slots")
         return "/".join(value for _, value in segments)
     data = to_builtins(params)
     return "/".join(
         _encode_header_value(data[value]) if is_param else value for is_param, value in segments
     )
-
-
-def _validate_ref_params(
-    expected: type[Struct] | None, params: Struct | None, target: RefTarget
-) -> None:
-    """The deferred params-type check for ``from_ref`` (its string can't carry the type
-    statically, so this runs at resolution, against the registered path Struct)."""
-    label = f"{target.name}.{target.operation}"
-    if expected is None:
-        if params is not None:
-            raise WiringError(f"{label} takes no path params")
-        return
-    if params is None:
-        raise WiringError(f"{label} requires params of type {expected.__name__}")
-    # Exact type, not isinstance: params must be *the* path struct the operation declares.
-    # isinstance would silently accept a subclass; we want an exact-shape contract that
-    # fails loud, so the disable is deliberate (pylint's advice is wrong for this case).
-    if type(params) is not expected:  # pylint: disable=unidiomatic-typecheck
-        raise WiringError(
-            f"{label} expects params of type {expected.__name__}, got {type(params).__name__}",
-        )
 
 
 def _forwarded_first(scope: Scope, name: bytes) -> str | None:
@@ -1276,15 +1255,15 @@ def _forwarded_first(scope: Scope, name: bytes) -> str | None:
     return None
 
 
-def _public_base(scope: Scope) -> str:
+def _public_base(scope: Scope) -> str | None:
     """The public origin (``scheme://host[:port]``) the client used, reconstructed from
-    the ``X-Forwarded-*`` headers (falling back to ``Host`` / the scope). Caller has
+    the ``X-Forwarded-*`` headers (falling back to ``Host``). ``None`` when no host can be
+    determined — the caller then stays relative rather than emit a hostless URL. Caller has
     already decided the proxy is trusted."""
-    proto = _forwarded_first(scope, b"x-forwarded-proto") or scope.get("scheme") or "http"
     host = _forwarded_first(scope, b"x-forwarded-host") or _forwarded_first(scope, b"host")
     if host is None:
-        server = scope.get("server")
-        host = f"{server[0]}:{server[1]}" if server else ""
+        return None
+    proto = _forwarded_first(scope, b"x-forwarded-proto") or scope.get("scheme") or "http"
     port = _forwarded_first(scope, b"x-forwarded-port")
     default_port = (proto == "https" and port == "443") or (proto == "http" and port == "80")
     if port and ":" not in host and not default_port:
@@ -1359,7 +1338,7 @@ class _Reverser:
         if self._base_url is not None:
             return self._base_url
         if self._trust_forwarded:
-            return _public_base(scope) + _forwarded_prefix(scope)
+            return (_public_base(scope) or "") + _forwarded_prefix(scope)
         return ""
 
     def resolve(self, target: Target, scope: Scope) -> str:
@@ -1381,7 +1360,11 @@ class _Reverser:
                     f"no mounted operation for ref {target.name!r}.{target.operation!r}"
                 )
             route_ref = self._refs[key]
-            _validate_ref_params(route_ref.path_type, target.params, target)
+            # from_ref can't carry the type statically, so its params check is deferred to
+            # here — the same exact-type validator from_operation runs at construction.
+            validate_path_params(
+                route_ref.path_type, target.params, f"{target.name}.{target.operation}"
+            )
         return self._public_prefix(scope) + _build_url(route_ref, target.params)
 
 

@@ -80,11 +80,11 @@ def _operation_path_type(operation: Callable[..., object]) -> type[Struct] | Non
     return _OPERATION_PATH_TYPES[operation]
 
 
-def _validate_operation_params(operation: Callable[..., object], params: Struct | None) -> None:
-    """Loud & fast: the wrong ``params`` Struct fails the instant the link is built,
-    introspected from the operation's own ``path`` annotation (no app/registry needed)."""
-    expected = _operation_path_type(operation)
-    label = getattr(operation, "__qualname__", repr(operation))
+def validate_path_params(expected: type[Struct] | None, params: Struct | None, label: str) -> None:
+    """Validate ``params`` against an operation's declared path Struct (the *exact* type),
+    raising ``TypeError`` on any mismatch. Shared by ``from_operation`` (at construction)
+    and ``from_ref`` resolution (deferred, called from ``core``) — an un-underscored
+    boundary-crosser, not public API."""
     if expected is None:
         if params is not None:
             raise TypeError(
@@ -101,6 +101,13 @@ def _validate_operation_params(operation: Callable[..., object], params: Struct 
         raise TypeError(
             f"{label} expects params of type {expected.__name__}, got {type(params).__name__}",
         )
+
+
+def _validate_operation_params(operation: Callable[..., object], params: Struct | None) -> None:
+    """Loud & fast: the wrong ``params`` Struct fails the instant the link is built,
+    introspected from the operation's own ``path`` annotation (no app/registry needed)."""
+    label = getattr(operation, "__qualname__", repr(operation))
+    validate_path_params(_operation_path_type(operation), params, label)
 
 
 def _parse_ref(ref: str, params: Struct | None) -> RefTarget:

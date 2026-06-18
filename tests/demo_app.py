@@ -306,6 +306,10 @@ class JobsResource(Resource, path="/jobs", ref="jobs"):
     ``read_one`` and a ``Link`` header (self + a literal help link). ``ref="jobs"`` lets
     another module address it by string via ``Link.from_ref('jobs.read_one')``."""
 
+    async def read_many(self) -> list[Job]:
+        """List jobs — a slot-less operation, the ``collection`` reversal target."""
+        return [Job(id="job-id")]
+
     async def read_one(self, path: JobPath) -> Job:
         """Return a single job by path id (the reversal target)."""
         return Job(id=path.job_id)
@@ -320,7 +324,9 @@ class JobsResource(Resource, path="/jobs", ref="jobs"):
                 Link.from_operation(
                     JobsResource.read_one, rel="self", params=JobPath(job_id=json.id)
                 ),
-                # a path link picks up the app's URL base; a full url is verbatim.
+                # a slot-less operation needs no params; a path link picks up the app's
+                # URL base; a full url is verbatim.
+                Link.from_operation(JobsResource.read_many, rel="collection"),
                 Link.from_path("/docs/jobs", rel="help", title="Job docs", media_type="text/html"),
                 Link.from_url("https://status.example.com", rel="status"),
             ],
@@ -339,6 +345,19 @@ class JobLinkEndpoint(Endpoint, path="/job-link"):
         )
 
 
+class JobRedirectEndpoint(Endpoint, path="/latest-job"):
+    """A 303 redirect to the canonical job URL, with the ``Location`` reverse-routed by
+    string ref (the cross-module form)."""
+
+    async def get(self) -> JSONResponse[Job]:
+        """Redirect to the latest job's canonical URL."""
+        return JSONResponse(
+            json=Job(id="job-id"),
+            status_code=303,
+            location=Location.from_ref("jobs.read_one", params=JobPath(job_id="job-id")),
+        )
+
+
 class LinksDemoApp(BaseApp):
     """Demonstrates reverse-routed ``Location`` / ``Link``: typed ``from_operation``, a
     literal ``from_path`` / ``from_url``, and the ``from_ref`` string hatch across 'modules'.
@@ -348,6 +367,7 @@ class LinksDemoApp(BaseApp):
     itself needs no extra wiring."""
 
     async def _wire(self) -> None:
-        """Wire the jobs resource and the cross-module link endpoint."""
+        """Wire the jobs resource and the cross-module link / redirect endpoints."""
         self._include_resource(JobsResource())
         self._include_endpoint(JobLinkEndpoint())
+        self._include_endpoint(JobRedirectEndpoint())
