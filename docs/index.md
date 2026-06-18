@@ -52,7 +52,7 @@ class Widget(Struct):
     name: str
 
 
-class WidgetResource(Resource):
+class WidgetResource(Resource, path="/widgets"):
     # called as: GET /widgets/{widget_id}
     async def read_one(self, path: WidgetPath) -> Widget:
         return Widget(id=path.widget_id, name="widget-name")
@@ -60,7 +60,7 @@ class WidgetResource(Resource):
 
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_resource(WidgetResource(), path="/widgets")
+        self._include_resource(WidgetResource())
 
 
 app = App()

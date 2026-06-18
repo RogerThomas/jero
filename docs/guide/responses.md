@@ -28,7 +28,7 @@ class WidgetPath(Struct):
     widget_id: str
 
 
-class WidgetResource(Resource):
+class WidgetResource(Resource, path="/widgets"):
     async def read_one(self, path: WidgetPath) -> Widget:      # JSON object
         return Widget(id=path.widget_id, name="gizmo")
 
@@ -36,15 +36,15 @@ class WidgetResource(Resource):
         return [Widget(id="widget-id", name="gizmo")]
 
 
-class ExportEndpoint(Endpoint):
+class ExportEndpoint(Endpoint, path="/export"):
     async def get(self) -> bytes:                              # octet-stream
         return b"id,name\n"
 
 
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_resource(WidgetResource(), path="/widgets")
-        self._include_endpoint(ExportEndpoint(), path="/export")
+        self._include_resource(WidgetResource())
+        self._include_endpoint(ExportEndpoint())
 
 
 app = App()
@@ -78,7 +78,7 @@ class WidgetHeaders(Struct):
     x_rate_limit: int
 
 
-class WidgetResource(Resource):
+class WidgetResource(Resource, path="/widgets"):
     async def read_one(self, path: WidgetPath) -> JSONResponse[Widget, WidgetHeaders]:
         return JSONResponse(
             json=Widget(id=path.widget_id),
@@ -88,7 +88,7 @@ class WidgetResource(Resource):
 
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_resource(WidgetResource(), path="/widgets")
+        self._include_resource(WidgetResource())
 
 
 app = App()
@@ -168,7 +168,7 @@ class Widget(WidgetIn):
     id: str
 
 
-class WidgetResource(Resource):
+class WidgetResource(Resource, path="/widgets"):
     async def create(self, json: WidgetIn) -> JSONResponse[Widget]:
         widget = Widget(id="widget-id", name=json.name)
         return JSONResponse(json=widget, status_code=202)   # Accepted
@@ -176,7 +176,7 @@ class WidgetResource(Resource):
 
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_resource(WidgetResource(), path="/widgets")
+        self._include_resource(WidgetResource())
 
 
 app = App()

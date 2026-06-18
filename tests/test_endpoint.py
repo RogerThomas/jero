@@ -18,7 +18,7 @@ class Ack(Struct):
     ok: bool
 
 
-class Pinger(Endpoint):
+class Pinger(Endpoint, path="/ping"):
     """Sample endpoint that answers POST with an acknowledgement."""
 
     async def post(self) -> Ack:
@@ -30,7 +30,7 @@ class PingApp(BaseApp):
     """App wiring the Pinger endpoint at /ping."""
 
     async def _wire(self) -> None:
-        self._include_endpoint(Pinger(), path="/ping")
+        self._include_endpoint(Pinger())
 
 
 def test_endpoint_post_returns_200_not_201() -> None:

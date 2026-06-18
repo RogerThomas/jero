@@ -25,26 +25,24 @@ class ItemPath(Struct):
 
 
 class _ResourceApp(BaseApp):
-    def __init__(self, resource: Resource, path: str = "/x") -> None:
+    def __init__(self, resource: Resource) -> None:
         self._resource = resource
-        self._path = path
         super().__init__()
 
     async def _wire(self) -> None:
-        self._include_resource(self._resource, path=self._path)
+        self._include_resource(self._resource)
 
 
 class _EndpointApp(BaseApp):
-    def __init__(self, endpoint: Endpoint, path: str = "/x") -> None:
+    def __init__(self, endpoint: Endpoint) -> None:
         self._endpoint = endpoint
-        self._path = path
         super().__init__()
 
     async def _wire(self) -> None:
-        self._include_endpoint(self._endpoint, path=self._path)
+        self._include_endpoint(self._endpoint)
 
 
-class BadArgResource(Resource):
+class BadArgResource(Resource, path="/x"):
     """Resource whose handler uses an unsupported argument name."""
 
     async def create(self, body: P) -> P:  # 'body' is not a supported source name
@@ -52,7 +50,7 @@ class BadArgResource(Resource):
         return body
 
 
-class BodyOnGetResource(Resource):
+class BodyOnGetResource(Resource, path="/x"):
     """Resource whose GET handler illegally declares a body source."""
 
     async def read_one(self, json: P) -> P:  # GET handlers cannot take a body
@@ -60,7 +58,7 @@ class BodyOnGetResource(Resource):
         return json
 
 
-class NonStructReturnResource(Resource):
+class NonStructReturnResource(Resource, path="/x"):
     """Resource whose handler declares an unsupported return type."""
 
     async def read_many(self) -> int:  # must return a Struct / list[Struct] / bytes / Response
@@ -68,7 +66,7 @@ class NonStructReturnResource(Resource):
         return 0
 
 
-class ExactPathEndpoint(Endpoint):
+class ExactPathEndpoint(Endpoint, path="/x"):
     """Endpoint that illegally declares a path slot for an exact path."""
 
     async def get(self, path: ItemPath) -> P:  # /x has no {id} slot; endpoint paths are exact
@@ -76,7 +74,7 @@ class ExactPathEndpoint(Endpoint):
         return P(name=path.id)
 
 
-class BadRawHeadersResource(Resource):
+class BadRawHeadersResource(Resource, path="/x"):
     """Resource whose raw_headers argument has the wrong annotation."""
 
     async def read_many(self, raw_headers: dict[str, str]) -> P:  # must be RawHeaders
@@ -84,11 +82,11 @@ class BadRawHeadersResource(Resource):
         return P(name=raw_headers["name"])
 
 
-class EmptyResource(Resource):
+class EmptyResource(Resource, path="/x"):
     """Resource defining none of the CRUD methods."""
 
 
-class BadContentResource(Resource):
+class BadContentResource(Resource, path="/x"):
     """Resource whose 'content' argument is not annotated as bytes."""
 
     async def create(self, content: str) -> P:  # 'content' must be bytes
@@ -96,7 +94,7 @@ class BadContentResource(Resource):
         return P(name=content)
 
 
-class BadHeadersResource(Resource):
+class BadHeadersResource(Resource, path="/x"):
     """Resource whose 'headers' argument is not a msgspec Struct."""
 
     async def read_many(self, headers: int) -> P:  # must be a Struct
@@ -155,7 +153,7 @@ def test_source_must_be_struct() -> None:
 def test_path_must_start_with_slash() -> None:
     """Wiring a mount path without a leading slash fails at startup."""
     with pytest.raises(RuntimeError, match="must start with"):
-        TestClient(_ResourceApp(ReadManyResource(), path="x"))
+        TestClient(_ResourceApp(_NoSlashMount()))
 
 
 # --- Path template & route-segment validations ---
@@ -169,13 +167,33 @@ class ReadManyResource(Resource):
         return P(name="name")
 
 
+class _NoSlashMount(ReadManyResource, path="x"):
+    """ReadManyResource at a path without a leading slash."""
+
+
+class _BadSlotMount(ReadManyResource, path="/x/{1bad}"):
+    """ReadManyResource at a path with a non-identifier slot."""
+
+
+class _DupSlotMount(ReadManyResource, path="/x/{id}/{id}"):
+    """ReadManyResource at a path with a duplicate slot."""
+
+
+class _UnbalancedMount(ReadManyResource, path="/x/{id"):
+    """ReadManyResource at a path with an unbalanced brace."""
+
+
+class _UncoveredSlotMount(ReadManyResource, path="/x/{id}"):
+    """ReadManyResource at a templated path with no covering 'path' Struct."""
+
+
 class DefaultedPath(Struct):
     """A path Struct whose field illegally carries a default."""
 
     id: str = "id"
 
 
-class DefaultedPathResource(Resource):
+class DefaultedPathResource(Resource, path="/x/{id}"):
     """Resource whose path Struct field has a default."""
 
     async def read_one(self, path: DefaultedPath) -> P:
@@ -189,7 +207,7 @@ class OtherPath(Struct):
     other: str
 
 
-class MissingSlotResource(Resource):
+class MissingSlotResource(Resource, path="/x/{id}"):
     """Resource whose path Struct omits a template slot."""
 
     async def read_one(self, path: OtherPath) -> P:
@@ -197,7 +215,7 @@ class MissingSlotResource(Resource):
         return P(name=path.other)
 
 
-class TrailingReadMany(Resource):
+class TrailingReadMany(Resource, path="/x"):
     """Resource whose read_many declares a trailing path field."""
 
     async def read_many(self, path: ItemPath) -> P:
@@ -208,43 +226,43 @@ class TrailingReadMany(Resource):
 def test_invalid_path_slot_identifier() -> None:
     """A template slot that isn't a valid identifier fails at startup."""
     with pytest.raises(RuntimeError, match="is not a valid identifier"):
-        TestClient(_ResourceApp(ReadManyResource(), path="/x/{1bad}"))
+        TestClient(_ResourceApp(_BadSlotMount()))
 
 
 def test_duplicate_path_slot() -> None:
     """A template with a repeated slot fails at startup."""
     with pytest.raises(RuntimeError, match="duplicate slot"):
-        TestClient(_ResourceApp(ReadManyResource(), path="/x/{id}/{id}"))
+        TestClient(_ResourceApp(_DupSlotMount()))
 
 
 def test_malformed_path_segment() -> None:
     """A segment with an unbalanced brace fails at startup."""
     with pytest.raises(RuntimeError, match="malformed segment"):
-        TestClient(_ResourceApp(ReadManyResource(), path="/x/{id"))
+        TestClient(_ResourceApp(_UnbalancedMount()))
 
 
 def test_missing_path_struct_for_slots() -> None:
     """A templated mount with no 'path' Struct to cover its slots fails at startup."""
     with pytest.raises(RuntimeError, match="must declare 'path' covering"):
-        TestClient(_ResourceApp(ReadManyResource(), path="/x/{id}"))
+        TestClient(_ResourceApp(_UncoveredSlotMount()))
 
 
 def test_path_fields_cannot_have_defaults() -> None:
     """A path Struct field with a default fails at startup."""
     with pytest.raises(RuntimeError, match="path fields cannot have defaults"):
-        TestClient(_ResourceApp(DefaultedPathResource(), path="/x/{id}"))
+        TestClient(_ResourceApp(DefaultedPathResource()))
 
 
 def test_path_struct_missing_template_slot() -> None:
     """A path Struct that doesn't cover a template slot fails at startup."""
     with pytest.raises(RuntimeError, match="missing template slots"):
-        TestClient(_ResourceApp(MissingSlotResource(), path="/x/{id}"))
+        TestClient(_ResourceApp(MissingSlotResource()))
 
 
 def test_read_many_cannot_extend_path() -> None:
     """A read_many declaring a trailing path field fails at startup."""
     with pytest.raises(RuntimeError, match="collections live at the mount path"):
-        TestClient(_ResourceApp(TrailingReadMany(), path="/x"))
+        TestClient(_ResourceApp(TrailingReadMany()))
 
 
 # --- Auth / user-source validations ---
@@ -278,7 +296,7 @@ class GoodAuth:
         return User(id="id")
 
 
-class UserWithoutAuthResource(Resource):
+class UserWithoutAuthResource(Resource, path="/x"):
     """Resource declaring 'user' but wired without any auth."""
 
     async def read_many(self, user: User) -> User:
@@ -286,7 +304,7 @@ class UserWithoutAuthResource(Resource):
         return user
 
 
-class UserMismatchResource(Resource):
+class UserMismatchResource(Resource, path="/x"):
     """Resource whose 'user' type disagrees with the authenticator's return."""
 
     async def read_many(self, user: Other) -> Other:
@@ -301,7 +319,7 @@ class _AuthApp(BaseApp):
         super().__init__()
 
     async def _wire(self) -> None:
-        self._include_resource(self._resource, path="/x", auth=self._auth)
+        self._include_resource(self._resource, auth=self._auth)
 
 
 def test_user_declared_without_auth() -> None:
@@ -319,7 +337,7 @@ def test_user_type_mismatch_with_auth() -> None:
 # --- Duplicate route registration ---
 
 
-class FirstEndpoint(Endpoint):
+class FirstEndpoint(Endpoint, path="/dup"):
     """An endpoint at a shared path."""
 
     async def get(self) -> P:
@@ -327,7 +345,7 @@ class FirstEndpoint(Endpoint):
         return P(name="first")
 
 
-class SecondEndpoint(Endpoint):
+class SecondEndpoint(Endpoint, path="/dup"):
     """A second endpoint colliding on the same method and path."""
 
     async def get(self) -> P:
@@ -337,8 +355,8 @@ class SecondEndpoint(Endpoint):
 
 class _DuplicateRouteApp(BaseApp):
     async def _wire(self) -> None:
-        self._include_endpoint(FirstEndpoint(), path="/dup")
-        self._include_endpoint(SecondEndpoint(), path="/dup")
+        self._include_endpoint(FirstEndpoint())
+        self._include_endpoint(SecondEndpoint())
 
 
 def test_duplicate_route_registration() -> None:

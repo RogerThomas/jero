@@ -73,11 +73,28 @@ These pull against each other constantly; keep all three in mind on every change
 
 ## The contract (how apps are built)
 
-- **`Resource`** — a class with CRUD methods: `create` / `read_one` / `read_many`
-  / `update` / `partial_update` / `delete` → POST / GET(item) / GET(collection)
-  / PUT / PATCH / DELETE.
-- **`Endpoint`** — bare verbs (`get`/`post`/…) for non-resource routes (health,
-  webhooks, actions). One path per Endpoint.
+- **The operation set is closed and fixed** — this is load-bearing. A `Resource`'s
+  operations are *exactly* `create` / `read_one` / `read_many` / `update` /
+  `partial_update` / `delete`; an `Endpoint`'s are *exactly* `get` / `post` / `put` /
+  `patch` / `delete`. The **method name *is* the operation** (a deterministic, total
+  mapping defined by `Resource.METHODS` / `Endpoint.METHODS`) — you cannot rename them,
+  add others, or define arbitrary route methods. A method whose name isn't in the set is
+  just a regular method, not a route. Because the set is fixed and finite, anything
+  keyed per-operation (e.g. the `meta_<op>` kwargs) is a closed enumeration — there is no
+  "drift" between method names and per-op declarations to worry about.
+- **`Resource`** — a class defining any of the six CRUD operations above →
+  POST / GET(item) / GET(collection) / PUT / PATCH / DELETE, with item/collection path
+  semantics.
+- **`Endpoint`** — a class defining any of the five bare verbs above, for non-resource
+  routes (health, webhooks, actions). One exact path per Endpoint; a different path is a
+  different `Endpoint`.
+- **The path is declared on the class, not at wiring** — `class Widgets(Resource,
+  path="/widgets")`, read once at wiring; `_include_resource(Widgets())` takes no
+  `path=`. The class is the single source of truth for its path (what URL reversal /
+  `Link` / `Location` and the OpenAPI spec read). Optional OpenAPI metadata rides the
+  same class kwargs: `meta` (all operations) and `meta_<op>` per operation, typed
+  `EndpointMeta` / `ResourceMeta` / `OperationMeta` (the wrong meta type on a shape is a
+  loud failure; `operation_id` lives only on `OperationMeta`).
 - Handler args bind **by name**, each a msgspec Struct: `json`, `content` (raw
   bytes), `form` (multipart) — the three body sources are mutually exclusive —
   `params` (query), `path` (URL template slots), `headers` (typed), `raw_headers`
