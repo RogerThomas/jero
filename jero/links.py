@@ -17,8 +17,6 @@ un-underscored package-internal boundary-crossers (``core`` resolves them), not 
 API — only ``Location`` / ``Link`` are exported from :mod:`jero`.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, get_type_hints
 
