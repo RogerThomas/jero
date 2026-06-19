@@ -24,7 +24,7 @@
 </div>
 
 **jero** builds typed JSON/REST APIs from plain classes. Annotate your handlers with
-[msgspec](https://jcristharif.com/msgspec/) Structs — jero does the rest: routing,
+[msgspec](https://msgspec.dev/) Structs — jero does the rest: routing,
 validation, serialization, auth, streaming, and resource lifecycle.
 
 ```python

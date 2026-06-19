@@ -23,7 +23,7 @@ name *is* the HTTP operation, and dependencies are ordinary constructor argument
 wire by hand.
 
 Almost everything that flows in and out of jero is a
-[msgspec](https://jcristharif.com/msgspec/) `Struct`: request and response bodies,
+[msgspec](https://msgspec.dev/) `Struct`: request and response bodies,
 headers, path params, query params, and multipart forms alike. You don't pass or return
 raw `dict`s; the `Struct` is what gives jero validation, serialization, precise startup
 checks, future
