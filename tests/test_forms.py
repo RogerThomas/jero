@@ -69,6 +69,7 @@ class HeaderForm(Camel):
     config: FormPart[JobConfig, UploadHeaders]
     default_file: FilePart
     default_blob: FormPart[bytes]
+    explicit_none_blob: FormPart[bytes, None]
 
 
 class HeaderResult(Camel):
@@ -80,6 +81,7 @@ class HeaderResult(Camel):
     config_dpi: int
     default_file_headers: bool
     default_blob_headers: bool
+    explicit_none_blob_headers: bool
     upload_header_names: list[str]
     blob_extra_values: list[str]
 
@@ -132,6 +134,7 @@ class HeadersEndpoint(Endpoint, path="/headers"):
             config_dpi=form.config.data.dpi,
             default_file_headers=form.default_file.headers is not None,
             default_blob_headers=form.default_blob.headers is not None,
+            explicit_none_blob_headers=form.explicit_none_blob.headers is not None,
             upload_header_names=form.upload.raw_headers.keys(),
             blob_extra_values=form.blob.raw_headers.getlist("x-extra"),
         )
@@ -241,6 +244,9 @@ def _headers_form_body(*, include_upload_checksum: bool = True) -> bytes:
             b"--" + boundary + b"\r\n",
             b'Content-Disposition: form-data; name="defaultBlob"\r\n',
             b"\r\ndefault-blob\r\n",
+            b"--" + boundary + b"\r\n",
+            b'Content-Disposition: form-data; name="explicitNoneBlob"\r\n',
+            b"\r\nexplicit-none-blob\r\n",
             b"--" + boundary + b"--\r\n",
         ]
     )
@@ -312,6 +318,7 @@ def test_form_part_and_file_part_bind_typed_headers(client: TestClient) -> None:
         "configDpi": 400,
         "defaultFileHeaders": False,
         "defaultBlobHeaders": False,
+        "explicitNoneBlobHeaders": False,
         "uploadHeaderNames": ["Content-Disposition", "Content-Type", "X-Checksum"],
         "blobExtraValues": ["first", "second"],
     }

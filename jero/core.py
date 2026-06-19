@@ -627,7 +627,7 @@ def _compile_form(
             headers_ann = part_types[1]
             headers_type = (
                 None
-                if headers_ann is None
+                if _is_none_type(headers_ann)
                 else _struct_annotation(cls, method, f"{field.name}.headers", headers_ann)
             )
         payload_kind = _payload_kind(cls, method, field.name, payload_type)

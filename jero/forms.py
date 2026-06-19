@@ -4,11 +4,8 @@ from msgspec import Struct
 
 from jero.headers import RawHeaders
 
+# Alias keeps the runtime-evaluated Struct annotation direct without a TC001 ignore.
 _RawHeaders = RawHeaders
-
-
-class NoHeaders(Struct):
-    """Empty typed form part headers."""
 
 
 class FormPart[T, H: Struct | None = None](Struct):
