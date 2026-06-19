@@ -2,7 +2,7 @@
   <a href="."><img src="assets/jero-logo.png" alt="jero" width="440"></a>
 </p>
 
-<p align="center"><strong>The msgspec-first ASGI framework where your type hints are the API. Opinionated on purpose => fast by construction and a joy to build on.</strong></p>
+<p align="center"><strong>The msgspec-first ASGI framework where your type hints are the API.<br>Opinionated on purpose => fast by construction and a joy to build on.</strong></p>
 
 ---
 
@@ -18,15 +18,15 @@ generation all derive from statically declared types, while the request path sta
 close to raw msgspec performance: route lookup → decode → call → encode.
 
 There are no route decorators and no dependency-injection container. Routes are plain
-classes — `Resource` for REST collections, `Endpoint` for one-off routes — where the
-method name *is* the HTTP operation, and dependencies are ordinary constructor arguments
-you wire by hand.
+classes (`Resource` for REST collections, `Endpoint` for one-off routes); the method
+name *is* the HTTP operation, and dependencies are ordinary constructor arguments you
+wire by hand.
 
 Almost everything that flows in and out of jero is a
-[msgspec](https://jcristharif.com/msgspec/) `Struct` — request and response bodies,
+[msgspec](https://jcristharif.com/msgspec/) `Struct`: request and response bodies,
 headers, path params, query params, and multipart forms alike. You don't pass or return
-raw `dict`s; the
-`Struct` is what gives jero validation, serialization, precise startup checks, future
+raw `dict`s; the `Struct` is what gives jero validation, serialization, precise startup
+checks, future
 schema generation, and (most importantly) maximum performance from msgspec's compiled
 codecs (whose [benchmarks](https://msgspec.dev/benchmarks) are almost hard to believe).
 
@@ -36,16 +36,16 @@ jero is opinionated on purpose. It makes one bet: being aggressively prescriptiv
 rather than flexible, is how a framework can be *both* extremely fast *and* a joy to
 build on.
 
-| Principle             | What it means |
-| --------------------- | ------------- |
-| ⚡ **Speed**           | Introspection happens once, at startup. The per-request path stays minimal and predictable. |
-| 🛤️ **Opinionated DX** | One blessed way to do each thing, encoded so you can't get it wrong. Contracts fail loud at startup with a precise `WiringError`, never quietly at runtime. |
-| 🔒 **Strict typing**   | Fully static under pyright-strict. Types are the contract, the validation source, and the source of the coming OpenAPI spec. |
+| Principle          | What it means |
+| ------------------ | ------------- |
+| **Speed**          | Introspection happens once, at startup. The per-request path stays minimal and predictable. |
+| **Opinionated DX** | One blessed way to do each thing, encoded so you can't get it wrong. Contracts fail loud at startup with a precise `WiringError`, never quietly at runtime. |
+| **Strict typing**  | Fully static under pyright-strict. Types are the contract, the validation source, and the source of the coming OpenAPI spec. |
 
 jero leans hard into modern Python typing: PEP 695 generics
 (`JSONResponse[Body, Headers]`, `BaseApp[Factory]`,
 `NDJSONStreamingResponse[Movie]`), bounded type parameters with defaults, generic
-inheritance, and `Protocol`s — so a handler's signature *is* its schema. If you don't
+inheritance, and `Protocol`s, so a handler's signature *is* its schema. If you don't
 like typing, this isn't your framework.
 
 For the reasoning behind those choices, read [Philosophy](philosophy.md). For a calmer
