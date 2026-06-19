@@ -11,8 +11,10 @@ copyright = 'Maintained by <a href="https://RogerThomas.com">RogerThomas</a>.'
 nav = [
     { "Home" = "index.md" },
     { "Getting Started" = "getting-started.md" },
+    { "Philosophy" = "philosophy.md" },
     { "Guide" = [
         { "Resources & Endpoints" = "guide/resources.md" },
+        { "Complete example" = "guide/complete-example.md" },
         { "Request binding" = "guide/binding.md" },
         { "Responses & headers" = "guide/responses.md" },
         { "Links & Location" = "guide/links-and-location.md" },
@@ -24,6 +26,7 @@ nav = [
         { "Testing" = "guide/testing.md" },
         { "REST & error semantics" = "guide/rest.md" },
     ] },
+    { "Comparison" = "comparison.md" },
     { "Performance" = "performance.md" },
     { "API Reference" = "modules.md" },
 ]

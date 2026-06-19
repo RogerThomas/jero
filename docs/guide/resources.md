@@ -8,6 +8,17 @@ collection or a one-off.
 A `Resource` is a class. Define any of the six CRUD methods; their **names** decide
 the HTTP method and status:
 
+```text
+WidgetResource(path="/widgets")
+
+create          POST    /widgets
+read_many       GET     /widgets
+read_one        GET     /widgets/{widget_id}
+update          PUT     /widgets/{widget_id}
+partial_update  PATCH   /widgets/{widget_id}
+delete          DELETE  /widgets/{widget_id}
+```
+
 | Method            | HTTP            | Default status | Path                |
 | ----------------- | --------------- | -------------- | ------------------- |
 | `create`          | POST            | 201            | the mount path      |
@@ -100,7 +111,7 @@ class WidgetResource(Resource, path="/widgets"):
     ...
 ```
 
-jero reads it once at wiring, so registering is just `self._include_resource(WidgetResource())` — no path passed at the call site. The class is the **single source of truth** for its path, which is exactly what URL reversal (the coming [`Link` / `Location`](links-and-location.md)) and the OpenAPI work read off it.
+jero reads it once at wiring, so registering is just `self._include_resource(WidgetResource())` — no path passed at the call site. The class is the **single source of truth** for its path, which is exactly what URL reversal ([`Link` / `Location`](links-and-location.md)) and the OpenAPI work read off it.
 
 ## Path templates
 

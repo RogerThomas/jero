@@ -94,7 +94,29 @@ These pull against each other constantly; keep all three in mind on every change
   `Link` / `Location` and the OpenAPI spec read). Optional OpenAPI metadata rides the
   same class kwargs: `meta` (all operations) and `meta_<op>` per operation, typed
   `EndpointMeta` / `ResourceMeta` / `OperationMeta` (the wrong meta type on a shape is a
-  loud failure; `operation_id` lives only on `OperationMeta`).
+  loud failure; `operation_id` lives only on `OperationMeta`). `path` is **required** on
+  the concrete shapes — omitting it is a pyright error, not just a startup `WiringError`.
+  An optional `ref="..."` gives the class a string handle for URL reversal across import
+  cycles (see Links/Location below).
+- **Links & Location** — responses carry `location: Location | None` (RFC 9110, one
+  `Location` header) and `links: Sequence[Link]` (RFC 8288, joined into one `Link`
+  header), reverse-routed to a mounted operation. Build a target with
+  `from_operation(Class.op, params=...)` (the blessed, typed form — the wrong `params`
+  Struct is caught **at construction** by introspecting the operation's own `path`
+  annotation), `from_path(path)` / `from_url(url)` (a literal root-relative path composed
+  with the URL base, or a verbatim full URL), or `from_ref("ref.op", params=...)` (string
+  escape hatch for import cycles; weaker guarantees — checked at resolution). URLs are
+  relative unless one of two env vars is set (read once at app construction — env is
+  available before the factory, so it sidesteps the settings-only-in-the-factory ordering
+  problem): `JERO_BASE_URL` (a static public origin, no header trust) or
+  `JERO_TRUST_FORWARDED` (truthy → rebuild the origin per request from `X-Forwarded-*`
+  proto/host/port + the stripped `X-Forwarded-Prefix`; off by default since honouring
+  forwarded headers untrusted is a host-injection footgun). The two are mutually exclusive
+  (both set → `WiringError`); operation / ref / `from_path` links pick up the base while
+  `from_url` links pass through verbatim. jero reads `os.environ` only here. The
+  `Location`/`Link` types live in `jero/links.py`; reversal resolves against a wiring-time
+  registry (`_Reverser`) in `core`. The `*Target` types are un-underscored
+  package-internal boundary-crossers (like `encode_sse`), not public API.
 - Handler args bind **by name**, each a msgspec Struct: `json`, `content` (raw
   bytes), `form` (multipart) — the three body sources are mutually exclusive —
   `params` (query), `path` (URL template slots), `headers` (typed), `raw_headers`
@@ -136,7 +158,10 @@ These pull against each other constantly; keep all three in mind on every change
   camelCase on the wire via msgspec `rename`.
 - **Naming convention**: foundations you extend once are `Base*` (`BaseApp`,
   `BaseFactory`); the request vocabulary you implement many specific subclasses of
-  stays plain (`Resource`, `Endpoint`).
+  stays plain (`Resource`, `Endpoint`). **Acronyms are upper-cased in class/type names**,
+  not title-cased — `JSONResponse`, `URLTarget`, `SSEResponse`, `NDJSONStreamingResponse`
+  (never `JsonResponse` / `UrlTarget`). Method and field names stay lowercase
+  (`from_url`, `raw_headers`).
 
 ## Layout
 
@@ -144,7 +169,9 @@ These pull against each other constantly; keep all three in mind on every change
   `jero/testing.py` — sync in-process `TestClient` + `FactoryHarness`.
   `jero/forms.py` / `jero/streaming.py` — multipart parts and streaming response
   types. `jero/background.py` — the in-process `BackgroundTasks` queue.
-  `jero/headers.py` — the `RawHeaders` opaque bag. `jero/codecs.py` — the
+  `jero/links.py` — `Location` / `Link` and their reverse-routing targets (a leaf module
+  `core` and `streaming` both import). `jero/headers.py` — the `RawHeaders` opaque bag.
+  `jero/codecs.py` — the
   shared reusable `msgspec_encoder` / `msgspec_decoder` (imported by `core`,
   `streaming`, `testing`; SSE wire-formatting lives in `streaming.py` as the
   un-underscored boundary-crosser `encode_sse`).
@@ -169,15 +196,16 @@ These pull against each other constantly; keep all three in mind on every change
   (incl. typed `headers` and the opaque `raw_headers`), auth, REST semantics,
   response kinds — generic `JSONResponse[T, H]` / `BytesResponse[H]` / streaming
   `[T, H]` with typed response headers, `raw_headers`, and `status_code` overrides
-  — `BaseApp`/`BaseFactory` lifecycle, in-process `BackgroundTasks`, `TestClient`,
-  the test suite.
+  — `BaseApp`/`BaseFactory` lifecycle, in-process `BackgroundTasks`, reverse-routed
+  `Location` / `Link` responses, `TestClient`, the test suite.
 - **Performance (validated natively)**: on the authed write path
   (`POST /movies` — bearer auth + JSON decode + encode + 201, C=200), jero ≈
   blacksheep (~43k req/s, a tie), ~2× litestar, ~3× robyn, ~6× idiomatic FastAPI.
   Tight unimodal latency — trustworthy. (The benchmark harness lives in a
   separate repo; run natively rather than under emulation for real figures.)
 - **Unbuilt**: cookies (first-class `Set-Cookie` / `Cookie` — fully designed, all
-  decisions locked in `plans/cookies.md`), `Location` header on 201. Minor polish:
+  decisions locked in `plans/cookies.md`); absolute (vs relative) reverse-routed URLs are
+  a deliberate follow-up. Minor polish:
   the factory's `es`/`aes` stack injection matches by name with no startup check — a
   `WiringError` on an unrecognized param would close that.
 - **Roadmap**: auto-generated **OpenAPI spec + live, hosted docs**. This is the

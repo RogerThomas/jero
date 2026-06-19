@@ -5,11 +5,12 @@ and a clear account of how they were produced. This page is that account.
 
 **The short version:** across four workloads benchmarked side by side against seven
 other frameworks — Python (Litestar, FastAPI, Blacksheep, Robyn, Flask), Go (Gin), and
-Bun (Elysia) — jero is the fastest Python framework in every scenario. On the pure
-framework hot path (a typed JSON `GET`) it tops the table outright, ahead of both the
-Go and the Bun service. On the I/O-bound scenarios (an upstream proxy, a database read)
-Go pulls well clear — there the bottleneck is the HTTP-client and database-driver
-ecosystem, not the framework, and that's a fight Python doesn't win today.
+Bun (Elysia) — jero led the Python frameworks tested in every scenario. On the pure
+framework hot path (a typed JSON `GET`) it topped this benchmark table by overall
+score, ahead of both the Go and the Bun service. On the I/O-bound scenarios (an
+upstream proxy, a database read) Go pulled well clear — there the bottleneck is the
+HTTP-client and database-driver ecosystem, not the framework, and that's a fight Python
+doesn't win today.
 
 Read the caveats. These are favourable, constrained conditions, and a microbenchmark is
 not your application.
@@ -46,8 +47,9 @@ contention and shared-state effects, so each number reflects that framework alon
 | Setting       | Value                           |
 | :------------ | :------------------------------ |
 | Machine       | Apple M3 Max, 36 GB             |
-| Concurrency   | 125 VUs                         |
+| Concurrency   | 100 VUs                         |
 | Duration      | 30s per run                     |
+| Best-of-N     | 3 runs                          |
 | Workers       | 1 (Go pinned to `GOMAXPROCS=1`) |
 | Python server | Granian, single worker          |
 
@@ -67,14 +69,14 @@ framework's own per-request overhead.
 
 | Framework      | req/s     | mean       | p99        | vs all    |
 | :------------- | :-------- | :--------- | :--------- | :-------- |
-| **jero**       | **43.4k** | **2.84ms** | **4.09ms** | **1.00×** |
-| blacksheep     | 39.7k     | 3.11ms     | 4.15ms     | 0.94×     |
-| elysia *(Bun)* | 38.6k     | 3.19ms     | 4.15ms     | 0.92×     |
-| gin *(Go)*     | 39.2k     | 3.15ms     | 4.52ms     | 0.90×     |
-| litestar       | 33.8k     | 3.65ms     | 4.90ms     | 0.80×     |
-| fastapi        | 25.7k     | 4.81ms     | 5.31ms     | 0.65×     |
-| robyn          | 21.4k     | 5.79ms     | 29.67ms    | 0.32×     |
-| flask          | 16.1k     | 7.67ms     | 130.99ms   | 0.16×     |
+| **jero**       | **44.5k** | **2.22ms** | **3.73ms** | **1.00×** |
+| blacksheep     | 40.3k     | 2.45ms     | 3.36ms     | 0.97×     |
+| elysia *(Bun)* | 38.7k     | 2.55ms     | 3.52ms     | 0.93×     |
+| gin *(Go)*     | 38.4k     | 2.57ms     | 3.79ms     | 0.90×     |
+| litestar       | 35.6k     | 2.78ms     | 3.99ms     | 0.84×     |
+| fastapi        | 24.5k     | 4.06ms     | 4.81ms     | 0.62×     |
+| robyn          | 20.6k     | 4.83ms     | 10.46ms    | 0.42×     |
+| flask          | 17.9k     | 5.56ms     | 19.29ms    | 0.31×     |
 
 ### 2 — `POST /movies` — the authed write path (JWT)
 
@@ -83,17 +85,17 @@ realistic write path for a typed JSON API.
 
 | Framework      | req/s     | mean       | p99        | vs all    |
 | :------------- | :-------- | :--------- | :--------- | :-------- |
-| gin *(Go)*     | 29.1k     | 4.24ms     | 7.07ms     | 1.00×     |
-| **jero**       | **28.6k** | **4.30ms** | **6.86ms** | **1.00×** |
-| elysia *(Bun)* | 25.3k     | 4.87ms     | 10.63ms    | 0.80×     |
-| blacksheep     | 17.3k     | 7.14ms     | 27.69ms    | 0.45×     |
-| robyn          | 16.5k     | 7.50ms     | 42.14ms    | 0.38×     |
-| fastapi        | 9.3k      | 13.29ms    | 25.35ms    | 0.31×     |
-| litestar       | 12.5k     | 9.86ms     | 67.69ms    | 0.27×     |
-| flask          | 8.1k      | 15.25ms    | 137.68ms   | 0.16×     |
+| gin *(Go)*     | 28.6k     | 3.46ms     | 6.39ms     | 1.06×     |
+| **jero**       | **27.4k** | **3.62ms** | **6.93ms** | **1.00×** |
+| elysia *(Bun)* | 24.0k     | 4.12ms     | 8.20ms     | 0.87×     |
+| blacksheep     | 16.4k     | 6.05ms     | 14.58ms    | 0.55×     |
+| robyn          | 15.7k     | 6.21ms     | 18.04ms    | 0.50×     |
+| litestar       | 12.0k     | 8.25ms     | 22.52ms    | 0.39×     |
+| flask          | 10.5k     | 9.46ms     | 48.39ms    | 0.28×     |
+| fastapi        | 5.2k      | 18.97ms    | 55.64ms    | 0.17×     |
 
-jero lands within ~2% of a hand-written Go service here, and is the fastest Python
-framework by a wide margin.
+jero lands within ~5% of a hand-written Go service here, and led the Python frameworks
+tested by a wide margin.
 
 ### 3 — `GET` proxy — bound by the HTTP client
 
@@ -103,16 +105,16 @@ Python field clusters together and Go runs away.
 
 | Framework      | req/s    | mean        | p99         | vs all    |
 | :------------- | :------- | :---------- | :---------- | :-------- |
-| gin *(Go)*     | 15.6k    | 7.94ms      | 35.03ms     | 3.69×     |
-| elysia *(Bun)* | 9.4k     | 13.11ms     | 19.70ms     | 3.20×     |
-| **jero**       | **3.6k** | **34.69ms** | **91.88ms** | **1.00×** |
-| blacksheep     | 3.2k     | 39.00ms     | 137.17ms    | 0.81×     |
-| fastapi        | 3.0k     | 41.21ms     | 149.69ms    | 0.76×     |
-| litestar       | 3.0k     | 41.44ms     | 149.90ms    | 0.75×     |
-| robyn          | 2.6k     | 47.94ms     | 137.16ms    | 0.71×     |
-| flask          | 2.1k     | 58.70ms     | 800.63ms    | 0.34×     |
+| gin *(Go)*     | 15.1k    | 6.58ms      | 15.34ms     | 5.35×     |
+| elysia *(Bun)* | 11.2k    | 8.77ms      | 21.11ms     | 3.96×     |
+| **jero**       | **3.2k** | **31.56ms** | **102.24ms**| **1.00×** |
+| litestar       | 2.8k     | 35.17ms     | 127.50ms    | 0.86×     |
+| blacksheep     | 2.9k     | 33.85ms     | 158.69ms    | 0.82×     |
+| fastapi        | 2.4k     | 42.21ms     | 102.92ms    | 0.82×     |
+| robyn          | 2.5k     | 40.37ms     | 167.62ms    | 0.72×     |
+| flask          | 2.4k     | 41.94ms     | 166.82ms    | 0.70×     |
 
-jero is the fastest Python framework, but Go's mature native HTTP stack is in a
+jero led the Python frameworks tested, but Go's mature native HTTP stack is in a
 different class. This gap is the ecosystem, not jero.
 
 ### 4 — `GET /users/me` — bound by the database driver
@@ -122,28 +124,30 @@ compresses and Go's native driver leads.
 
 | Framework      | req/s    | mean        | p99         | vs all    |
 | :------------- | :------- | :---------- | :---------- | :-------- |
-| gin *(Go)*     | 16.8k    | 7.38ms      | 11.41ms     | 2.92×     |
-| elysia *(Bun)* | 12.2k    | 10.17ms     | 17.67ms     | 2.04×     |
-| **jero**       | **9.5k** | **13.03ms** | **90.81ms** | **1.00×** |
-| fastapi        | 6.4k     | 19.33ms     | 44.04ms     | 0.98×     |
-| blacksheep     | 8.5k     | 14.64ms     | 118.91ms    | 0.85×     |
-| litestar       | 7.0k     | 17.67ms     | 140.70ms    | 0.71×     |
-| robyn          | 4.8k     | 25.81ms     | 112.22ms    | 0.59×     |
-| flask          | 2.2k     | 56.92ms     | 167.05ms    | 0.31×     |
+| gin *(Go)*     | 16.2k    | 6.13ms      | 8.72ms      | 2.44×     |
+| elysia *(Bun)* | 6.0k     | 16.45ms     | 16.77ms     | 1.02×     |
+| **jero**       | **8.4k** | **11.84ms** | **33.98ms** | **1.00×** |
+| blacksheep     | 7.8k     | 12.84ms     | 89.58ms     | 0.69×     |
+| litestar       | 6.3k     | 15.77ms     | 141.70ms    | 0.51×     |
+| robyn          | 4.6k     | 21.87ms     | 172.95ms    | 0.39×     |
+| fastapi        | 3.4k     | 29.26ms     | 104.84ms    | 0.38×     |
+| flask          | 1.3k     | 78.03ms     | 210.18ms    | 0.15×     |
 
-Fastest Python again, behind the Go and Bun services on driver-bound work.
+jero led the Python frameworks tested again. Go was well ahead; Bun's lower p99 edged
+jero on aggregate score despite lower throughput and higher mean latency.
 
 ## How to read this
 
-- **jero leads the Python field in all four scenarios.** That is the durable claim.
+- **jero leads the Python frameworks tested in all four scenarios.** That is the
+  durable claim.
 - **On the pure framework path it beats even Go and Bun.** That result is real but
   narrow: an in-memory JSON path plays directly to Python + msgspec's strengths and to
   the Rust HTTP layer underneath. It is *not* evidence that Python is faster than Go in
   general — and we are not making that claim.
 - **On I/O-bound paths, Go is well ahead.** When the work is an outbound HTTP call or a
   database query, the framework is barely in the picture; the HTTP client and database
-  driver decide it, and Go's native libraries dominate. jero stays the fastest Python
-  option, which is the most it can do there.
+  driver decide it, and Go's native libraries dominate. jero stays ahead of the Python
+  frameworks tested, which is the most it can do there.
 - **A benchmark is not your app.** Single worker, single core, localhost, fixed
   payloads, best-of-N. Real workloads have more moving parts. Treat these as directional
   evidence that jero's per-request overhead is low — not as a promise about your

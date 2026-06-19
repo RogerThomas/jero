@@ -2,38 +2,49 @@
   <a href="."><img src="assets/jero-logo.png" alt="jero" width="440"></a>
 </p>
 
-<p align="center"><strong>A fast and modern, msgspec-first <a href="https://asgi.readthedocs.io/en/latest/">ASGI</a> micro-framework for Python 3.14.</strong></p>
+<p align="center"><strong>A msgspec-first <a href="https://asgi.readthedocs.io/en/latest/">ASGI</a> micro-framework for Python 3.14.</strong></p>
 
 ---
 
 ## What is jero?
 
-jero is a fast and modern Python web framework for building typed JSON/REST APIs on
-[ASGI](https://asgi.readthedocs.io/en/latest/). You write resources and endpoints as plain classes and annotate handler inputs
-and outputs with [msgspec](https://jcristharif.com/msgspec/) Structs; jero handles
-the rest — routing, request/response validation, serialization, auth, and resource
-lifecycle — and runs under any ASGI server (granian, uvicorn, …).
+jero is a msgspec-first [ASGI](https://asgi.readthedocs.io/en/latest/) framework where your type hints are the API contract.
+Routing, binding, validation, serialization, auth checks, and the coming OpenAPI
+generation all derive from statically declared types, while the request path stays
+close to raw msgspec performance: route lookup → decode → call → encode.
 
-It's opinionated on purpose, and makes one bet: that being aggressively prescriptive
-— rather than flexible — is exactly what lets a framework be *both* extremely fast
-*and* a joy to build on. Three pillars, all non-negotiable:
+There are no route decorators. Routes are plain classes: `Resource` classes for REST
+collections, `Endpoint` classes for one-off routes, and method names determine the
+HTTP semantics. There is no dependency injection container either; dependencies are
+hand-wired in `_wire`, and jero adds lifecycle management around that plain Python
+construction.
 
-1. **Speed.** Introspection happens once, at startup. The request path is dict
-   lookup → msgspec decode → call → encode, and nothing else is ever added to it. In a
-   side-by-side benchmark it's the fastest Python ASGI framework across every workload
-   tested — see [Performance](performance.md).
-2. **Opinionated DX.** One blessed way to do each thing, encoded so you can't get it
-   wrong. Contracts fail loud at startup with a precise `WiringError`, never quietly
-   at runtime.
-3. **Strict typing.** Fully static under pyright-strict — the types *are* the
-   contract, and the source of the coming OpenAPI spec. jero leans hard into modern
-   Python typing: PEP 695 generics (`JSONResponse[Body, Headers]`, `BaseApp[Factory]`,
-   `NDJSONStreamingResponse[Movie]`), bounded type parameters with defaults, generic
-   inheritance, and `Protocol`s — so a handler's signature *is* its schema. If you
-   don't like typing, this isn't your framework.
+JSON bodies are always [msgspec](https://jcristharif.com/msgspec/) `Struct`s, in and
+out. You don't return a raw `dict` because the `Struct` is what gives jero validation,
+serialization, precise startup checks, future schema generation, and maximum
+performance from msgspec's compiled codecs.
 
-And no DI container: dependencies are hand-wired in `_wire`; the framework adds only
-lifecycle — the one thing plain Python doesn't give you.
+## Core principles
+
+jero is opinionated on purpose. It makes one bet: being aggressively prescriptive,
+rather than flexible, is how a framework can be *both* extremely fast *and* a joy to
+build on.
+
+| Principle | What it means |
+| --------- | ------------- |
+| **Speed** | Introspection happens once, at startup. The per-request path stays minimal and predictable. |
+| **Opinionated DX** | One blessed way to do each thing, encoded so you can't get it wrong. Contracts fail loud at startup with a precise `WiringError`, never quietly at runtime. |
+| **Strict typing** | Fully static under pyright-strict. Types are the contract, the validation source, and the source of the coming OpenAPI spec. |
+
+jero leans hard into modern Python typing: PEP 695 generics
+(`JSONResponse[Body, Headers]`, `BaseApp[Factory]`,
+`NDJSONStreamingResponse[Movie]`), bounded type parameters with defaults, generic
+inheritance, and `Protocol`s — so a handler's signature *is* its schema. If you don't
+like typing, this isn't your framework.
+
+For the reasoning behind those choices, read [Philosophy](philosophy.md). For a calmer
+feature-by-feature contrast with other Python frameworks, read
+[Comparison](comparison.md).
 
 ## Quickstart
 
@@ -66,6 +77,9 @@ class App(BaseApp):
 app = App()
 ```
 
+No `@app.get(...)`, no runtime route discovery: the class declares the path, and the
+method name declares the operation.
+
 Run it under any ASGI server, e.g. [granian](https://github.com/emmett-framework/granian):
 
 ```bash
@@ -97,7 +111,7 @@ New here? Start with [Getting Started](getting-started.md).
   on the wire. [→](guide/rest.md)
 - **In-process `TestClient`** — sync, no socket, full lifespan, streaming support.
   [→](guide/testing.md)
-- **Fastest Python ASGI framework tested** — benchmarked side by side against Python, Go,
+- **Benchmark-led performance claims** — benchmarked side by side against Python, Go,
   and Bun frameworks, with the full methodology shown. [→](performance.md)
 
 ## API reference
