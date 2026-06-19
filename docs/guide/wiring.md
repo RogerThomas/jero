@@ -23,8 +23,10 @@ service across resources? Build it once and pass it to each.
 ## Lifecycle: `_enter` / `_aenter`
 
 Resources that must be opened and closed — HTTP clients, DB pools — are entered on the
-app's exit stacks. The app owns a sync `ExitStack` and an `AsyncExitStack` and closes
-everything in reverse order at shutdown, even if `_wire` fails partway:
+app's exit stacks. The app owns a sync
+[`ExitStack`](https://docs.python.org/3/library/contextlib.html#contextlib.ExitStack) and an
+[`AsyncExitStack`](https://docs.python.org/3/library/contextlib.html#contextlib.AsyncExitStack)
+and closes everything in reverse order at shutdown, even if `_wire` fails partway:
 
 ```python
 class App(BaseApp):
@@ -82,7 +84,7 @@ Lifecycle bound to a single request is just an `async with` inside the handler �
 framework machinery needed:
 
 ```python
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from msgspec import Struct
@@ -99,7 +101,7 @@ class Widget(WidgetIn):
 
 
 @asynccontextmanager
-async def open_txn() -> AsyncIterator[None]:
+async def open_txn() -> AsyncGenerator[None]:
     # acquire a per-request resource (a DB transaction, say); released on exit
     yield
 

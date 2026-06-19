@@ -1,5 +1,5 @@
 """Reverse-routed ``Location`` / ``Link``: header emission through the ``TestClient``,
-and the construction-time params guard on ``from_operation`` (its public surface)."""
+and the construction-time path guard on ``from_operation`` (its public surface)."""
 
 from collections.abc import Generator
 
@@ -29,7 +29,7 @@ def _forwarded_client(monkeypatch: pytest.MonkeyPatch) -> Generator[TestClient]:
 
 def test_location_reverse_routes_to_read_one(client: TestClient) -> None:
     """``create`` returns 201 with a ``Location`` reverse-routed to ``read_one``,
-    the path id filled from the params Struct."""
+    the path id filled from the path Struct."""
     resp = client.post("/jobs", json={"id": "job-id"})
     assert resp.status_code == 201
     assert resp.headers["location"] == "/jobs/job-id"
@@ -185,8 +185,8 @@ def test_base_url_and_trust_forwarded_are_mutually_exclusive(
 def test_wrong_params_type_fails_at_construction() -> None:
     """The headline guard: the wrong path Struct is rejected the instant the link is
     built, without an app — introspected from the operation's own signature."""
-    with pytest.raises(TypeError, match="expects params of type JobPath, got WidgetPath"):
-        Location.from_operation(JobsResource.read_one, params=WidgetPath(widget_id="widget-id"))
+    with pytest.raises(TypeError, match="expects path of type JobPath, got WidgetPath"):
+        Location.from_operation(JobsResource.read_one, path=WidgetPath(widget_id="widget-id"))
 
 
 def test_location_literal_constructors_wire_targets() -> None:
@@ -198,20 +198,20 @@ def test_location_literal_constructors_wire_targets() -> None:
 
 def test_path_struct_subclass_is_rejected() -> None:
     """Exact match, not is-a: even a subclass of the operation's path struct is rejected."""
-    with pytest.raises(TypeError, match="expects params of type JobPath, got _SubJobPath"):
-        Location.from_operation(JobsResource.read_one, params=_SubJobPath(job_id="job-id"))
+    with pytest.raises(TypeError, match="expects path of type JobPath, got _SubJobPath"):
+        Location.from_operation(JobsResource.read_one, path=_SubJobPath(job_id="job-id"))
 
 
-def test_missing_params_fails_at_construction() -> None:
-    """An operation with path slots requires params."""
-    with pytest.raises(TypeError, match="requires params of type JobPath"):
+def test_missing_path_fails_at_construction() -> None:
+    """An operation with path slots requires a path Struct."""
+    with pytest.raises(TypeError, match="requires path of type JobPath"):
         Link.from_operation(JobsResource.read_one, rel="self")
 
 
-def test_unexpected_params_fails_at_construction() -> None:
-    """An operation with no path slots rejects params."""
+def test_unexpected_path_fails_at_construction() -> None:
+    """An operation with no path slots rejects a path Struct."""
     with pytest.raises(TypeError, match="takes no path params"):
-        Location.from_operation(JobsResource.create, params=JobPath(job_id="job-id"))
+        Location.from_operation(JobsResource.create, path=JobPath(job_id="job-id"))
 
 
 def test_malformed_ref_fails_at_construction() -> None:
@@ -287,7 +287,7 @@ class _DanglingOpEndpoint(Endpoint, path="/dangling-op"):
         return JSONResponse(
             json=Job(id="job-id"),
             location=Location.from_operation(
-                _UnmountedJobs.read_one, params=JobPath(job_id="job-id")
+                _UnmountedJobs.read_one, path=JobPath(job_id="job-id")
             ),
         )
 
@@ -299,7 +299,7 @@ class _DanglingRefEndpoint(Endpoint, path="/dangling-ref"):
         """Return a job carrying a link to an unknown ref."""
         return JSONResponse(
             json=Job(id="job-id"),
-            location=Location.from_ref("nope.read_one", params=JobPath(job_id="job-id")),
+            location=Location.from_ref("nope.read_one", path=JobPath(job_id="job-id")),
         )
 
 

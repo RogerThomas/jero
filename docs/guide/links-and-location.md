@@ -39,7 +39,7 @@ class WidgetResource(Resource, path="/widgets"):
             json=json,
             status_code=201,
             location=Location.from_operation(
-                WidgetResource.read_one, params=WidgetPath(widget_id=json.id)
+                WidgetResource.read_one, path=WidgetPath(widget_id=json.id)
             ),
         )
 
@@ -85,7 +85,7 @@ class WidgetResource(Resource, path="/widgets"):
             status_code=201,
             links=[
                 Link.from_operation(
-                    WidgetResource.read_one, rel="self", params=WidgetPath(widget_id=json.id)
+                    WidgetResource.read_one, rel="self", path=WidgetPath(widget_id=json.id)
                 ),
                 Link.from_path(
                     "/docs/widgets", rel="help", title="Docs", media_type="text/html"
@@ -116,17 +116,17 @@ used verbatim, never rewritten.
 
 ## Loud and fast
 
-`from_operation(Class.operation, params=...)` validates `params` **at construction**,
+`from_operation(Class.operation, path=...)` validates the `path` Struct **at construction**,
 introspected from the operation's own `path` annotation — so the wrong Struct fails the
 instant you build the link (in a handler, or a unit test that just constructs it), with
 no app required:
 
 ```python
 # read_one declares `path: WidgetPath` — this raises TypeError immediately:
-Location.from_operation(WidgetResource.read_one, params=WrongPath(...))
+Location.from_operation(WidgetResource.read_one, path=WrongPath(...))
 ```
 
-(A bare method reference can't carry the `params` type to pyright statically, so this is a
+(A bare method reference can't carry the `path` type to pyright statically, so this is a
 hard *runtime* check at construction — immediate, not deferred to a served request.)
 
 ## Behind a proxy (`X-Forwarded-*`)
@@ -190,7 +190,7 @@ class JobLinkEndpoint(Endpoint, path="/job-link"):
     async def get(self) -> JSONResponse[Job]:
         return JSONResponse(
             json=Job(id="job-id"),
-            links=[Link.from_ref("jobs.read_one", rel="related", params=JobPath(job_id="job-id"))],
+            links=[Link.from_ref("jobs.read_one", rel="related", path=JobPath(job_id="job-id"))],
         )
 
 

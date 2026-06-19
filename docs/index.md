@@ -42,13 +42,13 @@ build on.
 | **Opinionated DX** | One blessed way to do each thing, encoded so you can't get it wrong. Contracts fail loud at startup with a precise `WiringError`, never quietly at runtime. |
 | **Strict typing**  | Fully static under pyright-strict. Types are the contract, the validation source, and the source of the coming OpenAPI spec. |
 
-jero leans hard into modern Python typing: PEP 695 generics
+jero leans hard into modern Python typing: [PEP 695](https://peps.python.org/pep-0695) generics
 (`JSONResponse[Body, Headers]`, `BaseApp[Factory]`,
 `NDJSONStreamingResponse[Movie]`), bounded type parameters with defaults, generic
 inheritance, and `Protocol`s, so a handler's signature *is* its schema. If you don't
 like typing, this isn't your framework.
 
-For the reasoning behind those choices, read [Philosophy](philosophy.md). For a calmer
+For the reasoning behind those choices, read [Philosophy](philosophy.md). For a
 feature-by-feature contrast with other Python frameworks, read
 [Comparison](comparison.md).
 

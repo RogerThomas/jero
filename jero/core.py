@@ -1234,13 +1234,13 @@ class _RouteRef:
     path_type: type[Struct] | None
 
 
-def _build_url(route_ref: _RouteRef, params: Struct | None) -> str:
+def _build_url(route_ref: _RouteRef, path: Struct | None) -> str:
     segments = route_ref.segments
-    # params is None only for slot-less routes: both validators reject a None against a
+    # path is None only for slot-less routes: both validators reject a None against a
     # route with path slots before we get here, so there is never a param to fill.
-    if params is None:
+    if path is None:
         return "/".join(value for _, value in segments)
-    data = to_builtins(params)
+    data = to_builtins(path)
     return "/".join(
         _encode_header_value(data[value]) if is_param else value for is_param, value in segments
     )
@@ -1360,12 +1360,12 @@ class _Reverser:
                     f"no mounted operation for ref {target.name!r}.{target.operation!r}"
                 )
             route_ref = self._refs[key]
-            # from_ref can't carry the type statically, so its params check is deferred to
+            # from_ref can't carry the type statically, so its path check is deferred to
             # here — the same exact-type validator from_operation runs at construction.
             validate_path_params(
-                route_ref.path_type, target.params, f"{target.name}.{target.operation}"
+                route_ref.path_type, target.path, f"{target.name}.{target.operation}"
             )
-        return self._public_prefix(scope) + _build_url(route_ref, target.params)
+        return self._public_prefix(scope) + _build_url(route_ref, target.path)
 
 
 def _format_link(url: str, link: Link) -> str:

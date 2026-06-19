@@ -101,10 +101,10 @@ These pull against each other constantly; keep all three in mind on every change
 - **Links & Location** — responses carry `location: Location | None` (RFC 9110, one
   `Location` header) and `links: Sequence[Link]` (RFC 8288, joined into one `Link`
   header), reverse-routed to a mounted operation. Build a target with
-  `from_operation(Class.op, params=...)` (the blessed, typed form — the wrong `params`
+  `from_operation(Class.op, path=...)` (the blessed, typed form — the wrong `path`
   Struct is caught **at construction** by introspecting the operation's own `path`
   annotation), `from_path(path)` / `from_url(url)` (a literal root-relative path composed
-  with the URL base, or a verbatim full URL), or `from_ref("ref.op", params=...)` (string
+  with the URL base, or a verbatim full URL), or `from_ref("ref.op", path=...)` (string
   escape hatch for import cycles; weaker guarantees — checked at resolution). URLs are
   relative unless one of two env vars is set (read once at app construction — env is
   available before the factory, so it sidesteps the settings-only-in-the-factory ordering

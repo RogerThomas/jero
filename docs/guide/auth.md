@@ -107,5 +107,7 @@ declares `user: Admin` but the auth returns `User`, that's a `WiringError` befor
 app ever serves a request. Declaring `user` without any auth configured is likewise a
 startup error.
 
-Handlers that don't declare `user` still run behind the auth gate; they just don't
-receive the result.
+!!! note
+
+    Handlers that don't declare `user` still run behind the auth gate; they just don't
+    receive the result.
