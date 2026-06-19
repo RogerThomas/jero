@@ -11,8 +11,9 @@
 </p>
 
 **An opinionated, msgspec-first ASGI micro-framework for Python 3.14.**
-
-<em>Probably about as fast as idiomatic Python gets. Typed end to end. A joy to build on.</em>
+<em>Engineered for performance from the ground up</em>
+<em>Strictly typed, end to tend</em>
+<em>A joy to build on</em>
 
 <a href="https://github.com/RogerThomas/jero/">GitHub</a> · <a href="https://RogerThomas.github.io/jero/">Documentation</a>
 
