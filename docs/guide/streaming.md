@@ -98,7 +98,7 @@ from collections.abc import AsyncIterator
 from jero import BaseApp, Endpoint, StreamingResponse
 
 
-class CsvEndpoint(Endpoint, path="/export"):
+class CSVEndpoint(Endpoint, path="/export"):
     async def _chunks(self) -> AsyncIterator[bytes]:
         yield b"id,name\n"
         yield b"1,gizmo\n"
@@ -109,7 +109,7 @@ class CsvEndpoint(Endpoint, path="/export"):
 
 class App(BaseApp):
     async def _wire(self) -> None:
-        self._include_endpoint(CsvEndpoint())
+        self._include_endpoint(CSVEndpoint())
 
 
 app = App()
@@ -134,15 +134,29 @@ class Movie(Struct):
     title: str
 
 
-class ExportEndpoint(Endpoint, path="/movies/export"):
-    async def _rows(self) -> AsyncIterator[Movie]:
+class Cursor:
+    """A stand-in for a real resource (a DB cursor, an upstream connection): it must be
+    opened before use and closed afterwards. Implementing the async context manager
+    protocol — `__aenter__` / `__aexit__` — is what lets `async with` drive it."""
+
+    async def __aenter__(self) -> Cursor:
+        print("cursor opened")   # illustrative side effect: acquire the resource here
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        print("cursor closed")   # proof the teardown really runs: release it here
+
+    async def rows_iterator(self) -> AsyncIterator[Movie]:
         yield Movie(title="first")
         yield Movie(title="second")
 
+
+class ExportEndpoint(Endpoint, path="/movies/export"):
     async def _lifecycle(self) -> AsyncGenerator[AsyncIterable[Movie]]:
-        # open the resource (a DB cursor, an upstream connection) before streaming
-        yield self._rows()
-        # runs after the stream finishes — or is abandoned: close the resource here
+        async with Cursor() as cursor:  # "cursor opened" — before streaming starts
+            yield cursor.rows_iterator()
+        # control returns here once the stream is drained (or abandoned), so the
+        # `async with` exits and prints "cursor closed" — even on disconnect or error
 
     async def get(self) -> NDJSONStreamingResponse[Movie]:
         return NDJSONStreamingResponse(stream=self._lifecycle())
@@ -155,6 +169,10 @@ class App(BaseApp):
 
 app = App()
 ```
+
+Hit `GET /movies/export` and the worker logs `cursor opened` before the rows stream and
+`cursor closed` once it's done — the teardown half of the one-yield generator running for
+real.
 
 This is the one blessed way to scope a resource to a stream: a simple stream if you
 don't need lifecycle, a one-yield generator if you do.

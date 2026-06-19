@@ -12,14 +12,19 @@
 
 **An opinionated, msgspec-first ASGI micro-framework for Python 3.14.**
 
-<em>Probably about as fast as idiomatic Python gets. Typed end to end. A joy to build on.</em>
-
+<br>
+<em>Engineered for performance from the ground up</em>
+<br>
+<em>Strictly typed end to end</em>
+<br>
+<em>A joy to build on</em>
+<br>
 <a href="https://github.com/RogerThomas/jero/">GitHub</a> · <a href="https://RogerThomas.github.io/jero/">Documentation</a>
 
 </div>
 
 **jero** builds typed JSON/REST APIs from plain classes. Annotate your handlers with
-[msgspec](https://jcristharif.com/msgspec/) Structs — jero does the rest: routing,
+[msgspec](https://msgspec.dev/) Structs — jero does the rest: routing,
 validation, serialization, auth, streaming, and resource lifecycle.
 
 ```python

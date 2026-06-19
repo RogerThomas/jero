@@ -19,7 +19,7 @@ uv add granian
 
 A jero app is a `BaseApp` subclass that wires up *resources* (REST collections) and
 *endpoints* (single routes). Handler inputs and outputs are
-[msgspec](https://jcristharif.com/msgspec/) `Struct`s — the types *are* the
+[msgspec](https://msgspec.dev/) `Struct`s — the types *are* the
 request/response contract.
 
 jero has no route decorators. Instead of writing `@app.get(...)`, you define a class,

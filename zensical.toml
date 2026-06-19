@@ -93,6 +93,8 @@ link = "https://github.com/RogerThomas/jero"
 icon = "fontawesome/brands/python"
 link = "https://pypi.org/project/jero"
 
+[project.markdown_extensions.admonition]
+
 [project.markdown_extensions.pymdownx.superfences]
 
 [project.markdown_extensions.pymdownx.arithmatex]

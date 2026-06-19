@@ -298,11 +298,11 @@ class AnalyticsService:
 class EventsEndpoint(Endpoint, path="/events"):
     """Accepts an event and hands it to the background queue, returning immediately."""
 
-    _tasks: BackgroundTasks
+    _background_tasks: BackgroundTasks
 
     async def post(self, json: AnalyticsEvent) -> AnalyticsEvent:
         """Enqueue the event for background processing."""
-        await self._tasks.add(json)
+        await self._background_tasks.add(json)
         return json
 
 
@@ -352,10 +352,10 @@ class JobsResource(Resource, path="/jobs", ref="jobs"):
         return JSONResponse(
             json=json,
             status_code=201,
-            location=Location.from_operation(JobsResource.read_one, params=JobPath(job_id=json.id)),
+            location=Location.from_operation(JobsResource.read_one, path=JobPath(job_id=json.id)),
             links=[
                 Link.from_operation(
-                    JobsResource.read_one, rel="self", params=JobPath(job_id=json.id)
+                    JobsResource.read_one, rel="self", path=JobPath(job_id=json.id)
                 ),
                 # a slot-less operation needs no params; a path link picks up the app's
                 # URL base; a full url is verbatim.
@@ -374,7 +374,7 @@ class JobLinkEndpoint(Endpoint, path="/job-link"):
         """Return a job carrying a cross-module ``Link`` resolved through the ref."""
         return JSONResponse(
             json=Job(id="job-id"),
-            links=[Link.from_ref("jobs.read_one", rel="related", params=JobPath(job_id="job-id"))],
+            links=[Link.from_ref("jobs.read_one", rel="related", path=JobPath(job_id="job-id"))],
         )
 
 
@@ -387,7 +387,7 @@ class JobRedirectEndpoint(Endpoint, path="/latest-job"):
         return JSONResponse(
             json=Job(id="job-id"),
             status_code=303,
-            location=Location.from_ref("jobs.read_one", params=JobPath(job_id="job-id")),
+            location=Location.from_ref("jobs.read_one", path=JobPath(job_id="job-id")),
         )
 
 

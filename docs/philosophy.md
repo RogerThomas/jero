@@ -49,8 +49,6 @@ of spreading them across decorator calls. It makes it obvious where CRUD behavio
 and it gives future features like generated links, `Location` headers, and OpenAPI
 metadata a stable object to attach to.
 
-Decorators are terse. Classes are more structured. jero chooses structure.
-
 ## No dependency injection container
 
 In the author's opinion, dependency injection containers are often needlessly
