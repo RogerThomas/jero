@@ -2,7 +2,7 @@
   <a href="."><img src="assets/jero-logo.png" alt="jero" width="440"></a>
 </p>
 
-<p align="center"><strong>The msgspec-first ASGI framework where your type hints are the API.<br>Opinionated on purpose => fast by construction and a joy to build on.</strong></p>
+<p align="center"><strong>A msgspec-first <a href="https://asgi.readthedocs.io/en/latest/">ASGI</a> micro-framework for Python 3.14.</strong></p>
 
 ---
 
@@ -12,7 +12,7 @@ uv add jero
 
 ## What is jero?
 
-jero is a msgspec-first ASGI framework where your type hints are the API contract.
+jero is a msgspec-first [ASGI](https://asgi.readthedocs.io/en/latest/) framework where your type hints are the API contract.
 Routing, binding, validation, serialization, auth checks, and the coming OpenAPI
 generation all derive from statically declared types, while the request path stays
 close to raw msgspec performance: route lookup → decode → call → encode.

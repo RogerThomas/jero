@@ -7,7 +7,7 @@ import pytest
 from msgspec import Struct
 from msgspec.json import encode as json_encode
 
-from jero import BaseApp, Endpoint, FilePart, FormPart, NoHeaders, Resource, TestClient
+from jero import BaseApp, Endpoint, FilePart, FormPart, Resource, TestClient
 
 
 class Camel(Struct, rename="camel"):
@@ -66,17 +66,24 @@ class HeaderForm(Camel):
 
     upload: FilePart[UploadHeaders]
     blob: FormPart[bytes, UploadHeaders]
+    config: FormPart[JobConfig, UploadHeaders]
     default_file: FilePart
     default_blob: FormPart[bytes]
+    explicit_none_blob: FormPart[bytes, None]
 
 
 class HeaderResult(Camel):
-    """Response echoing the typed and default part headers."""
+    """Response echoing typed, default, and raw part headers."""
 
     upload_checksum: str
     blob_checksum: str
-    default_file_headers: NoHeaders
-    default_blob_headers: NoHeaders
+    config_checksum: str
+    config_dpi: int
+    default_file_headers: bool
+    default_blob_headers: bool
+    explicit_none_blob_headers: bool
+    upload_header_names: list[str]
+    blob_extra_values: list[str]
 
 
 class UploadEndpoint(Endpoint, path="/jobs"):
@@ -119,12 +126,17 @@ class HeadersEndpoint(Endpoint, path="/headers"):
     """Endpoint binding a form whose parts carry typed headers."""
 
     async def post(self, form: HeaderForm) -> HeaderResult:
-        """Echo back the typed and default part headers."""
+        """Echo back typed, default, and raw part headers."""
         return HeaderResult(
             upload_checksum=form.upload.headers.x_checksum,
             blob_checksum=form.blob.headers.x_checksum,
-            default_file_headers=form.default_file.headers,
-            default_blob_headers=form.default_blob.headers,
+            config_checksum=form.config.headers.x_checksum,
+            config_dpi=form.config.data.dpi,
+            default_file_headers=form.default_file.headers is not None,
+            default_blob_headers=form.default_blob.headers is not None,
+            explicit_none_blob_headers=form.explicit_none_blob.headers is not None,
+            upload_header_names=form.upload.raw_headers.keys(),
+            blob_extra_values=form.blob.raw_headers.getlist("x-extra"),
         )
 
 
@@ -218,13 +230,23 @@ def _headers_form_body(*, include_upload_checksum: bool = True) -> bytes:
             b"--" + boundary + b"\r\n",
             b'Content-Disposition: form-data; name="blob"\r\n',
             b"X-Checksum: blob-checksum\r\n",
+            b"X-Extra: first\r\n",
+            b"X-Extra: second\r\n",
             b"\r\nblob\r\n",
+            b"--" + boundary + b"\r\n",
+            b'Content-Disposition: form-data; name="config"\r\n',
+            b"Content-Type: application/json\r\n",
+            b"X-Checksum: config-checksum\r\n",
+            b'\r\n{"dpi": 400}\r\n',
             b"--" + boundary + b"\r\n",
             b'Content-Disposition: form-data; name="defaultFile"; filename="default.txt"\r\n',
             b"\r\ndefault-file\r\n",
             b"--" + boundary + b"\r\n",
             b'Content-Disposition: form-data; name="defaultBlob"\r\n',
             b"\r\ndefault-blob\r\n",
+            b"--" + boundary + b"\r\n",
+            b'Content-Disposition: form-data; name="explicitNoneBlob"\r\n',
+            b"\r\nexplicit-none-blob\r\n",
             b"--" + boundary + b"--\r\n",
         ]
     )
@@ -281,7 +303,7 @@ def test_multipart_form_binds_all_supported_part_kinds(client: TestClient) -> No
 
 
 def test_form_part_and_file_part_bind_typed_headers(client: TestClient) -> None:
-    """File and bytes parts bind their typed headers; unparameterised parts get NoHeaders."""
+    """File and bytes parts bind typed headers; unparameterised parts get None."""
     resp = client.post(
         "/headers",
         content=_headers_form_body(),
@@ -292,8 +314,13 @@ def test_form_part_and_file_part_bind_typed_headers(client: TestClient) -> None:
     assert resp.json() == {
         "uploadChecksum": "file-checksum",
         "blobChecksum": "blob-checksum",
-        "defaultFileHeaders": {},
-        "defaultBlobHeaders": {},
+        "configChecksum": "config-checksum",
+        "configDpi": 400,
+        "defaultFileHeaders": False,
+        "defaultBlobHeaders": False,
+        "explicitNoneBlobHeaders": False,
+        "uploadHeaderNames": ["Content-Disposition", "Content-Type", "X-Checksum"],
+        "blobExtraValues": ["first", "second"],
     }
 
 

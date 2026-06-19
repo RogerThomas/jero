@@ -16,7 +16,7 @@ from jero.core import (
     ResourceMeta,
     WiringError,
 )
-from jero.forms import FilePart, FormPart, NoHeaders
+from jero.forms import FilePart, FormPart
 from jero.headers import RawHeaders
 from jero.links import Link, Location
 from jero.streaming import NDJSONStreamingResponse, ServerSentEvent, SSEResponse, StreamingResponse
@@ -38,7 +38,6 @@ __all__ = [
     "Link",
     "Location",
     "NDJSONStreamingResponse",
-    "NoHeaders",
     "OperationMeta",
     "RawHeaders",
     "Resource",
