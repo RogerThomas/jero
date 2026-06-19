@@ -6,7 +6,7 @@ single worker pulls each item and runs the handler registered for its type.
 
 `BackgroundTasks` is **in-process and fire-and-forget**: items live in memory and are
 lost on crash or restart. It is *not* a durable broker — for must-run work, use a real
-queue (Celery, a message bus, your database).
+queue (Celery, a message bus, your database etc.).
 
 ## A complete example
 
@@ -36,10 +36,10 @@ class AnalyticsService:
 
 @dataclass
 class EventsEndpoint(Endpoint, path="/events"):
-    _tasks: BackgroundTasks
+    _background_tasks: BackgroundTasks
 
     async def post(self, json: AnalyticsEvent) -> AnalyticsEvent:
-        await self._tasks.add(json)   # returns immediately; processed in the background
+        await self._background_tasks.add(json)   # returns immediately; processed in the background
         return json
 
 
