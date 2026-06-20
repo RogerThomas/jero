@@ -33,11 +33,11 @@ near each other in a module. The framework then has to recover structure from a 
 registered callables.
 
 jero starts from the opposite direction. A route is a class. A REST collection is a
-`Resource`; a one-off route is an `Endpoint`. The path lives on the class, and method
+`BaseResource`; a one-off route is a `BaseEndpoint`. The path lives on the class, and method
 names carry the HTTP semantics:
 
 ```python
-class WidgetResource(Resource, path="/widgets"):
+class WidgetResource(BaseResource, path="/widgets"):
     async def read_one(self, path: WidgetPath) -> Widget:
         ...
 ```
@@ -145,7 +145,7 @@ The result is less freedom, but more shape. jero is comfortable with that tradeo
 
 Opinionated does not mean "arbitrary." It means the framework has an answer.
 
-How do I define routes? Use `Resource` or `Endpoint`.
+How do I define routes? Use `BaseResource` or `BaseEndpoint`.
 
 How do I bind request data? Name the handler argument `json`, `params`, `path`,
 `headers`, `form`, `content`, `raw_headers`, or `user`.

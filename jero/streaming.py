@@ -36,7 +36,7 @@ class _StreamingResponse[T, H: Struct | None = None]:
     (a plain async iterable, or a one-yield lifecycle generator for setup/teardown);
     ``status_code`` overrides the verb's default status when set.
 
-    Headers work as on :class:`~jero.BaseResponse`: ``headers`` is a typed Struct
+    Headers work as on the other response classes: ``headers`` is a typed Struct
     (the header *type* is the parameter ``H``, defaulting to None), ``raw_headers``
     the escape hatch for exotic names, casing, or repeats; both are emitted, typed
     first."""

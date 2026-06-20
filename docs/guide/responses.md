@@ -16,7 +16,7 @@ headers or status.
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, Resource
+from jero import BaseApp, BaseEndpoint, BaseResource
 
 
 class Widget(Struct):
@@ -28,7 +28,7 @@ class WidgetPath(Struct):
     widget_id: str
 
 
-class WidgetResource(Resource, path="/widgets"):
+class WidgetResource(BaseResource, path="/widgets"):
     async def read_one(self, path: WidgetPath) -> Widget:      # JSON object
         return Widget(id=path.widget_id, name="gizmo")
 
@@ -36,7 +36,7 @@ class WidgetResource(Resource, path="/widgets"):
         return [Widget(id="widget-id", name="gizmo")]
 
 
-class ExportEndpoint(Endpoint, path="/export"):
+class ExportEndpoint(BaseEndpoint, path="/export"):
     async def get(self) -> bytes:                              # octet-stream
         return b"id,name\n"
 
@@ -62,7 +62,7 @@ generic so the body and header **types are preserved**, not erased:
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, JSONResponse, Resource
+from jero import BaseApp, JSONResponse, BaseResource
 
 
 class Widget(Struct):
@@ -78,7 +78,7 @@ class WidgetHeaders(Struct):
     x_rate_limit: int
 
 
-class WidgetResource(Resource, path="/widgets"):
+class WidgetResource(BaseResource, path="/widgets"):
     async def read_one(self, path: WidgetPath) -> JSONResponse[Widget, WidgetHeaders]:
         return JSONResponse(
             json=Widget(id=path.widget_id),
@@ -157,7 +157,7 @@ default (201 for `create`, else 200); set it to override:
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, JSONResponse, Resource
+from jero import BaseApp, JSONResponse, BaseResource
 
 
 class WidgetIn(Struct):
@@ -168,7 +168,7 @@ class Widget(WidgetIn):
     id: str
 
 
-class WidgetResource(Resource, path="/widgets"):
+class WidgetResource(BaseResource, path="/widgets"):
     async def create(self, json: WidgetIn) -> JSONResponse[Widget]:
         widget = Widget(id="widget-id", name=json.name)
         return JSONResponse(json=widget, status_code=202)   # Accepted

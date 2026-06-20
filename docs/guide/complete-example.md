@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from msgspec import Struct
 
-from jero import BaseApp, BaseFactory, HTTPError, JSONResponse, Resource
+from jero import BaseApp, BaseFactory, HTTPError, JSONResponse, BaseResource
 
 
 class Credentials(Struct):
@@ -100,7 +100,7 @@ class Factory(BaseFactory):
 
 
 @dataclass
-class WidgetResource(Resource, path="/widgets"):
+class WidgetResource(BaseResource, path="/widgets"):
     _service: WidgetService
 
     async def create(

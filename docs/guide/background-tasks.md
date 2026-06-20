@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 from msgspec import Struct
 
-from jero import BackgroundTasks, BaseApp, BaseFactory, Endpoint
+from jero import BackgroundTasks, BaseApp, BaseFactory, BaseEndpoint
 
 
 class AnalyticsEvent(Struct):
@@ -35,7 +35,7 @@ class AnalyticsService:
 
 
 @dataclass
-class EventsEndpoint(Endpoint, path="/events"):
+class EventsEndpoint(BaseEndpoint, path="/events"):
     _background_tasks: BackgroundTasks
 
     async def post(self, json: AnalyticsEvent) -> AnalyticsEvent:

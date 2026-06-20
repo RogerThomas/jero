@@ -5,7 +5,16 @@ from collections.abc import Generator
 
 import pytest
 
-from jero import BaseApp, Endpoint, JSONResponse, Link, Location, Resource, TestClient, WiringError
+from jero import (
+    BaseApp,
+    BaseEndpoint,
+    BaseResource,
+    JSONResponse,
+    Link,
+    Location,
+    TestClient,
+    WiringError,
+)
 from jero.links import PathTarget, URLTarget
 from tests.demo_app import Job, JobPath, JobsResource, LinksDemoApp, WidgetPath
 
@@ -231,11 +240,11 @@ class _SharedReadMixin:
         return Job(id=path.job_id)
 
 
-class _JobsAtA(_SharedReadMixin, Resource, path="/a"):
+class _JobsAtA(_SharedReadMixin, BaseResource, path="/a"):
     """First mount of the shared handler."""
 
 
-class _JobsAtB(_SharedReadMixin, Resource, path="/b"):
+class _JobsAtB(_SharedReadMixin, BaseResource, path="/b"):
     """Second mount of the shared handler."""
 
 
@@ -247,7 +256,7 @@ class _AmbiguousApp(BaseApp):
         self._include_resource(_JobsAtB())
 
 
-class _DupRefAEndpoint(Endpoint, path="/dup-a", ref="dup"):
+class _DupRefAEndpoint(BaseEndpoint, path="/dup-a", ref="dup"):
     """First class claiming ref 'dup'."""
 
     async def get(self) -> Job:
@@ -255,7 +264,7 @@ class _DupRefAEndpoint(Endpoint, path="/dup-a", ref="dup"):
         return Job(id="job-id")
 
 
-class _DupRefBEndpoint(Endpoint, path="/dup-b", ref="dup"):
+class _DupRefBEndpoint(BaseEndpoint, path="/dup-b", ref="dup"):
     """Second class claiming the same ref 'dup'."""
 
     async def get(self) -> Job:
@@ -271,7 +280,7 @@ class _DupRefApp(BaseApp):
         self._include_endpoint(_DupRefBEndpoint())
 
 
-class _UnmountedJobs(Resource, path="/unmounted"):
+class _UnmountedJobs(BaseResource, path="/unmounted"):
     """A resource deliberately left out of the app — linked at, but never mounted."""
 
     async def read_one(self, path: JobPath) -> Job:
@@ -279,7 +288,7 @@ class _UnmountedJobs(Resource, path="/unmounted"):
         return Job(id=path.job_id)
 
 
-class _DanglingOpEndpoint(Endpoint, path="/dangling-op"):
+class _DanglingOpEndpoint(BaseEndpoint, path="/dangling-op"):
     """Links via from_operation to an operation whose class is never included."""
 
     async def get(self) -> JSONResponse[Job]:
@@ -292,7 +301,7 @@ class _DanglingOpEndpoint(Endpoint, path="/dangling-op"):
         )
 
 
-class _DanglingRefEndpoint(Endpoint, path="/dangling-ref"):
+class _DanglingRefEndpoint(BaseEndpoint, path="/dangling-ref"):
     """Links via from_ref to a ref that no mounted class declares."""
 
     async def get(self) -> JSONResponse[Job]:

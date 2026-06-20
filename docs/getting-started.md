@@ -28,7 +28,7 @@ declare its path on the class, and let method names carry the HTTP semantics.
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, Resource
+from jero import BaseApp, BaseResource
 
 
 class WidgetPath(Struct):
@@ -40,7 +40,7 @@ class Widget(Struct):
     name: str
 
 
-class WidgetResource(Resource, path="/widgets"):
+class WidgetResource(BaseResource, path="/widgets"):
     # GET /widgets/{widget_id}
     async def read_one(self, path: WidgetPath) -> Widget:
         return Widget(id=path.widget_id, name="widget-name")
@@ -76,10 +76,10 @@ startup error.
 
 ## The mental model
 
-- A **`Resource`** is a class with any of the CRUD methods `create` / `read_one` /
+- A **`BaseResource`** is a class with any of the CRUD methods `create` / `read_one` /
   `read_many` / `update` / `partial_update` / `delete`, mapped to POST / GET (item) /
   GET (collection) / PUT / PATCH / DELETE. See [Resources & Endpoints](guide/resources.md).
-- An **`Endpoint`** is a class with bare verb methods (`get`/`post`/…) for non-resource
+- An **`BaseEndpoint`** is a class with bare verb methods (`get`/`post`/…) for non-resource
   routes — health checks, webhooks, actions.
 - **Handler arguments bind by name**, each a `Struct`: `json`, `params`, `path`,
   `headers`, `form`, `user`, plus raw `content: bytes` / `raw_headers`. See

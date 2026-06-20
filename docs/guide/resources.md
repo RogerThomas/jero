@@ -3,9 +3,9 @@
 jero has exactly two route-defining shapes. Pick by whether the route is a REST
 collection or a one-off.
 
-## Resource — REST collections
+## BaseResource — REST collections
 
-A `Resource` is a class. Define any of the six CRUD methods; their **names** decide
+A `BaseResource` is a class. Define any of the six CRUD methods; their **names** decide
 the HTTP method and status:
 
 ```text
@@ -31,7 +31,7 @@ delete          DELETE  /widgets/{widget_id}
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, Resource
+from jero import BaseApp, BaseResource
 
 
 class WidgetIn(Struct):
@@ -46,7 +46,7 @@ class WidgetPath(Struct):
     widget_id: str
 
 
-class WidgetResource(Resource, path="/widgets"):
+class WidgetResource(BaseResource, path="/widgets"):
     async def create(self, json: WidgetIn) -> Widget:           # POST /widgets
         return Widget(id="widget-id", name=json.name)
 
@@ -71,23 +71,23 @@ app = App()
 `read_many` serves the mount path itself and **cannot** extend it with trailing
 segments — items belong to `read_one`. The framework enforces this at startup.
 
-## Endpoint — single routes
+## BaseEndpoint — single routes
 
-An `Endpoint` is a class with bare verb methods (`get` / `post` / `put` / `patch` /
+A `BaseEndpoint` is a class with bare verb methods (`get` / `post` / `put` / `patch` /
 `delete`). There are no CRUD semantics: the method name *is* the verb, every verb
-returns 200, and the path is exact. A different path is a different `Endpoint`.
+returns 200, and the path is exact. A different path is a different `BaseEndpoint`.
 
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint
+from jero import BaseApp, BaseEndpoint
 
 
 class Health(Struct):
     status: str
 
 
-class HealthEndpoint(Endpoint, path="/healthz"):
+class HealthEndpoint(BaseEndpoint, path="/healthz"):
     async def get(self) -> Health:        # GET /healthz
         return Health(status="ok")
 
@@ -107,7 +107,7 @@ Use endpoints for health checks, webhooks, and actions that aren't a resource.
 A route declares its path **on the class**, at definition time:
 
 ```python
-class WidgetResource(Resource, path="/widgets"):
+class WidgetResource(BaseResource, path="/widgets"):
     ...
 ```
 
@@ -122,7 +122,7 @@ slot:
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, Resource
+from jero import BaseApp, BaseResource
 
 
 class Item(Struct):
@@ -134,7 +134,7 @@ class CollectionPath(Struct):
     item_id: str
 
 
-class ItemResource(Resource, path="/collections/{collection_id}/items"):
+class ItemResource(BaseResource, path="/collections/{collection_id}/items"):
     # GET /collections/{collection_id}/items/{item_id}
     async def read_one(self, path: CollectionPath) -> Item:
         return Item(id=path.item_id)
@@ -183,7 +183,7 @@ applies to every operation; `meta_<operation>` to one (`meta_get`, `meta_create`
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, EndpointMeta, OperationMeta
+from jero import BaseApp, BaseEndpoint, EndpointMeta, OperationMeta
 
 
 class Widget(Struct):
@@ -191,7 +191,7 @@ class Widget(Struct):
 
 
 class WidgetsEndpoint(
-    Endpoint,
+    BaseEndpoint,
     path="/widgets",
     meta=EndpointMeta(tags=["widgets"]),                    # all operations
     meta_get=OperationMeta(operation_id="listWidgets"),     # this operation

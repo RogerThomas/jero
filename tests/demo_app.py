@@ -22,15 +22,15 @@ from msgspec.json import encode as json_encode
 from jero import (
     BackgroundTasks,
     BaseApp,
+    BaseEndpoint,
     BaseFactory,
-    Endpoint,
+    BaseResource,
     FormPart,
     HTTPError,
     JSONResponse,
     Link,
     Location,
     RawHeaders,
-    Resource,
 )
 
 
@@ -191,7 +191,7 @@ class Factory(BaseFactory):
 
 
 @dataclass
-class WidgetResource(Resource, path="/widgets"):
+class WidgetResource(BaseResource, path="/widgets"):
     """CRUD resource over widgets, delegating to the injected service."""
 
     _service: WidgetService
@@ -222,7 +222,7 @@ class WidgetResource(Resource, path="/widgets"):
         return Deleted(id=path.widget_id, deleted=True)
 
 
-class WhoAmIEndpoint(Endpoint, path="/me"):
+class WhoAmIEndpoint(BaseEndpoint, path="/me"):
     """Authenticated endpoint returning the current user."""
 
     async def get(self, user: User) -> User:
@@ -230,7 +230,7 @@ class WhoAmIEndpoint(Endpoint, path="/me"):
         return user
 
 
-class HealthEndpoint(Endpoint, path="/healthz"):
+class HealthEndpoint(BaseEndpoint, path="/healthz"):
     """Unauthenticated health-check endpoint."""
 
     async def get(self) -> Health:
@@ -238,7 +238,7 @@ class HealthEndpoint(Endpoint, path="/healthz"):
         return Health(status="ok")
 
 
-class RawHealthEndpoint(Endpoint, path="/raw-healthz"):
+class RawHealthEndpoint(BaseEndpoint, path="/raw-healthz"):
     """Unauthenticated health-check endpoint returning raw JSON."""
 
     async def get(self) -> bytes:
@@ -246,7 +246,7 @@ class RawHealthEndpoint(Endpoint, path="/raw-healthz"):
         return b'{"status":"ok"}'
 
 
-class RawFormEndpoint(Endpoint, path="/form-raw-headers"):
+class RawFormEndpoint(BaseEndpoint, path="/form-raw-headers"):
     """Unauthenticated endpoint echoing request and form-part raw headers."""
 
     async def post(self, form: RawForm, raw_headers: RawHeaders) -> RawFormHeaders:
@@ -295,7 +295,7 @@ class AnalyticsService:
 
 
 @dataclass
-class EventsEndpoint(Endpoint, path="/events"):
+class EventsEndpoint(BaseEndpoint, path="/events"):
     """Accepts an event and hands it to the background queue, returning immediately."""
 
     _background_tasks: BackgroundTasks
@@ -334,7 +334,7 @@ class JobPath(Camel):
     job_id: str
 
 
-class JobsResource(Resource, path="/jobs", ref="jobs"):
+class JobsResource(BaseResource, path="/jobs", ref="jobs"):
     """Jobs collection. ``create`` returns 201 with a ``Location`` reverse-routed to
     ``read_one`` and a ``Link`` header (self + a literal help link). ``ref="jobs"`` lets
     another module address it by string via ``Link.from_ref('jobs.read_one')``."""
@@ -366,7 +366,7 @@ class JobsResource(Resource, path="/jobs", ref="jobs"):
         )
 
 
-class JobLinkEndpoint(Endpoint, path="/job-link"):
+class JobLinkEndpoint(BaseEndpoint, path="/job-link"):
     """A second 'module' that can't import ``JobsResource`` (imagine an import cycle), so
     it addresses the jobs route by string ref instead of by the operation reference."""
 
@@ -378,7 +378,7 @@ class JobLinkEndpoint(Endpoint, path="/job-link"):
         )
 
 
-class JobRedirectEndpoint(Endpoint, path="/latest-job"):
+class JobRedirectEndpoint(BaseEndpoint, path="/latest-job"):
     """A 303 redirect to the canonical job URL, with the ``Location`` reverse-routed by
     string ref (the cross-module form)."""
 

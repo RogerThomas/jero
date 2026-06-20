@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, HTTPError
+from jero import BaseApp, BaseEndpoint, HTTPError
 
 
 class Credentials(Struct):
@@ -51,7 +51,7 @@ from dataclasses import dataclass
 
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, HTTPError
+from jero import BaseApp, BaseEndpoint, HTTPError
 
 
 class Credentials(Struct):
@@ -79,12 +79,12 @@ class Health(Struct):
     status: str
 
 
-class HealthEndpoint(Endpoint, path="/healthz"):
+class HealthEndpoint(BaseEndpoint, path="/healthz"):
     async def get(self) -> Health:              # GET /healthz, open
         return Health(status="ok")
 
 
-class WhoAmIEndpoint(Endpoint, path="/me"):
+class WhoAmIEndpoint(BaseEndpoint, path="/me"):
     async def get(self, user: User) -> User:    # receives the authenticate() result
         return user
 

@@ -30,7 +30,7 @@ validation, serialization, auth, streaming, and resource lifecycle.
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, Resource
+from jero import BaseApp, BaseResource
 
 
 class Widget(Struct):
@@ -42,7 +42,7 @@ class WidgetPath(Struct):
     widget_id: str
 
 
-class Widgets(Resource, path="/widgets"):
+class Widgets(BaseResource, path="/widgets"):
     async def read_one(self, path: WidgetPath) -> Widget:  # GET /widgets/{widget_id}
         return Widget(id=path.widget_id, name="gizmo")
 
@@ -120,7 +120,7 @@ from msgspec import Struct
 from msgspec.json import decode as json_decode
 from msgspec.json import encode as json_encode
 
-from jero import BaseApp, BaseFactory, HTTPError, Resource
+from jero import BaseApp, BaseFactory, HTTPError, BaseResource
 
 
 class WidgetPath(Struct):
@@ -153,7 +153,7 @@ class WidgetService:
 
 
 @dataclass
-class WidgetResource(Resource, path="/widgets"):
+class WidgetResource(BaseResource, path="/widgets"):
     _service: WidgetService
 
     # called as: POST /widgets

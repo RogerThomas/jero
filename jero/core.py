@@ -150,7 +150,7 @@ class HTTPError(Exception):
 
 
 @dataclass(kw_only=True, slots=True)
-class BaseResponse[H: Struct | None = None]:
+class _BaseResponse[H: Struct | None = None]:
     """Base for handler returns that control response headers and status.
 
     Return one of the concrete subclasses. ``content-type`` defaults per kind and
@@ -189,27 +189,27 @@ class BaseResponse[H: Struct | None = None]:
 
 
 @dataclass(kw_only=True, slots=True)
-class BytesResponse[H: Struct | None = None](BaseResponse[H]):
+class BytesResponse[H: Struct | None = None](_BaseResponse[H]):
     """Raw bytes; content-type defaults to application/octet-stream."""
 
     content: bytes
 
 
 @dataclass(kw_only=True, slots=True)
-class JSONResponse[T: Struct, H: Struct | None = None](BaseResponse[H]):
+class JSONResponse[T: Struct, H: Struct | None = None](_BaseResponse[H]):
     """A Struct encoded as JSON; content-type defaults to application/json."""
 
     json: T
 
 
 class EndpointMeta(Struct):
-    """OpenAPI metadata shared by all of an ``Endpoint``'s operations."""
+    """OpenAPI metadata shared by all of a ``BaseEndpoint``'s operations."""
 
     tags: Sequence[str] = ()
 
 
 class ResourceMeta(Struct):
-    """OpenAPI metadata shared by all of a ``Resource``'s operations."""
+    """OpenAPI metadata shared by all of a ``BaseResource``'s operations."""
 
     tags: Sequence[str] = ()
 
@@ -232,7 +232,7 @@ def _validate_meta(
     operations: dict[str, object],
 ) -> None:
     """Fail loud if a shape is given the wrong meta type — ``EndpointMeta`` only on an
-    ``Endpoint``, ``ResourceMeta`` only on a ``Resource``, ``OperationMeta`` per operation.
+    ``BaseEndpoint``, ``ResourceMeta`` only on a ``BaseResource``, ``OperationMeta`` per operation.
     """
     if meta is not None and not isinstance(meta, class_meta_type):
         raise WiringError(
@@ -246,12 +246,12 @@ def _validate_meta(
 
 
 class _Routable:
-    """Base for the route-defining shapes (``Resource`` / ``Endpoint``).
+    """Base for the route-defining shapes (``BaseResource`` / ``BaseEndpoint``).
 
     A concrete class declares its mount path at definition time —
-    ``class Widgets(Resource, path="/widgets")`` — and it's read off the class at
+    ``class Widgets(BaseResource, path="/widgets")`` — and it's read off the class at
     wiring. ``path`` is required on the concrete shapes (omitting it is a type error);
-    it stays *optional* here only so the ``Resource`` / ``Endpoint`` base definitions
+    it stays *optional* here only so the ``BaseResource`` / ``BaseEndpoint`` base definitions
     themselves type-check. The class-path is the single source of truth that URL
     reversal (``Link`` / ``Location``) reads.
 
@@ -273,7 +273,7 @@ class _Routable:
             cls.ref = ref
 
 
-class Resource(_Routable):
+class BaseResource(_Routable):
     """One REST resource: subclass and define any of the CRUD methods.
 
     ``read_one`` is the item route (its ``path`` may extend the mount with
@@ -338,13 +338,13 @@ class Resource(_Routable):
         cls.meta_delete = meta_delete
 
 
-class Endpoint(_Routable):
+class BaseEndpoint(_Routable):
     """One HTTP endpoint at a single path: subclass and define any of
     ``get`` / ``post`` / ``put`` / ``patch`` / ``delete``.
 
-    Unlike :class:`Resource` there are no CRUD semantics — the method name
+    Unlike :class:`BaseResource` there are no CRUD semantics — the method name
     *is* the verb, every verb returns 200, and the path is exact (no
-    trailing extension). A different path is a different ``Endpoint``.
+    trailing extension). A different path is a different ``BaseEndpoint``.
 
     Optional OpenAPI metadata is declared at class definition: ``meta`` applies to every
     operation, ``meta_<verb>`` to one (``meta_get``, ``meta_post``, …).
@@ -802,7 +802,7 @@ def _return_kind(ann: object) -> _ReturnKind | None:  # noqa: C901
             return "bytes-response"
         if issubclass(ann, JSONResponse):
             return "json-response"
-        if issubclass(ann, BaseResponse):
+        if issubclass(ann, _BaseResponse):
             return None  # the base is abstract; return a concrete subclass
         if issubclass(ann, Struct):
             return "json"
@@ -1933,7 +1933,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
 
     def _include(
         self,
-        obj: Resource | Endpoint,
+        obj: BaseResource | BaseEndpoint,
         methods: dict[str, _Verb],
         *,
         auth: Auth[Any, Any] | None,
@@ -1970,19 +1970,19 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
 
     def _include_resource[THeaders: Struct, TUser: Struct](
         self,
-        resource: Resource,
+        resource: BaseResource,
         *,
         auth: Auth[THeaders, TUser] | None = None,
     ) -> None:
-        self._include(resource, Resource.METHODS, auth=auth)
+        self._include(resource, BaseResource.METHODS, auth=auth)
 
     def _include_endpoint[THeaders: Struct, TUser: Struct](
         self,
-        endpoint: Endpoint,
+        endpoint: BaseEndpoint,
         *,
         auth: Auth[THeaders, TUser] | None = None,
     ) -> None:
-        self._include(endpoint, Endpoint.METHODS, auth=auth)
+        self._include(endpoint, BaseEndpoint.METHODS, auth=auth)
 
     def _resolve(self, method: str, path: str) -> tuple[_Handler, dict[str, str]] | None:
         # Static hit is the hot path: look it up directly, before narrowing the verb

@@ -7,7 +7,7 @@ from uuid import UUID
 import pytest
 from msgspec import Struct
 
-from jero import BaseApp, BytesResponse, JSONResponse, RawHeaders, Resource, TestClient
+from jero import BaseApp, BaseResource, BytesResponse, JSONResponse, RawHeaders, TestClient
 
 
 class Echo(Struct):
@@ -22,8 +22,8 @@ class BlobPath(Struct):
     id: str
 
 
-class BlobResource(Resource, path="/blobs"):
-    """Resource exercising raw bytes in and custom response types out."""
+class BlobResource(BaseResource, path="/blobs"):
+    """BaseResource exercising raw bytes in and custom response types out."""
 
     async def create(self, content: bytes) -> JSONResponse[Echo]:
         """Echo a raw bytes body back as a JSON response with a custom header."""
@@ -80,8 +80,8 @@ def test_snakecase_key_is_rejected_for_camel_field(client: TestClient) -> None:
 # --- Response headers accept a RawHeaders bag (forwarding), not just a dict ---
 
 
-class RawRespResource(Resource, path="/raw-resp"):
-    """Resource returning responses whose headers come from a RawHeaders bag."""
+class RawRespResource(BaseResource, path="/raw-resp"):
+    """BaseResource returning responses whose headers come from a RawHeaders bag."""
 
     async def read_many(self) -> JSONResponse[Echo]:
         """Set response headers from a RawHeaders, preserving its as-sent casing."""
@@ -155,8 +155,8 @@ class RespHeaders(Struct):
     x_absent: str | None = None
 
 
-class TypedHeaderResource(Resource, path="/typed"):
-    """Resource returning typed headers, plus raw_headers for a repeated cookie."""
+class TypedHeaderResource(BaseResource, path="/typed"):
+    """BaseResource returning typed headers, plus raw_headers for a repeated cookie."""
 
     async def read_many(self) -> JSONResponse[Echo, RespHeaders]:
         """Set typed headers (Struct) and a raw Set-Cookie repeat together."""
@@ -216,8 +216,8 @@ class UUIDHeaders(Struct):
     x_response_id: UUID
 
 
-class UUIDHeaderResource(Resource, path="/uuid"):
-    """Resource returning a single UUID-valued typed header."""
+class UUIDHeaderResource(BaseResource, path="/uuid"):
+    """BaseResource returning a single UUID-valued typed header."""
 
     async def read_many(self) -> JSONResponse[Echo, UUIDHeaders]:
         """Set a typed header whose value is a UUID."""
@@ -247,8 +247,8 @@ def test_uuid_typed_header_is_bare_string() -> None:
 # --- status_code overrides the verb's default status ---
 
 
-class StatusResource(Resource, path="/status"):
-    """Resource overriding the default status code on its response."""
+class StatusResource(BaseResource, path="/status"):
+    """BaseResource overriding the default status code on its response."""
 
     async def create(self, content: bytes) -> JSONResponse[Echo]:
         """Return 202 instead of the create verb's default 201."""

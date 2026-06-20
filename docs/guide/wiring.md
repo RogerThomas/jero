@@ -89,7 +89,7 @@ from contextlib import asynccontextmanager
 
 from msgspec import Struct
 
-from jero import BaseApp, Resource
+from jero import BaseApp, BaseResource
 
 
 class WidgetIn(Struct):
@@ -106,7 +106,7 @@ async def open_txn() -> AsyncGenerator[None]:
     yield
 
 
-class WidgetResource(Resource, path="/widgets"):
+class WidgetResource(BaseResource, path="/widgets"):
     async def create(self, json: WidgetIn) -> Widget:
         async with open_txn():
             return Widget(id="widget-id", name=json.name)

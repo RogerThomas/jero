@@ -3,7 +3,7 @@
 from msgspec import Struct
 from msgspec.json import decode as json_decode
 
-from jero import BaseApp, Endpoint, RawHeaders, Resource, TestClient
+from jero import BaseApp, BaseEndpoint, BaseResource, RawHeaders, TestClient
 
 
 def test_bad_body_type_is_422(client: TestClient) -> None:
@@ -51,8 +51,8 @@ class Headers(Struct):
     x_token: int
 
 
-class IntResource(Resource, path="/things"):
-    """Resource binding integer path, body, and header sources."""
+class IntResource(BaseResource, path="/things"):
+    """BaseResource binding integer path, body, and header sources."""
 
     async def read_one(self, path: IntPath) -> Body:
         """Echo the integer bound from the path."""
@@ -87,16 +87,16 @@ def test_bad_header_is_400() -> None:
 # --- Esoteric: errors raised inside a handler are server faults (500) ---
 
 
-class UpstreamValidationEndpoint(Endpoint, path="/upstream-validation"):
-    """Endpoint that triggers a validation error while decoding upstream data."""
+class UpstreamValidationEndpoint(BaseEndpoint, path="/upstream-validation"):
+    """BaseEndpoint that triggers a validation error while decoding upstream data."""
 
     async def get(self) -> Body:
         """Decode upstream JSON whose field type is invalid."""
         return json_decode(b'{"n": "not-an-int"}', type=Body)
 
 
-class UpstreamDecodeEndpoint(Endpoint, path="/upstream-decode"):
-    """Endpoint that triggers a decode error on malformed upstream data."""
+class UpstreamDecodeEndpoint(BaseEndpoint, path="/upstream-decode"):
+    """BaseEndpoint that triggers a decode error on malformed upstream data."""
 
     async def get(self) -> Body:
         """Decode malformed upstream JSON."""
@@ -140,7 +140,7 @@ class Trace(Struct):
     x_trace_id: str
 
 
-class RawHeadersEndpoint(Endpoint, path="/raw"):
+class RawHeadersEndpoint(BaseEndpoint, path="/raw"):
     """GET handler reading a request header through the opaque bag."""
 
     async def get(self, raw_headers: RawHeaders) -> Reply:
@@ -148,7 +148,7 @@ class RawHeadersEndpoint(Endpoint, path="/raw"):
         return Reply(value=raw_headers["X-Trace-Id"])
 
 
-class BothHeadersEndpoint(Endpoint, path="/both"):
+class BothHeadersEndpoint(BaseEndpoint, path="/both"):
     """GET handler taking the typed headers Struct and the raw bag together."""
 
     async def get(self, headers: Trace, raw_headers: RawHeaders) -> Reply:

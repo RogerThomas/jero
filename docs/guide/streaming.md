@@ -21,14 +21,14 @@ from collections.abc import AsyncIterator
 
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, NDJSONStreamingResponse
+from jero import BaseApp, BaseEndpoint, NDJSONStreamingResponse
 
 
 class Movie(Struct):
     title: str
 
 
-class MoviesEndpoint(Endpoint, path="/movies"):
+class MoviesEndpoint(BaseEndpoint, path="/movies"):
     async def _movies(self) -> AsyncIterator[Movie]:
         for title in ("first", "second"):     # stream rows from a DB cursor, etc.
             yield Movie(title=title)
@@ -55,14 +55,14 @@ from collections.abc import AsyncIterator
 
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, SSEResponse, ServerSentEvent
+from jero import BaseApp, BaseEndpoint, SSEResponse, ServerSentEvent
 
 
 class Movie(Struct):
     title: str
 
 
-class EventsEndpoint(Endpoint, path="/events"):
+class EventsEndpoint(BaseEndpoint, path="/events"):
     async def _events(self) -> AsyncIterator[Movie | ServerSentEvent[Movie]]:
         yield Movie(title="first")                                    # data: {...}
         yield ServerSentEvent(data=Movie(title="second"), event="added", id="2")
@@ -95,10 +95,10 @@ For anything else — CSV, a proxied download — stream `bytes`:
 ```python
 from collections.abc import AsyncIterator
 
-from jero import BaseApp, Endpoint, StreamingResponse
+from jero import BaseApp, BaseEndpoint, StreamingResponse
 
 
-class CSVEndpoint(Endpoint, path="/export"):
+class CSVEndpoint(BaseEndpoint, path="/export"):
     async def _chunks(self) -> AsyncIterator[bytes]:
         yield b"id,name\n"
         yield b"1,gizmo\n"
@@ -127,7 +127,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, NDJSONStreamingResponse
+from jero import BaseApp, BaseEndpoint, NDJSONStreamingResponse
 
 
 class Movie(Struct):
@@ -151,7 +151,7 @@ class Cursor:
         yield Movie(title="second")
 
 
-class ExportEndpoint(Endpoint, path="/movies/export"):
+class ExportEndpoint(BaseEndpoint, path="/movies/export"):
     async def _lifecycle(self) -> AsyncGenerator[AsyncIterable[Movie]]:
         async with Cursor() as cursor:  # "cursor opened" — before streaming starts
             yield cursor.rows_iterator()

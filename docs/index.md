@@ -21,7 +21,7 @@ generation all derive from statically declared types, while the request path sta
 close to raw msgspec performance: route lookup → decode → call → encode.
 
 There are no route decorators and no dependency-injection container. Routes are plain
-classes (`Resource` for REST collections, `Endpoint` for one-off routes); the method
+classes (`BaseResource` for REST collections, `BaseEndpoint` for one-off routes); the method
 name *is* the HTTP operation, and dependencies are ordinary constructor arguments you
 wire by hand.
 
@@ -60,7 +60,7 @@ feature-by-feature contrast with other Python frameworks, read
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, Resource
+from jero import BaseApp, BaseResource
 
 
 class WidgetPath(Struct):
@@ -72,7 +72,7 @@ class Widget(Struct):
     name: str
 
 
-class WidgetResource(Resource, path="/widgets"):
+class WidgetResource(BaseResource, path="/widgets"):
     # called as: GET /widgets/{widget_id}
     async def read_one(self, path: WidgetPath) -> Widget:
         return Widget(id=path.widget_id, name="widget-name")
@@ -125,6 +125,6 @@ New here? Start with [Getting Started](getting-started.md).
 
 ## API reference
 
-The full public surface — `BaseApp`, `BaseFactory`, `Resource`, `Endpoint`, the
+The full public surface — `BaseApp`, `BaseFactory`, `BaseResource`, `BaseEndpoint`, the
 response and streaming types, and the test helpers — is documented in the
 [API reference](modules.md).

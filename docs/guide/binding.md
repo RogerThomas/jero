@@ -21,7 +21,7 @@ rejected on bodyless verbs (`GET`, `DELETE`). Everything else can combine freely
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, Resource
+from jero import BaseApp, BaseResource
 
 
 class WidgetIn(Struct):
@@ -41,7 +41,7 @@ class Page(Struct):
     offset: int = 0
 
 
-class WidgetResource(Resource, path="/widgets"):
+class WidgetResource(BaseResource, path="/widgets"):
     # PUT /widgets/{widget_id}?limit=...&offset=...
     async def update(self, path: WidgetPath, params: Page, json: WidgetIn) -> Widget:
         return Widget(id=path.widget_id, name=json.name)
@@ -70,14 +70,14 @@ For non-JSON or opaque bodies, take `content: bytes`:
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, Resource
+from jero import BaseApp, BaseResource
 
 
 class Receipt(Struct):
     size: int
 
 
-class UploadResource(Resource, path="/uploads"):
+class UploadResource(BaseResource, path="/uploads"):
     async def create(self, content: bytes) -> Receipt:   # POST /uploads
         return Receipt(size=len(content))
 
@@ -105,7 +105,7 @@ names map to fields by lower-casing and turning `-` into `_`:
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint
+from jero import BaseApp, BaseEndpoint
 
 
 class Trace(Struct):
@@ -117,7 +117,7 @@ class TraceEcho(Struct):
     trace_id: str
 
 
-class TraceEndpoint(Endpoint, path="/trace"):
+class TraceEndpoint(BaseEndpoint, path="/trace"):
     async def get(self, headers: Trace) -> TraceEcho:    # GET /trace
         return TraceEcho(trace_id=headers.x_trace_id)
 
@@ -137,7 +137,7 @@ case-insensitive `Mapping` that preserves every pair:
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, RawHeaders
+from jero import BaseApp, BaseEndpoint, RawHeaders
 
 
 class Echo(Struct):
@@ -145,7 +145,7 @@ class Echo(Struct):
     cookie_count: int
 
 
-class HeadersEndpoint(Endpoint, path="/echo"):
+class HeadersEndpoint(BaseEndpoint, path="/echo"):
     async def get(self, raw_headers: RawHeaders) -> Echo:    # GET /echo
         trace_id = raw_headers["X-Trace-Id"]         # case-insensitive lookup
         cookies = raw_headers.getlist("Cookie")      # repeats preserved

@@ -19,7 +19,7 @@ the URL slots:
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, JSONResponse, Location, Resource
+from jero import BaseApp, JSONResponse, Location, BaseResource
 
 
 class Widget(Struct):
@@ -30,7 +30,7 @@ class WidgetPath(Struct):
     widget_id: str
 
 
-class WidgetResource(Resource, path="/widgets"):
+class WidgetResource(BaseResource, path="/widgets"):
     async def read_one(self, path: WidgetPath) -> Widget:        # GET /widgets/{widget_id}
         return Widget(id=path.widget_id)
 
@@ -64,7 +64,7 @@ emitted as `type=`). A list joins into one `Link` header:
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, JSONResponse, Link, Resource
+from jero import BaseApp, JSONResponse, Link, BaseResource
 
 
 class Widget(Struct):
@@ -75,7 +75,7 @@ class WidgetPath(Struct):
     widget_id: str
 
 
-class WidgetResource(Resource, path="/widgets"):
+class WidgetResource(BaseResource, path="/widgets"):
     async def read_one(self, path: WidgetPath) -> Widget:
         return Widget(id=path.widget_id)
 
@@ -169,7 +169,7 @@ string `ref` on the class and address it with `from_ref("ref.operation", ...)`:
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, JSONResponse, Link, Resource
+from jero import BaseApp, BaseEndpoint, JSONResponse, Link, BaseResource
 
 
 class Job(Struct):
@@ -180,12 +180,12 @@ class JobPath(Struct):
     job_id: str
 
 
-class JobsResource(Resource, path="/jobs", ref="jobs"):
+class JobsResource(BaseResource, path="/jobs", ref="jobs"):
     async def read_one(self, path: JobPath) -> Job:
         return Job(id=path.job_id)
 
 
-class JobLinkEndpoint(Endpoint, path="/job-link"):
+class JobLinkEndpoint(BaseEndpoint, path="/job-link"):
     # Imagine this lives in a module that can't import JobsResource without a cycle.
     async def get(self) -> JSONResponse[Job]:
         return JSONResponse(

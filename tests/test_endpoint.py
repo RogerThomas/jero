@@ -1,8 +1,8 @@
-"""The Endpoint primitive: bare HTTP verbs, no CRUD semantics."""
+"""The BaseEndpoint primitive: bare HTTP verbs, no CRUD semantics."""
 
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, TestClient
+from jero import BaseApp, BaseEndpoint, TestClient
 
 
 def test_endpoint_get(client: TestClient) -> None:
@@ -18,7 +18,7 @@ class Ack(Struct):
     ok: bool
 
 
-class Pinger(Endpoint, path="/ping"):
+class Pinger(BaseEndpoint, path="/ping"):
     """Sample endpoint that answers POST with an acknowledgement."""
 
     async def post(self) -> Ack:

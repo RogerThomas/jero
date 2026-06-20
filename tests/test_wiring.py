@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import pytest
 from msgspec import Struct
 
-from jero import Auth, BaseApp, Endpoint, Resource, TestClient
+from jero import Auth, BaseApp, BaseEndpoint, BaseResource, TestClient
 
 
 class P(Struct):
@@ -25,7 +25,7 @@ class ItemPath(Struct):
 
 
 class _ResourceApp(BaseApp):
-    def __init__(self, resource: Resource) -> None:
+    def __init__(self, resource: BaseResource) -> None:
         self._resource = resource
         super().__init__()
 
@@ -34,7 +34,7 @@ class _ResourceApp(BaseApp):
 
 
 class _EndpointApp(BaseApp):
-    def __init__(self, endpoint: Endpoint) -> None:
+    def __init__(self, endpoint: BaseEndpoint) -> None:
         self._endpoint = endpoint
         super().__init__()
 
@@ -42,60 +42,60 @@ class _EndpointApp(BaseApp):
         self._include_endpoint(self._endpoint)
 
 
-class BadArgResource(Resource, path="/x"):
-    """Resource whose handler uses an unsupported argument name."""
+class BadArgResource(BaseResource, path="/x"):
+    """BaseResource whose handler uses an unsupported argument name."""
 
     async def create(self, body: P) -> P:  # 'body' is not a supported source name
         """Handler with an invalid 'body' source argument."""
         return body
 
 
-class BodyOnGetResource(Resource, path="/x"):
-    """Resource whose GET handler illegally declares a body source."""
+class BodyOnGetResource(BaseResource, path="/x"):
+    """BaseResource whose GET handler illegally declares a body source."""
 
     async def read_one(self, json: P) -> P:  # GET handlers cannot take a body
         """GET handler that illegally requests a JSON body."""
         return json
 
 
-class NonStructReturnResource(Resource, path="/x"):
-    """Resource whose handler declares an unsupported return type."""
+class NonStructReturnResource(BaseResource, path="/x"):
+    """BaseResource whose handler declares an unsupported return type."""
 
     async def read_many(self) -> int:  # must return a Struct / list[Struct] / bytes / Response
         """Handler returning an unsupported plain int type."""
         return 0
 
 
-class ExactPathEndpoint(Endpoint, path="/x"):
-    """Endpoint that illegally declares a path slot for an exact path."""
+class ExactPathEndpoint(BaseEndpoint, path="/x"):
+    """BaseEndpoint that illegally declares a path slot for an exact path."""
 
     async def get(self, path: ItemPath) -> P:  # /x has no {id} slot; endpoint paths are exact
         """GET handler requesting a path slot that the exact path lacks."""
         return P(name=path.id)
 
 
-class BadRawHeadersResource(Resource, path="/x"):
-    """Resource whose raw_headers argument has the wrong annotation."""
+class BadRawHeadersResource(BaseResource, path="/x"):
+    """BaseResource whose raw_headers argument has the wrong annotation."""
 
     async def read_many(self, raw_headers: dict[str, str]) -> P:  # must be RawHeaders
         """Handler annotating raw_headers as something other than RawHeaders."""
         return P(name=raw_headers["name"])
 
 
-class EmptyResource(Resource, path="/x"):
-    """Resource defining none of the CRUD methods."""
+class EmptyResource(BaseResource, path="/x"):
+    """BaseResource defining none of the CRUD methods."""
 
 
-class BadContentResource(Resource, path="/x"):
-    """Resource whose 'content' argument is not annotated as bytes."""
+class BadContentResource(BaseResource, path="/x"):
+    """BaseResource whose 'content' argument is not annotated as bytes."""
 
     async def create(self, content: str) -> P:  # 'content' must be bytes
         """Handler annotating the raw body as str instead of bytes."""
         return P(name=content)
 
 
-class BadHeadersResource(Resource, path="/x"):
-    """Resource whose 'headers' argument is not a msgspec Struct."""
+class BadHeadersResource(BaseResource, path="/x"):
+    """BaseResource whose 'headers' argument is not a msgspec Struct."""
 
     async def read_many(self, headers: int) -> P:  # must be a Struct
         """Handler annotating headers as a non-Struct type."""
@@ -167,23 +167,23 @@ class ReadManyMixin:
         return P(name="name")
 
 
-class _NoSlashMount(ReadManyMixin, Resource, path="x"):
+class _NoSlashMount(ReadManyMixin, BaseResource, path="x"):
     """ReadManyMixin at a path without a leading slash."""
 
 
-class _BadSlotMount(ReadManyMixin, Resource, path="/x/{1bad}"):
+class _BadSlotMount(ReadManyMixin, BaseResource, path="/x/{1bad}"):
     """ReadManyMixin at a path with a non-identifier slot."""
 
 
-class _DupSlotMount(ReadManyMixin, Resource, path="/x/{id}/{id}"):
+class _DupSlotMount(ReadManyMixin, BaseResource, path="/x/{id}/{id}"):
     """ReadManyMixin at a path with a duplicate slot."""
 
 
-class _UnbalancedMount(ReadManyMixin, Resource, path="/x/{id"):
+class _UnbalancedMount(ReadManyMixin, BaseResource, path="/x/{id"):
     """ReadManyMixin at a path with an unbalanced brace."""
 
 
-class _UncoveredSlotMount(ReadManyMixin, Resource, path="/x/{id}"):
+class _UncoveredSlotMount(ReadManyMixin, BaseResource, path="/x/{id}"):
     """ReadManyMixin at a templated path with no covering 'path' Struct."""
 
 
@@ -193,8 +193,8 @@ class DefaultedPath(Struct):
     id: str = "id"
 
 
-class DefaultedPathResource(Resource, path="/x/{id}"):
-    """Resource whose path Struct field has a default."""
+class DefaultedPathResource(BaseResource, path="/x/{id}"):
+    """BaseResource whose path Struct field has a default."""
 
     async def read_one(self, path: DefaultedPath) -> P:
         """Item handler with a defaulted path field."""
@@ -207,16 +207,16 @@ class OtherPath(Struct):
     other: str
 
 
-class MissingSlotResource(Resource, path="/x/{id}"):
-    """Resource whose path Struct omits a template slot."""
+class MissingSlotResource(BaseResource, path="/x/{id}"):
+    """BaseResource whose path Struct omits a template slot."""
 
     async def read_one(self, path: OtherPath) -> P:
         """Item handler whose path Struct is missing the {id} slot."""
         return P(name=path.other)
 
 
-class TrailingReadMany(Resource, path="/x"):
-    """Resource whose read_many declares a trailing path field."""
+class TrailingReadMany(BaseResource, path="/x"):
+    """BaseResource whose read_many declares a trailing path field."""
 
     async def read_many(self, path: ItemPath) -> P:
         """Collection handler that illegally tries to extend the mount path."""
@@ -296,16 +296,16 @@ class GoodAuth:
         return User(id="id")
 
 
-class UserWithoutAuthResource(Resource, path="/x"):
-    """Resource declaring 'user' but wired without any auth."""
+class UserWithoutAuthResource(BaseResource, path="/x"):
+    """BaseResource declaring 'user' but wired without any auth."""
 
     async def read_many(self, user: User) -> User:
         """Handler requesting the auth result where no auth is configured."""
         return user
 
 
-class UserMismatchResource(Resource, path="/x"):
-    """Resource whose 'user' type disagrees with the authenticator's return."""
+class UserMismatchResource(BaseResource, path="/x"):
+    """BaseResource whose 'user' type disagrees with the authenticator's return."""
 
     async def read_many(self, user: Other) -> Other:
         """Handler annotating 'user' as a type the auth doesn't return."""
@@ -313,7 +313,7 @@ class UserMismatchResource(Resource, path="/x"):
 
 
 class _AuthApp(BaseApp):
-    def __init__(self, resource: Resource, auth: Auth[Creds, User] | None = None) -> None:
+    def __init__(self, resource: BaseResource, auth: Auth[Creds, User] | None = None) -> None:
         self._resource = resource
         self._auth = auth
         super().__init__()
@@ -337,7 +337,7 @@ def test_user_type_mismatch_with_auth() -> None:
 # --- Duplicate route registration ---
 
 
-class FirstEndpoint(Endpoint, path="/dup"):
+class FirstEndpoint(BaseEndpoint, path="/dup"):
     """An endpoint at a shared path."""
 
     async def get(self) -> P:
@@ -345,7 +345,7 @@ class FirstEndpoint(Endpoint, path="/dup"):
         return P(name="first")
 
 
-class SecondEndpoint(Endpoint, path="/dup"):
+class SecondEndpoint(BaseEndpoint, path="/dup"):
     """A second endpoint colliding on the same method and path."""
 
     async def get(self) -> P:

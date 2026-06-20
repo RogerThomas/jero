@@ -7,7 +7,7 @@ import pytest
 from msgspec import Struct
 from msgspec.json import encode as json_encode
 
-from jero import BaseApp, Endpoint, FilePart, FormPart, Resource, TestClient
+from jero import BaseApp, BaseEndpoint, BaseResource, FilePart, FormPart, TestClient
 
 
 class Camel(Struct, rename="camel"):
@@ -86,8 +86,8 @@ class HeaderResult(Camel):
     blob_extra_values: list[str]
 
 
-class UploadEndpoint(Endpoint, path="/jobs"):
-    """Endpoint binding a form with every part kind."""
+class UploadEndpoint(BaseEndpoint, path="/jobs"):
+    """BaseEndpoint binding a form with every part kind."""
 
     async def post(self, form: CreateJob) -> JobAccepted:
         """Echo back the bound parts of the job form."""
@@ -114,16 +114,16 @@ class ParamsOnlyForm(Camel):
     params: JobConfig
 
 
-class ParamsOnlyEndpoint(Endpoint, path="/params"):
-    """Endpoint binding a form with only a bare-Struct part."""
+class ParamsOnlyEndpoint(BaseEndpoint, path="/params"):
+    """BaseEndpoint binding a form with only a bare-Struct part."""
 
     async def post(self, form: ParamsOnlyForm) -> JobConfig:
         """Echo back the bound params part."""
         return form.params
 
 
-class HeadersEndpoint(Endpoint, path="/headers"):
-    """Endpoint binding a form whose parts carry typed headers."""
+class HeadersEndpoint(BaseEndpoint, path="/headers"):
+    """BaseEndpoint binding a form whose parts carry typed headers."""
 
     async def post(self, form: HeaderForm) -> HeaderResult:
         """Echo back typed, default, and raw part headers."""
@@ -149,8 +149,8 @@ class UploadApp(BaseApp):
         self._include_endpoint(HeadersEndpoint())
 
 
-class BodyOnPostResource(Resource, path="/x"):
-    """Resource illegally declaring both 'json' and 'form' on one handler."""
+class BodyOnPostResource(BaseResource, path="/x"):
+    """BaseResource illegally declaring both 'json' and 'form' on one handler."""
 
     async def create(self, json: JobConfig, form: CreateJob) -> JobConfig:
         """Never runs — declaring both body sources fails wiring."""
@@ -159,8 +159,8 @@ class BodyOnPostResource(Resource, path="/x"):
         return json
 
 
-class BodyOnGetResource(Resource, path="/x"):
-    """Resource illegally taking a 'form' on a bodyless GET handler."""
+class BodyOnGetResource(BaseResource, path="/x"):
+    """BaseResource illegally taking a 'form' on a bodyless GET handler."""
 
     async def read_many(self, form: CreateJob) -> JobAccepted:
         """Never runs — a GET handler cannot take a body source."""
@@ -187,8 +187,8 @@ class UnsupportedForm(Camel):
     values: dict[str, str]
 
 
-class UnsupportedFormResource(Resource, path="/x"):
-    """Resource whose form field type is not a valid part payload."""
+class UnsupportedFormResource(BaseResource, path="/x"):
+    """BaseResource whose form field type is not a valid part payload."""
 
     async def create(self, form: UnsupportedForm) -> JobConfig:
         """Never runs — the unsupported field type fails wiring."""
@@ -200,7 +200,7 @@ class UnsupportedFormResource(Resource, path="/x"):
 class ResourceApp(BaseApp):
     """App wiring a single supplied resource at /x."""
 
-    def __init__(self, resource: Resource) -> None:
+    def __init__(self, resource: BaseResource) -> None:
         self._resource = resource
         super().__init__()
 

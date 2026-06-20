@@ -6,11 +6,11 @@ import types
 
 import pytest
 
-from jero import Endpoint, EndpointMeta, OperationMeta, Resource, ResourceMeta, WiringError
+from jero import BaseEndpoint, BaseResource, EndpointMeta, OperationMeta, ResourceMeta, WiringError
 
 
 class ThingsEndpoint(
-    Endpoint,
+    BaseEndpoint,
     path="/things",
     meta=EndpointMeta(tags=["things"]),
     meta_get=OperationMeta(tags=["unsafe"], operation_id="getThing"),
@@ -27,7 +27,7 @@ class ThingsEndpoint(
 
 
 class WidgetsResource(
-    Resource,
+    BaseResource,
     path="/widgets",
     meta=ResourceMeta(tags=["widgets"]),
     meta_create=OperationMeta(operation_id="createWidget"),
@@ -65,17 +65,17 @@ def test_path_still_resolves_alongside_meta() -> None:
 
 
 def test_endpoint_rejects_resource_meta() -> None:
-    """Endpoint rejects ResourceMeta type."""
+    """BaseEndpoint rejects ResourceMeta type."""
     # new_class with a kwds dict exercises the *runtime* guard (pyright's static kwarg
     # check already forbids the wrong type at the call site).
     with pytest.raises(WiringError, match="meta must be EndpointMeta"):
-        types.new_class("_Bad", (Endpoint,), {"path": "/x", "meta": ResourceMeta()})
+        types.new_class("_Bad", (BaseEndpoint,), {"path": "/x", "meta": ResourceMeta()})
 
 
 def test_resource_rejects_endpoint_meta() -> None:
-    """Resource rejects EndpointMeta type."""
+    """BaseResource rejects EndpointMeta type."""
     with pytest.raises(WiringError, match="meta must be ResourceMeta"):
-        types.new_class("_Bad", (Resource,), {"path": "/x", "meta": EndpointMeta()})
+        types.new_class("_Bad", (BaseResource,), {"path": "/x", "meta": EndpointMeta()})
 
 
 def test_operation_id_is_operation_only() -> None:

@@ -1,4 +1,4 @@
-"""CRUD verbs on a Resource: route -> bind -> delegate to the service."""
+"""CRUD verbs on a BaseResource: route -> bind -> delegate to the service."""
 
 from unittest.mock import MagicMock
 

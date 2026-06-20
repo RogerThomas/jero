@@ -13,7 +13,7 @@ msgspec-first ASGI framework for typed JSON APIs.
 
 | Area | jero | FastAPI | BlackSheep | Litestar |
 | ---- | ---- | ------- | ---------- | -------- |
-| Route style | Class-based `Resource` / `Endpoint` | Decorator functions | Decorators and controller-style APIs | Decorators and controller-style APIs |
+| Route style | Class-based `BaseResource` / `BaseEndpoint` | Decorator functions | Decorators and controller-style APIs | Decorators and controller-style APIs |
 | REST resources | First-class CRUD method names | User-defined routes | User-defined routes/controllers | User-defined routes/controllers |
 | Dependency model | Constructor wiring in `_wire`; no DI container | Dependency injection system | Framework services / injection features | Dependency injection system |
 | Validation model | msgspec `Struct`s | Pydantic / typing based | Framework validation options | Pydantic, msgspec, attrs, dataclasses, and others |
@@ -45,7 +45,7 @@ async def read_widget(widget_id: str) -> Widget:
 jero uses classes and method names:
 
 ```python
-class WidgetResource(Resource, path="/widgets"):
+class WidgetResource(BaseResource, path="/widgets"):
     async def read_one(self, path: WidgetPath) -> Widget:
         ...
 ```
@@ -85,7 +85,7 @@ multiple validation backends and gives teams a lot of ways to model an applicati
 
 jero goes in the opposite direction. It intentionally avoids supporting many equivalent
 styles. There is one body model: `Struct`. There is one routing shape for REST
-collections: `Resource`. There is one dependency story: construct objects and pass them
+collections: `BaseResource`. There is one dependency story: construct objects and pass them
 in. There is one lifecycle mechanism: enter resources on the app's stacks.
 
 Choose Litestar when you want a production framework with a broad feature set and more

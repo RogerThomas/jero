@@ -9,7 +9,7 @@ from typing import Literal
 
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, FilePart, FormPart
+from jero import BaseApp, BaseEndpoint, FilePart, FormPart
 
 
 class JobConfig(Struct):
@@ -30,7 +30,7 @@ class JobAccepted(Struct):
     size: int
 
 
-class UploadEndpoint(Endpoint, path="/jobs"):
+class UploadEndpoint(BaseEndpoint, path="/jobs"):
     async def post(self, form: CreateJob) -> JobAccepted:
         dpi = form.config.dpi
         upload = form.document            # a FilePart
