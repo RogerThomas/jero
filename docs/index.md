@@ -5,7 +5,7 @@
   </a>
 </p>
 
-<p align="center"><strong>A msgspec-first <a href="https://asgi.readthedocs.io/en/latest/">ASGI</a> micro-framework for Python 3.14.</strong></p>
+<p align="center"><strong>A msgspec-first ASGI micro-framework for Python 3.14.</strong></p>
 
 ---
 
@@ -15,7 +15,7 @@ uv add jero
 
 ## What is jero?
 
-jero is a msgspec-first [ASGI](https://asgi.readthedocs.io/en/latest/) framework where your type hints are the API contract.
+jero is an AI-powered ([a note on AI usage](note-on-ai-usage.md)), [msgspec](https://msgspec.dev/)-first [ASGI](https://asgi.readthedocs.io/en/latest/) framework where your type hints are the API contract.
 Routing, binding, validation, serialization, auth checks, and the coming OpenAPI
 generation all derive from statically declared types, while the request path stays
 close to raw msgspec performance: route lookup → decode → call → encode.
@@ -26,7 +26,7 @@ name *is* the HTTP operation, and dependencies are ordinary constructor argument
 wire by hand.
 
 Almost everything that flows in and out of jero is a
-[msgspec](https://msgspec.dev/) `Struct`: request and response bodies,
+msgspec `Struct`: request and response bodies,
 headers, path params, query params, and multipart forms alike. You don't pass or return
 raw `dict`s; the `Struct` is what gives jero validation, serialization, precise startup
 checks, future

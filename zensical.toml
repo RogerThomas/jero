@@ -29,6 +29,7 @@ nav = [
     { "Comparison" = "comparison.md" },
     { "Performance" = "performance.md" },
     { "API Reference" = "modules.md" },
+    { "AI usage" = "note-on-ai-usage.md" },
 ]
 
 [project.plugins.mkdocstrings.handlers.python]
