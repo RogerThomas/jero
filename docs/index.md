@@ -1,5 +1,8 @@
 <p align="center">
-  <a href="."><img src="assets/jero-logo.png" alt="jero" width="440"></a>
+  <a href=".">
+    <img src="assets/jero-logo-light.png#only-light" alt="jero" width="440">
+    <img src="assets/jero-logo-dark.png#only-dark" alt="jero" width="440">
+  </a>
 </p>
 
 <p align="center"><strong>A msgspec-first <a href="https://asgi.readthedocs.io/en/latest/">ASGI</a> micro-framework for Python 3.14.</strong></p>
@@ -39,7 +42,7 @@ build on.
 | Principle          | What it means |
 | ------------------ | ------------- |
 | **Speed**          | Introspection happens once, at startup. The per-request path stays minimal and predictable. |
-| **Opinionated DX** | One blessed way to do each thing, encoded so you can't get it wrong. Contracts fail loud at startup with a precise `WiringError`, never quietly at runtime. |
+| **Opinionated&nbsp;DX** | One blessed way to do each thing, encoded so you can't get it wrong. Contracts fail loud at startup with a precise `WiringError`, never quietly at runtime. |
 | **Strict typing**  | Fully static under pyright-strict. Types are the contract, the validation source, and the source of the coming OpenAPI spec. |
 
 jero leans hard into modern Python typing: [PEP 695](https://peps.python.org/pep-0695) generics

@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/jero-logo.png" alt="jero" width="440">
+<img src="docs/assets/jero-logo-light.png" alt="jero" width="440">
 
 <p>
   <a href="https://pypi.org/project/jero/"><img src="https://img.shields.io/pypi/v/jero" alt="PyPI"></a>

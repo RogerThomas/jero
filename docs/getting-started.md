@@ -61,8 +61,7 @@ granian --interface asgi myapp:app
 ```
 
 ```bash
-curl localhost:8000/widgets/abc
-# {"id":"abc","name":"widget-name"}
+curl localhost:8000/widgets/abc # -> { "id": "abc", "name": "widget-name" }
 ```
 
 That's the whole loop: a `Struct` for the URL slots (`path`), a `Struct` for the
