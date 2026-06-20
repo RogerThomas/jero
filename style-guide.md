@@ -3,10 +3,6 @@
 > **Note**: This style guide is for esoteric, project-specific conventions that are **not** automatically enforced by tools like [Ruff](https://docs.astral.sh/ruff/) or [Pyright](https://github.com/microsoft/pyright).
 > It should be kept **minimal and focused**, and not attempt to duplicate or override existing linting/type-checking policies.
 
-> ⚠️ **Company-wide policy** recommends _against_ project-level style guides, in general:
-> [Nitro Engineering - Style Guide Recommendations](https://github.com/Nitro/engineering-documentation/blob/221d0de0498152c95c95a21614e3383daf028628/practices/code/styleguides.md?plain=1#L2)
-> However, for this project, we maintain this guide for a few nuanced cases that benefit from shared understanding.
-
 <!-- mdformat-toc start --slug=github --maxlevel=6 --minlevel=2 -->
 
 - [1. Prefer `@dataclass` for Class definitions](#1-prefer-dataclass-for-class-definitions)
@@ -164,7 +160,7 @@ Also, prefer inlining these simple test values directly at the call site rather 
 
 Private methods and functions (those prefixed with `_`) should be defined before the public methods that call them. This improves code readability by following a logical flow where dependencies are defined before their usage.
 
-Note: This differs from languages like Java where private methods are typically placed after public methods. PEP 8 doesn't specify ordering for private vs public methods, so this is a project-specific/Nitro convention for Python development.
+Note: This differs from languages like Java where private methods are typically placed after public methods. PEP 8 doesn't specify ordering for private vs public methods, so this is a project-specific convention for Python development.
 
 **Good**
 

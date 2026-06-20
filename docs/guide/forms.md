@@ -9,7 +9,7 @@ from typing import Literal
 
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, FilePart, FormPart, RawHeaders
+from jero import BaseApp, Endpoint, FilePart, FormPart
 
 
 class JobConfig(Struct):
@@ -94,8 +94,14 @@ class Upload(Struct):
     blob: FormPart[bytes, Checksum]
 ```
 
-`None` is the default when a part declares no typed headers. Use `raw_headers` when
-you need the part headers exactly as sent, including original casing or repeats.
+`None` is the default when a part declares no typed headers. Every part also exposes
+`raw_headers` — the part headers exactly as sent, including original casing and
+repeats — regardless of whether you typed them:
+
+```python
+digest = form.document.headers.x_checksum              # typed and validated
+repeats = form.blob.raw_headers.getlist("X-Checksum")  # exact, as sent
+```
 
 ## Error semantics
 
