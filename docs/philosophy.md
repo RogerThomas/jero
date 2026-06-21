@@ -128,8 +128,8 @@ route, binders, decoders, auth contract, response sender, and status behavior.
 ## Strictly typed, every checker
 
 jero's core source is strictly type-checked with [pyrefly](https://pyrefly.org). On top
-of that, the public-facing interface — everything exercised in jero's
-[test suite](guide/testing-approach.md), `./tests` — is checked with *every* major type
+of that, the public-facing interface, everything exercised in jero's
+[test suite](guide/testing-approach.md), `./tests`, is checked with *every* major type
 checker: [mypy](https://www.mypy-lang.org/), [ty](https://github.com/astral-sh/ty),
 [pyright](https://microsoft.github.io/pyright/), and [zuban](https://zubanls.com).
 
