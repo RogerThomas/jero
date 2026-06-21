@@ -126,7 +126,7 @@ no app required:
 Location.from_operation(WidgetResource.read_one, path=WrongPath(...))
 ```
 
-(A bare method reference can't carry the `path` type to pyright statically, so this is a
+(A bare method reference can't carry the `path` type to pyrefly statically, so this is a
 hard *runtime* check at construction — immediate, not deferred to a served request.)
 
 ## Behind a proxy (`X-Forwarded-*`)
@@ -204,7 +204,7 @@ app = App()
 ```
 
 The `ref` form trades away some safety, by design: the string can't carry the `params`
-type to pyright, so its type check is deferred to resolution rather than construction, and
+type to pyrefly, so its type check is deferred to resolution rather than construction, and
 a typo'd or unmounted ref surfaces when the response is sent rather than at startup. So
 **prefer `from_operation`** — reach for `ref` only to break a genuine import cycle (often,
 extracting the shared route into a module both import is cleaner still). Duplicate `ref`

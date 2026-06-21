@@ -1553,8 +1553,8 @@ async def _resolve_stream[T](
     except StopAsyncIteration:
         return outer, None, None
     if isinstance(first, AsyncIterable):
-        inner = aiter(cast("AsyncIterable[T]", first))
-        lifecycle = cast("AsyncIterator[AsyncIterable[T]]", outer)
+        inner = aiter(cast(AsyncIterable[T], first))
+        lifecycle = cast(AsyncIterator[AsyncIterable[T]], outer)
         return inner, None, lifecycle
     return outer, first, None
 

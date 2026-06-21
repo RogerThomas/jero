@@ -17,7 +17,7 @@ tasks:
       - uv run prek install
 
   check:
-    desc: 'Run code quality tools: lock check + prek (ruff, pyright, deptry, pylint)'
+    desc: 'Run code quality tools: lock check + prek (ruff, pyrefly, deptry, pylint)'
     cmds:
       - uv lock --locked
       - uv run prek run -a
@@ -30,9 +30,20 @@ tasks:
     desc: 'Run a single test in isolation. Usage: task test-one -- tests/test_streaming.py::test_x'
     cmd: '{{.PYTEST_RUN}} {{.CLI_ARGS}}'
 
-  pyright:
+  pyrefly:
     desc: Static type checking
-    cmd: uv run pyright
+    cmd: uv run pyrefly check
+
+  typecheck-tests:
+    desc: 'Type-check the public interface (./tests) with mypy, ty, pyright & zuban. Runs all, fails if any do. pyrefly is the primary project checker.'
+    cmd: |
+      set -u
+      rc=0
+      for tool in "mypy tests" "ty check tests" "pyright tests" "zuban check tests"; do
+        echo "──── uv run ${tool} ────"
+        uv run ${tool} || rc=1
+      done
+      exit ${rc}
 
   ruff:
     desc: Lint and auto-fix

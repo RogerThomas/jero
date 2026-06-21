@@ -6,7 +6,7 @@ The implementation of jero and its documentation (with the exception of this not
 
 > As a quick aside, the general approach employed has been an informal form of spec-driven design: a spec is provided, usually with a small code snippet illustrating the desired user-facing interface, which the agent then builds with a short human/agent feedback loop.
 >
-> In this world, tests take on even more importance than normal and, in jero, the tests have been purposefully written to target only the public/user-facing interface.
+> In this world, tests take on even more importance than normal and, in jero, the tests have been purposefully written to target only the [public/user-facing interface](guide/testing-approach.md).
 >
 > Then, if the comprehensive test suite passes, we can be confident that the user-facing behaviour is correct and AI is allowed some freedom, in terms of refactoring and the overall code it generates, within these confines.
 

@@ -125,6 +125,18 @@ Startup validation also protects the request path. All introspection happens onc
 during wiring. By the time a request arrives, the framework has already resolved the
 route, binders, decoders, auth contract, response sender, and status behavior.
 
+## Strictly typed, every checker
+
+jero's core source is strictly type-checked with [pyrefly](https://pyrefly.org). On top
+of that, the public-facing interface, everything exercised in jero's
+[test suite](guide/testing-approach.md), `./tests`, is checked with *every* major type
+checker: [mypy](https://www.mypy-lang.org/), [ty](https://github.com/astral-sh/ty),
+[pyright](https://microsoft.github.io/pyright/), and [zuban](https://zubanls.com).
+
+This is the best of both worlds. The project picks a single fast checker for its own
+source, and at the same time guarantees that, whatever your favourite type checker is,
+jero's public API is fully supported and type-checks cleanly under it.
+
 ## Class-based resources
 
 Class-based resources are the center of jero's routing model because they give the API

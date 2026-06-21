@@ -24,6 +24,7 @@ nav = [
         { "Authentication" = "guide/auth.md" },
         { "Wiring & lifecycle" = "guide/wiring.md" },
         { "Testing" = "guide/testing.md" },
+        { "Testing approach" = "guide/testing-approach.md" },
         { "REST & error semantics" = "guide/rest.md" },
     ] },
     { "Comparison" = "comparison.md" },
