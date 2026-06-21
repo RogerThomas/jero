@@ -81,4 +81,4 @@ class RawHeaders:
         return f"RawHeaders({self._pairs!r})"
 
 
-Mapping.register(RawHeaders)  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+Mapping.register(RawHeaders)  # pyrefly: ignore[missing-attribute]  #  pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]

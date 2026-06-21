@@ -43,7 +43,7 @@ build on.
 | ------------------ | ------------- |
 | **Speed**          | Introspection happens once, at startup. The per-request path stays minimal and predictable. |
 | **Opinionated&nbsp;DX** | One blessed way to do each thing, encoded so you can't get it wrong. Contracts fail loud at startup with a precise `WiringError`, never quietly at runtime. |
-| **Strict typing**  | Fully static under pyright-strict. Types are the contract, the validation source, and the source of the coming OpenAPI spec. |
+| **Strict typing**  | Fully static under pyrefly, with the public interface checked by every major type checker. Types are the contract, the validation source, and the source of the coming OpenAPI spec. |
 
 jero leans hard into modern Python typing: [PEP 695](https://peps.python.org/pep-0695) generics
 (`JSONResponse[Body, Headers]`, `BaseApp[Factory]`,

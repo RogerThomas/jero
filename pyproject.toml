@@ -25,6 +25,9 @@ Homepage = "https://RogerThomas.github.io/jero/"
 Repository = "https://github.com/RogerThomas/jero"
 Documentation = "https://RogerThomas.github.io/jero/"
 
+[[tool.pyrefly.sub-config]]
+matches = "tests"
+
 [dependency-groups]
 dev = [
     "deptry>=0.24.0",
@@ -41,6 +44,10 @@ dev = [
     "ruff>=0.15.16",
     "yeetr>=2026.6.13",
     "zensical>=0.0.26",
+    "pyrefly>=1.1.1",
+    "ty>=0.0.51",
+    "zuban>=0.8.2",
+    "mypy>=2.1.0",
 ]
 
 [build-system]
@@ -174,3 +181,13 @@ typevar-rgx = "^_?[A-Z][a-zA-Z0-9]*$"
 
 [tool.pylint.format]
 max-module-lines = 2500
+
+[tool.pyrefly]
+project-excludes = [
+    "./.venv",
+    "scratch_pad.py",
+    "tmp.py",
+    "app",
+]
+python-version = "3.14.0"
+infer-with-first-use = false
