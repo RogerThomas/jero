@@ -134,7 +134,7 @@ checker: [mypy](https://www.mypy-lang.org/), [ty](https://github.com/astral-sh/t
 [pyright](https://microsoft.github.io/pyright/), and [zuban](https://zubanls.com).
 
 This is the best of both worlds. The project picks a single fast checker for its own
-source, and at the same time guarantees that — whatever your favourite type checker is —
+source, and at the same time guarantees that, whatever your favourite type checker is,
 jero's public API is fully supported and type-checks cleanly under it.
 
 ## Class-based resources
