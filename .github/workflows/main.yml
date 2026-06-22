@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - uses: actions/cache@v5
         with:
@@ -38,7 +38,7 @@ jobs:
         shell: bash
     steps:
       - name: Check out
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up the environment
         uses: ./.github/actions/setup-python-env
@@ -71,7 +71,7 @@ jobs:
         checker: [mypy, ty, pyright, zuban]
     steps:
       - name: Check out
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up the environment
         uses: ./.github/actions/setup-python-env
@@ -89,7 +89,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up the environment
         uses: ./.github/actions/setup-python-env
