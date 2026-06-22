@@ -2,7 +2,7 @@
 
 ## jero
 
-An opinionated, msgspec-first ASGI web framework (Python 3.14). The goal is a
+An opinionated, msgspec-first ASGI web framework (Python 3.13+). The goal is a
 framework that is **both** very fast **and** a joy to build on — achieved by
 being aggressively opinionated rather than flexible.
 
@@ -62,8 +62,13 @@ These pull against each other constantly; keep all three in mind on every change
   "obviously fine" cases.
 - For framework-level / design changes, **discuss the design first** — don't just
   implement. Give options + a recommendation, then build once decided.
+- **Keep this file current.** After any relatively sizable change — a new feature,
+  a changed convention, a dependency or supported-version bump, a repo-layout move —
+  update `AGENTS.md` in the same change so it never drifts from how the project
+  actually works.
 - **Testing stance:** tests run only through the public boundary — `TestClient`
-  against demo apps in `tests/`. **Do not unit-test `jero/` internals directly**;
+  against the `demo_app/` package (the single source of truth; some tests build
+  small local apps for focused cases). **Do not unit-test `jero/` internals directly**;
   they're covered transitively. This is deliberate (style-guide rule 7, and it
   lets the internals be refactored freely — which they are, often). Don't "fix"
   the absence of internal tests. Revisit only once the internals stabilize
@@ -177,8 +182,13 @@ These pull against each other constantly; keep all three in mind on every change
   un-underscored boundary-crosser `encode_sse`).
 - Runtime deps are intentionally sparse: `msgspec` for typed validation/JSON and
   `python-multipart` for buffered `multipart/form-data` parsing.
-- `tests/` — pytest suite driven through `TestClient` against demo apps in
-  `tests/demo_app.py`.
+- `demo_app/` — a complete, project-structured example app (`config`, `models`,
+  `auth`, `services/`, `operations/`, `factory`, `app`). It is the **single source of
+  truth**: the worked example in the docs, the app the test suite runs against, and a
+  typed consumer of the public API that every type checker validates. Keep it working
+  and bounded (it demonstrates the shape; resist turning it into a feature dumping ground).
+- `tests/` — pytest suite driven through `TestClient` against `demo_app/` (plus small
+  local apps for focused cases).
 - `plans/` — design plans for not-yet-built features (e.g. `streaming.md`,
   `forms.md`, and `cookies.md` — fully designed, all decisions locked), staged for
   review before implementation.
@@ -188,7 +198,8 @@ These pull against each other constantly; keep all three in mind on every change
   record. A fix isn't done until it has a regression test. **Never delete a bug note
   that already exists** — when its bug is fixed, flip its row to `Done` in the manifest
   and update the Open/Done counts rather than removing it.
-- Demo apps and the competitor/benchmark harness live in a **separate repo**, not here.
+- The competitor/benchmark harness lives in a **separate repo**, not here. (The
+  framework's own example app, `demo_app/`, *is* in this repo — see above.)
 
 ## Status & sharp edges
 
