@@ -48,6 +48,7 @@ dev = [
     "ty>=0.0.51",
     "zuban>=0.8.2",
     "mypy>=2.1.0",
+    "openai>=2.43.0",
 ]
 
 [build-system]

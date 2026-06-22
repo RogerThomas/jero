@@ -9,6 +9,7 @@ only the I/O services and leaves auth intact.
 from demo_app.auth import TokenAuth
 from demo_app.factory import Factory
 from demo_app.models import User
+from demo_app.operations.streaming_operations import NotificationsEndpoint, QuestionsEndpoint
 from demo_app.operations.system_operations import (
     FeaturedWidgetEndpoint,
     HealthEndpoint,
@@ -25,19 +26,22 @@ class DemoApp(BaseApp[Factory]):
 
     async def _wire(self) -> None:
         """Build services from the factory, open the background queue, and wire the routes."""
-        widgets = await self._factory.create_widget_service()
-        analytics = await self._factory.create_analytics_service()
+        widgets_service = await self._factory.create_widget_service()
+        analytics_service = await self._factory.create_analytics_service()
+        questions_service = await self._factory.create_questions_service()
         # The queue is opened after the analytics service it dispatches to, so it drains
         # before that service would be torn down.
-        tasks = await self._aenter(BackgroundTasks(drain_timeout=1.0))
-        tasks.register(analytics.process)
+        background_tasks = await self._aenter(BackgroundTasks(drain_timeout=1.0))
+        background_tasks.register(analytics_service.process)
         auth = TokenAuth({"token": User(id="user-id", name="user-name")})
-        self._include_resource(WidgetResource(widgets, tasks), auth=auth)
+        self._include_resource(WidgetResource(widgets_service, background_tasks), auth=auth)
         self._include_endpoint(WhoAmIEndpoint(), auth=auth)
         self._include_endpoint(HealthEndpoint())
         self._include_endpoint(RawHealthEndpoint())
         self._include_endpoint(RawFormEndpoint())
         self._include_endpoint(FeaturedWidgetEndpoint())
+        self._include_endpoint(QuestionsEndpoint(questions_service))
+        self._include_endpoint(NotificationsEndpoint())
 
 
 app = DemoApp()

@@ -20,7 +20,9 @@ class Settings(Struct):
     """Base settings. Subclasses set the per-environment ``widget_base_url`` default."""
 
     widget_api_key: str
+    openai_api_key: str
     widget_base_url: str = "http://base-url"
+    openai_model: str = "gpt-4o-mini"
 
 
 class DevSettings(Settings):
@@ -39,4 +41,7 @@ def get_settings() -> Settings:
     """Select the environment's settings class and fill secrets from the environment."""
     env = os.environ["DEMO_WIDGET_APP_ENV"]
     settings_cls: type[Settings] = {"dev": DevSettings, "prod": ProdSettings}[env]
-    return settings_cls(widget_api_key=os.environ["DEMO_WIDGET_APP_API_KEY"])
+    return settings_cls(
+        widget_api_key=os.environ["DEMO_WIDGET_APP_API_KEY"],
+        openai_api_key=os.environ["OPENAI_API_KEY"],
+    )

@@ -1,5 +1,6 @@
 """Routing layer: the widgets resource and the standalone endpoints."""
 
+from demo_app.operations.streaming_operations import NotificationsEndpoint, QuestionsEndpoint
 from demo_app.operations.system_operations import (
     FeaturedWidgetEndpoint,
     HealthEndpoint,
@@ -12,6 +13,8 @@ from demo_app.operations.widgets_operations import WidgetResource
 __all__ = [
     "FeaturedWidgetEndpoint",
     "HealthEndpoint",
+    "NotificationsEndpoint",
+    "QuestionsEndpoint",
     "RawFormEndpoint",
     "RawHealthEndpoint",
     "WhoAmIEndpoint",

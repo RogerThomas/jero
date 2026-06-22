@@ -80,6 +80,24 @@ class Health(Camel):
     status: str
 
 
+class Question(Camel):
+    """Inbound question for the streaming answers endpoint."""
+
+    text: str
+
+
+class AnswerChunk(Camel):
+    """One streamed fragment of an answer (one NDJSON line)."""
+
+    text: str
+
+
+class Notification(Camel):
+    """A notification delivered over the Server-Sent Events feed."""
+
+    message: str
+
+
 class RawForm(Camel):
     """Multipart form whose part exposes raw part headers."""
 

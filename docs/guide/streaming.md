@@ -11,6 +11,12 @@ just like the [buffered responses](responses.md).
 | `NDJSONStreamingResponse[T]`     | `application/x-ndjson`  | one `T` Struct per line      |
 | `SSEResponse[T]`                 | `text/event-stream`     | Server-Sent Events (GET-only)|
 
+Two of these run for real in the
+[`demo_app/`](https://github.com/RogerThomas/jero/tree/main/demo_app) package: an NDJSON
+`/questions` endpoint that proxies the OpenAI streaming API (one answer chunk per line),
+and an SSE `/notifications` feed. Both live in
+`demo_app/operations/streaming_operations.py`.
+
 ## NDJSON
 
 Stream one JSON `Struct` per line — ideal for large result sets a client consumes
