@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.14"]
+        python-version: ["3.13", "3.14"]
       fail-fast: false
     defaults:
       run:
@@ -51,11 +51,14 @@ jobs:
       - name: Check typing
         run: uv run pyrefly check
 
+      # Upload from every matrix version so Codecov merges them: version-gated branches
+      # (the `sys.version_info` split in `instantiate_factory`) are each covered by the
+      # interpreter that actually runs them, and the union is fully covered.
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v7
-        if: ${{ matrix.python-version == '3.14' }}
         with:
           files: ./coverage.xml
+          flags: py${{ matrix.python-version }}
           fail_ci_if_error: true
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

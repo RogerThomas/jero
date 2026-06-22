@@ -5,7 +5,7 @@
   </a>
 </p>
 
-<p align="center"><strong>A msgspec-first ASGI micro-framework for Python 3.14.</strong></p>
+<p align="center"><strong>A msgspec-first ASGI micro-framework for Python 3.13+.</strong></p>
 
 ---
 

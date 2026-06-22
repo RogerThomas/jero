@@ -7,13 +7,8 @@ from typing import Any
 from msgspec import Struct
 
 from jero.codecs import msgspec_encoder
-from jero.headers import (
-    RawHeaders,  # noqa: TC001  # runtime-evaluated annotation (no future import)
-)
-from jero.links import (
-    Link,  # noqa: TC001  # runtime-evaluated annotation (no future import)
-    Location,  # noqa: TC001  # runtime-evaluated annotation (no future import)
-)
+from jero.headers import RawHeaders
+from jero.links import Link, Location
 
 type Source[T] = AsyncIterable[T] | AsyncGenerator[AsyncIterable[T]]
 

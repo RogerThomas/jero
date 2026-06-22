@@ -17,14 +17,11 @@ un-underscored package-internal boundary-crossers (``core`` resolves them), not 
 API — only ``Location`` / ``Link`` are exported from :mod:`jero`.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, get_type_hints
+from typing import Self, get_type_hints
 
 from msgspec import Struct
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-    from typing import Self
 
 
 @dataclass(frozen=True, slots=True)

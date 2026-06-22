@@ -6,7 +6,7 @@ the rest of jero imports these typed names and never touches ``multipart`` direc
 """
 
 from collections.abc import Callable, Iterable
-from io import BytesIO  # noqa: TC003  # runtime-evaluated annotation (no future import)
+from io import BytesIO
 from typing import Protocol, cast
 
 import multipart as _multipart  # pyright: ignore[reportMissingTypeStubs]
