@@ -2,8 +2,8 @@
 
 from unittest.mock import MagicMock
 
+from demo_app.models import Widget, WidgetIn, WidgetPatch
 from jero import TestClient
-from tests.demo_app import Widget, WidgetIn, WidgetPatch
 
 
 def test_create_returns_201_and_delegates(client: TestClient, widgets_mock: MagicMock) -> None:

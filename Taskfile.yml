@@ -35,11 +35,11 @@ tasks:
     cmd: uv run pyrefly check
 
   typecheck-tests:
-    desc: 'Type-check the public interface (./tests) with mypy, ty, pyright & zuban. Runs all, fails if any do. pyrefly is the primary project checker.'
+    desc: 'Type-check the public interface (./tests and ./demo_app) with mypy, ty, pyright & zuban. Runs all, fails if any do. pyrefly is the primary project checker.'
     cmd: |
       set -u
       rc=0
-      for tool in "mypy tests" "ty check tests" "pyright tests" "zuban check tests"; do
+      for tool in "mypy tests demo_app" "ty check tests demo_app" "pyright tests demo_app" "zuban check tests demo_app"; do
         echo "──── uv run ${tool} ────"
         uv run ${tool} || rc=1
       done
@@ -51,7 +51,7 @@ tasks:
 
   pylint:
     desc: Run pylint
-    cmd: uv run pylint jero tests
+    cmd: uv run pylint jero tests demo_app
 
   deptry:
     desc: Check for dependency issues

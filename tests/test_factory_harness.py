@@ -13,13 +13,17 @@ from typing import Self
 
 import pytest
 
+from demo_app import Factory, WidgetService
 from jero import BaseFactory, FactoryHarness
-from tests.demo_app import Factory, WidgetService
 
 
 @pytest.fixture(name="harness")
-def _harness() -> Generator[FactoryHarness[Factory]]:
-    """A FactoryHarness over the demo app's real Factory, torn down after the test."""
+def _harness(monkeypatch: pytest.MonkeyPatch) -> Generator[FactoryHarness[Factory]]:
+    """A FactoryHarness over the demo app's real Factory, torn down after the test.
+
+    The real factory reads settings from the environment, so the env is set here."""
+    monkeypatch.setenv("DEMO_WIDGET_APP_ENV", "dev")
+    monkeypatch.setenv("DEMO_WIDGET_APP_API_KEY", "api-key")
     with FactoryHarness(Factory) as harness:
         yield harness
 

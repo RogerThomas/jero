@@ -12,9 +12,11 @@ from typing import cast
 
 import pytest
 from msgspec import Struct
+from pytest_mock import MockerFixture
 
+from demo_app import AnalyticsService, DemoApp, Factory, WidgetService
+from demo_app.models import Widget
 from jero import BackgroundTasks, TestClient, WiringError
-from tests.demo_app import AnalyticsService, BackgroundDemoApp
 
 
 class Event(Struct):
@@ -191,11 +193,20 @@ async def test_unknown_item_type_is_logged_not_fatal(caplog: pytest.LogCaptureFi
     assert "no handler registered" in caplog.text
 
 
-def test_end_to_end_processes_through_the_app() -> None:
-    """Background tasks are drained and processed when app context closes."""
-    analytics = AnalyticsService(processed=[])
-    with TestClient(BackgroundDemoApp(analytics)) as client:
-        assert client.post("/events", json={"name": "event-name"}).status_code == 200
-        assert client.post("/events", json={"name": "other-name"}).status_code == 200
+def test_end_to_end_processes_through_the_app(mocker: MockerFixture) -> None:
+    """Creating a widget records an analytics event, drained when the app context closes."""
+    analytics_service = AnalyticsService(processed=[])
+    widgets_mock = mocker.create_autospec(WidgetService, spec_set=True, instance=True)
+    widgets_mock.create_widget.return_value = Widget(id="widget-id", name="name", price_cents=1)
+    factory = mocker.create_autospec(Factory, spec_set=True, instance=True)
+    factory.create_widget_service.return_value = widgets_mock
+    factory.create_analytics_service.return_value = analytics_service
+    with TestClient(DemoApp(factory=factory)) as client:
+        resp = client.post(
+            "/widgets",
+            json={"name": "name", "priceCents": 1},
+            headers={"authorization": "Bearer token"},
+        )
+        assert resp.status_code == 201
     # the client context closed the lifespan, draining the queue
-    assert analytics.processed == ["event-name", "other-name"]
+    assert analytics_service.processed == ["created:widget-id"]

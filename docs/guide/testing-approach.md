@@ -1,25 +1,43 @@
 # Testing approach
 
-jero's own test suite lives in `./tests`, and it is written deliberately against
-**only the public, user-facing interface** — the same surface you build on. The tests
-drive the app through its public API (the `TestClient`, the exported `Resource` /
-`Endpoint` / `BaseApp` types, and the documented binding and response contracts) and
-never reach into private internals.
+jero's test suite runs against **one shared application** — the
+[`demo_app/`](https://github.com/RogerThomas/jero/tree/main/demo_app) package — and that
+single app plays three roles at once:
 
-## Why only the public interface
+1. **Documentation.** It's the project-structured worked example the docs point to (see
+   the [complete example](complete-example.md)) — a real `config` / `models` / `services` /
+   `operations` / `factory` / `app` layout, not a throwaway snippet.
+2. **The integration-test fixture.** Most of the suite drives `demo_app` through the
+   `TestClient`, mocking only the I/O service layer via the public `factory=` seam. Tests
+   that need esoteric wiring (streaming, response kinds, wiring errors) still build their
+   own small apps locally.
+3. **A typed consumer of the public API.** Because `demo_app` uses jero exactly the way
+   you would, it is type-checked alongside `./tests` by every major type checker.
 
-- **Refactor freely.** Internals can be reshaped completely; as long as the public
-  contract still holds, the suite stays green. The tests pin *behaviour*, not
-  implementation detail.
-- **The suite is the contract.** A passing run means the user-facing behaviour is
-  correct — which is exactly the guarantee jero's users care about.
-- **One honest surface.** `./tests` is the canonical, executable record of what jero
-  promises. If a behaviour isn't exercised there, it isn't part of the contract.
+Keeping all three in one artifact is deliberate: it makes `demo_app` a **single source of
+truth** for what jero is and how it behaves.
 
-## A typed consumer of the public API
+## Test only the public interface
 
-Because `./tests` uses jero exactly the way you would, it doubles as a fully typed
-*consumer* of the public API. That is what lets jero type-check the entire public
-surface — see [Strictly typed, every checker](../philosophy.md#strictly-typed-every-checker) —
-with mypy, ty, pyright, and zuban in CI. If the public interface trips up any of them,
-it's caught before release.
+`demo_app` and the suite exercise **only the public, user-facing surface** — the
+`TestClient`, the exported `Resource` / `Endpoint` / `BaseApp` types, and the documented
+binding and response contracts. Nothing reaches into private internals.
+
+- **Refactor freely.** Internals can be reshaped entirely; as long as the public contract
+  holds, the suite stays green. The tests pin *behaviour*, not implementation detail.
+- **The suite is the contract.** A passing run means the user-facing behaviour is correct
+  — exactly the guarantee jero's users care about.
+
+## Why one source of truth pays off
+
+- **The docs can't drift from reality.** The example you read is the code the suite
+  executes — if it broke, CI would be red. No stale, copy-pasted snippets that quietly
+  rot out of date.
+- **Living, exhaustive coverage.** `demo_app` is run on every commit, so it can't rot;
+  every feature it demonstrates is a feature under test.
+- **Dogfooding.** Building and maintaining a realistic, structured app surfaces ergonomic
+  rough edges in jero's own API before users hit them.
+- **Type-checked from every angle.** As a typed consumer, `demo_app` and `./tests` are
+  checked by mypy, ty, pyright, and zuban (see
+  [Strictly typed, every checker](../philosophy.md#strictly-typed-every-checker)) — so the
+  public API is guaranteed to hold up under whichever type checker *you* use.

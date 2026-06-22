@@ -133,6 +133,9 @@ ignore = [
 # Tests assert (S101), and test handlers declare sources they don't read (ARG002);
 # keep typing imports inline for readability (TC).
 "tests/**" = ["S101", "TC001", "TC002", "TC003", "ARG002"]
+# The demo app is jero application code: handler params, resource fields, and Struct
+# fields are introspected at runtime, so their imports must stay runtime (not TC-gated).
+"demo_app/**" = ["TC001", "TC002", "TC003"]
 
 [tool.pyright]
 pythonVersion = "3.14"
@@ -142,7 +145,7 @@ typeCheckingMode = "strict"
 # and emits spurious "unknown import symbol" errors the CLI run never sees.
 venvPath = "."
 venv = "./.venv"
-exclude = ["./.venv", "scratch_pad.py", "tmp.py", "app"]
+exclude = ["./.venv", "scratch_pad.py", "tmp.py"]
 
 # pytest fixtures use the `_name`-function + `@pytest.fixture(name=...)` pattern, so
 # they read as unused to pyright (pytest injects them by string). Disable the check
@@ -153,8 +156,9 @@ extraPaths = ["."]
 reportUnusedFunction = "none"
 
 [tool.deptry]
-# Throwaway sketches/demo (kept for reuse, or to be deleted) — don't scan their imports.
-extend_exclude = ['scratch_pad\.py', 'tmp\.py', 'app/']
+# The demo app is dev/docs-only example code (not shipped) and uses dev dependencies
+# like niquests, so it isn't scanned for the package's dependency contract.
+extend_exclude = ['scratch_pad\.py', 'tmp\.py', 'demo_app/']
 
 [tool.pylint.main]
 # Throwaway sketches kept for reuse; don't lint them.
@@ -166,6 +170,9 @@ disable = [
     "R0912",
     "R0913",
     "R0914",
+    # duplicate-code is noisy across tests that share a setup shape (e.g. posting a
+    # widget through the client) — the similarity is intentional, not a refactor signal.
+    "R0801",
     # the `multipart` package ships no type stubs, so pylint can't see its
     # members — these are false positives (pyright already ignores them at source).
     "E1101", # no-member
@@ -176,6 +183,7 @@ disable = [
 ]
 
 [tool.pylint.basic]
+# Throwaway sketches/demo (kept for reuse, or to be deleted) — don't scan their imports.
 # jero uses descriptive PascalCase / single-cap TypeVars (THeaders, TUser, FactoryT).
 typevar-rgx = "^_?[A-Z][a-zA-Z0-9]*$"
 
@@ -183,11 +191,6 @@ typevar-rgx = "^_?[A-Z][a-zA-Z0-9]*$"
 max-module-lines = 2500
 
 [tool.pyrefly]
-project-excludes = [
-    "./.venv",
-    "scratch_pad.py",
-    "tmp.py",
-    "app",
-]
+project-excludes = ["./.venv", "scratch_pad.py", "tmp.py"]
 python-version = "3.14.0"
 infer-with-first-use = false

@@ -2,8 +2,8 @@
 
 from unittest.mock import MagicMock
 
+from demo_app.models import Widget
 from jero import TestClient
-from tests.demo_app import Widget
 
 
 def test_unknown_path_is_404(client: TestClient) -> None:
