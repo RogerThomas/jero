@@ -15,6 +15,8 @@ import os
 
 from msgspec import Struct
 
+__all__ = ["Settings", "get_settings"]
+
 
 class Settings(Struct):
     """Base settings. Subclasses set the per-environment ``widget_base_url`` default."""
