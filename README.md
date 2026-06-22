@@ -10,7 +10,7 @@
   <a href="https://github.com/RogerThomas/jero/blob/main/LICENSE"><img src="https://img.shields.io/pypi/l/jero" alt="License"></a>
 </p>
 
-**An opinionated, msgspec-first ASGI micro-framework for Python 3.14.**
+**An opinionated, msgspec-first ASGI micro-framework for Python 3.13+.**
 
 <br>
 <em>Engineered for performance from the ground up</em>

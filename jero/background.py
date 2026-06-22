@@ -13,14 +13,12 @@ import asyncio
 import contextlib
 import inspect
 import logging
-from typing import TYPE_CHECKING, Any, Self, get_type_hints
+from collections.abc import Awaitable, Callable
+from typing import Any, Self, get_type_hints
 
 from msgspec import Struct
 
 from jero.core import WiringError
-
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,6 @@
 # Getting started
 
-jero targets **Python 3.14** and runs under any ASGI server.
+jero targets **Python 3.13+** and runs under any ASGI server.
 
 ## Install
 
@@ -14,6 +14,23 @@ is a good default:
 ```bash
 uv add granian
 ```
+
+## Python version
+
+jero requires **Python 3.13 or newer**. Python 3.12 and earlier are not supported.
+
+The reason is generics. jero's response wrappers (and several other types) declare
+type-parameter *defaults*, like the optional typed-headers parameter `H`:
+
+```python
+class JSONResponse[T: Struct, H: Struct | None = None]: ...
+```
+
+The `= None` default on a type parameter is [PEP 696](https://peps.python.org/pep-0696/),
+which shipped in Python 3.13. The generic syntax itself
+([PEP 695](https://peps.python.org/pep-0695/)) arrived in 3.12, so 3.12 can parse
+`[T: Struct]` but not the `[H: Struct | None = None]` default. jero relies on those
+defaults throughout, so 3.13 is the floor.
 
 ## Your first app
 

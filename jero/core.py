@@ -41,8 +41,8 @@ import asyncio
 import contextlib
 import inspect
 import os
+import sys
 from abc import ABC, abstractmethod
-from annotationlib import Format
 from collections import defaultdict
 from collections.abc import (
     AsyncIterable,
@@ -62,7 +62,17 @@ from dataclasses import dataclass
 from enum import Enum
 from io import BytesIO
 from types import NoneType, UnionType, get_original_bases
-from typing import Any, ClassVar, Literal, Protocol, cast, get_args, get_origin, get_type_hints
+from typing import (
+    Any,
+    ClassVar,
+    Literal,
+    Protocol,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 from urllib.parse import parse_qsl, unquote
 
 from msgspec import DecodeError, Struct, ValidationError, convert, to_builtins
@@ -89,6 +99,12 @@ from jero.streaming import (
     StreamingResponse,
     encode_sse,
 )
+
+# annotationlib is 3.14+. On 3.14 inspect.signature evaluates annotations by default
+# (PEP 649), so instantiate_factory asks for the FORWARDREF format instead. Pre-3.14
+# signature never evaluates annotations, so the format argument isn't needed there.
+if sys.version_info >= (3, 14):
+    from annotationlib import Format
 
 type Scope = dict[str, Any]
 type Receive = Callable[[], Awaitable[dict[str, Any]]]
@@ -547,8 +563,10 @@ def _form_part_types(ann: object) -> tuple[object, object | None] | None:
 
 
 def _strip_optional(ann: object) -> tuple[object, bool]:
+    # `X | None` is a types.UnionType, but get_type_hints/msgspec may resolve the same
+    # annotation to typing.Optional (origin typing.Union) on older Pythons — accept both.
     origin = get_origin(ann)
-    if origin is not UnionType:
+    if origin is not UnionType and origin is not Union:
         return ann, False
     args = get_args(ann)
     if len(args) != 2 or not any(_is_none_type(arg) for arg in args):
@@ -1821,9 +1839,13 @@ def instantiate_factory[F](factory_cls: type[F], stack: ExitStack, astack: Async
     deliberately crosses the core/testing module boundary.
     """
     stacks = {"es": stack, "aes": astack}
-    # FORWARDREF: we only need parameter names, so don't evaluate the __init__
-    # annotations (they may reference TYPE_CHECKING-only imports).
-    params = inspect.signature(factory_cls, annotation_format=Format.FORWARDREF).parameters
+    # We only need parameter names, so don't evaluate the __init__ annotations (they may
+    # reference TYPE_CHECKING-only imports). On 3.14 that means asking signature for the
+    # FORWARDREF format; pre-3.14 signature never evaluates annotations to begin with.
+    if sys.version_info >= (3, 14):
+        params = inspect.signature(factory_cls, annotation_format=Format.FORWARDREF).parameters
+    else:
+        params = inspect.signature(factory_cls).parameters
     return factory_cls(**{name: s for name, s in stacks.items() if name in params})
 
 

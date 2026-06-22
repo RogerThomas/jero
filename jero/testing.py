@@ -19,18 +19,14 @@ import asyncio
 import contextlib
 import queue
 import threading
+from collections.abc import Callable, Coroutine, Sequence
 from contextlib import AsyncExitStack, ExitStack
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any, Self
 from urllib.parse import urlencode
 
 from jero.codecs import msgspec_decoder, msgspec_encoder
-from jero.core import BaseFactory, instantiate_factory
-
-if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Sequence
-
-    from jero.core import BaseApp
+from jero.core import BaseApp, BaseFactory, instantiate_factory
 
 type _DataValue = str | bytes
 type _DataValues = _DataValue | list[_DataValue]
@@ -194,7 +190,7 @@ class _StreamSession:
         with contextlib.suppress(Exception):
             self._submit(self._wait_task())
 
-    def __iter__(self) -> _StreamSession:
+    def __iter__(self) -> Self:
         return self
 
     def __next__(self) -> Any:
@@ -210,7 +206,7 @@ class _StreamSession:
             if body:
                 return self._decode(body)
 
-    def __enter__(self) -> _StreamSession:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -673,7 +669,7 @@ class TestClient:
         self._submit(self._stop_lifespan())
         self._loop_thread.close()
 
-    def __enter__(self) -> TestClient:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -718,7 +714,7 @@ class FactoryHarness[FactoryT: BaseFactory]:
         self._loop_thread.submit(self._close_stacks())
         self._loop_thread.close()
 
-    def __enter__(self) -> FactoryHarness[FactoryT]:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: object) -> None:
