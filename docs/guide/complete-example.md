@@ -145,3 +145,17 @@ Then call it with a bearer token:
 curl -H "Authorization: Bearer token" localhost:8000/widgets/widget-1
 # {"name":"first-widget","id":"widget-1","ownerId":"user-id"}
 ```
+
+## A project-structured version
+
+The example above is a single file so the whole shape is visible at a glance. For the
+same idea split into the layout a real app would use (`config`, `models`, `auth`,
+`services/`, `operations/`, `factory`, and `app` modules), see the
+[`demo_app/`](https://github.com/RogerThomas/jero/tree/main/demo_app) package in the
+repository. It's the widget app fleshed out with authentication, background analytics,
+reverse-routed links, health checks, and streaming (an OpenAI-backed NDJSON endpoint and
+a Server-Sent Events feed).
+
+`demo_app` is also the app the test suite runs against (see the
+[testing approach](testing-approach.md)), so it is always kept working, and as a typed
+consumer of the public API it is type-checked by every major type checker in CI.

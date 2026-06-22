@@ -14,7 +14,8 @@ the tradeoff pays for itself.
 
 ## No decorators
 
-Route decorators have become the accepted default in Python web frameworks:
+Route decorators are the common, well-understood default, and what most frameworks reach
+for:
 
 ```python
 @app.get("/widgets/{widget_id}")
@@ -22,37 +23,54 @@ async def read_widget(widget_id: str) -> Widget:
     ...
 ```
 
-That shape is familiar, but it has costs that are easy to ignore because everyone is
-used to them.
+It's a simple approach with a real merit: for a single handler, the path, the verb, and
+the function sit together and read cleanly. But it carries tradeoffs. They surface not
+in any one route, but in how a whole API is *organized*, and above all in how handlers
+get their dependencies.
 
-A decorator route puts framework registration on a function as a side effect of import.
-The function, path, HTTP verb, metadata, dependencies, and lifecycle story often spread
-across multiple places. As an application grows, related operations become a loose set
-of decorated functions that only look connected because they share a path prefix or live
-near each other in a module. The framework then has to recover structure from a pile of
-registered callables.
+A plain function carries no state of its own. With no `self` to hold the collaborators a
+handler depends on (a database pool, an HTTP client, a service, etc.), those dependencies have
+to be supplied some other way, and there are really only two options: reach for
+module-level singletons and globals (the Flask `current_app` / `g` / app-bound-extension
+pattern), or adopt a framework-specific dependency-injection system (for example
+FastAPI's [`Depends`](https://fastapi.tiangolo.com/tutorial/dependencies/) or Litestar's
+[`Provide`](https://docs.litestar.dev/latest/usage/dependency-injection.html)). Both
+exist to thread state into functions that can't hold it themselves.
 
-jero starts from the opposite direction. A route is a class. A REST collection is a
-`Resource`; a one-off route is an `Endpoint`. The path lives on the class, and method
-names carry the HTTP semantics:
+The grouping is loose for the same reason. The operations that belong together (create,
+read, list, update, delete on one collection) are separate functions that share a path
+prefix and a module; nothing *is* the collection. A router to group routes and a DI layer
+to feed them are, in large part, recovering what a plain class would give you for nothing.
+
+jero starts from that class. A route is a `Resource` for a REST collection, or an
+`Endpoint` for a one-off route. The path lives on the class and method names carry the
+HTTP semantics, while dependencies are ordinary constructor arguments:
 
 ```python
+@dataclass
 class WidgetResource(Resource, path="/widgets"):
+    _service: WidgetService
+
     async def read_one(self, path: WidgetPath) -> Widget:
-        ...
+        return await self._service.get_widget(path.widget_id)
 ```
 
-That gives the framework a stronger shape to validate at startup. It also gives the
-developer a better unit of design. A resource can have constructor dependencies. It can
-group the operations that belong together. It gives REST semantics a real home instead
-of spreading them across decorator calls. It makes it obvious where CRUD behavior lives,
-and it gives future features like generated links, `Location` headers, and OpenAPI
-metadata a stable object to attach to.
+Now the collection is one object. Its operations live together because they *are*
+together; its dependencies are passed to `__init__`, so there are no globals and no DI
+container to learn; and it's a stable thing the framework can attach to: a shape to
+validate at startup, the target for reverse-routed `Location` / `Link` headers, and the
+anchor for OpenAPI generation. jero doesn't give you a better dependency-injection
+system. It removes the need for one.
+
+None of this makes decorators wrong. They're lighter for a handful of one-off routes,
+and they're what most people reach for first. jero takes the other side of the trade:
+for a typed, REST-shaped JSON API, a class can serve as a better unit of design.
 
 ## No dependency injection container
 
-In the author's opinion, dependency injection containers are often needlessly
-complicated in Python web applications.
+As the previous section noted, decorator routing nudges you toward a dependency-injection
+system to feed standalone functions. jero needs none. In the author's opinion, those
+containers are often needlessly complicated in Python web applications.
 
 Python already has a dependency injection mechanism: constructors. Build an object and
 pass it the things it needs. That approach is explicit, type-checkable, easy to debug,
@@ -128,10 +146,11 @@ route, binders, decoders, auth contract, response sender, and status behavior.
 ## Strictly typed, every checker
 
 jero's core source is strictly type-checked with [pyrefly](https://pyrefly.org). On top
-of that, the public-facing interface, everything exercised in jero's
-[test suite](guide/testing-approach.md), `./tests`, is checked with *every* major type
-checker: [mypy](https://www.mypy-lang.org/), [ty](https://github.com/astral-sh/ty),
-[pyright](https://microsoft.github.io/pyright/), and [zuban](https://zubanls.com).
+of that, the public-facing interface is checked with *every* major type checker:
+[mypy](https://www.mypy-lang.org/), [ty](https://github.com/astral-sh/ty),
+[pyright](https://microsoft.github.io/pyright/), and [zuban](https://zubanls.com). That
+interface is everything jero's [test suite](guide/testing-approach.md) exercises: `./tests`
+and the shared `demo_app` it runs against.
 
 This is the best of both worlds. The project picks a single fast checker for its own
 source, and at the same time guarantees that, whatever your favourite type checker is,
@@ -139,17 +158,10 @@ jero's public API is fully supported and type-checks cleanly under it.
 
 ## Class-based resources
 
-Class-based resources are the center of jero's routing model because they give the API
-a natural unit of organization and a simple dependency story.
-
-A resource is a class with constructor arguments. That is the simplest form of
-dependency injection: build the service, pass it to the resource, include the resource.
-No container is needed.
-
-The resource method names also encode REST semantics. `create` is POST on the
-collection. `read_many` is GET on the collection. `read_one`, `update`,
-`partial_update`, and `delete` are item operations. The method table is small enough to
-learn quickly, and strict enough for the framework to enforce.
+Because a route is a class, the method *names* can carry the REST semantics directly.
+`create` is POST on the collection; `read_many` is GET on the collection; `read_one`,
+`update`, `partial_update`, and `delete` are the item operations. The table is small
+enough to learn quickly and strict enough for the framework to enforce at startup.
 
 The result is less freedom, but more shape. jero is comfortable with that tradeoff.
 

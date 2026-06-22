@@ -60,9 +60,10 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
-  # Type-check the public interface (./tests exercises jero's public API) with every
-  # major type checker. pyrefly is the project's primary checker (run in `quality`);
-  # this guards against the public surface tripping up any of the others. CI-only.
+  # Type-check the public interface (./tests and ./demo_app exercise jero's public API)
+  # with every major type checker. pyrefly is the project's primary checker (run in
+  # `quality`); this guards against the public surface tripping up any of the others.
+  # CI-only.
   type-check-public-interface:
     runs-on: ubuntu-latest
     strategy:
@@ -76,13 +77,13 @@ jobs:
       - name: Set up the environment
         uses: ./.github/actions/setup-python-env
 
-      - name: ${{ matrix.checker }} on the public interface (./tests)
+      - name: ${{ matrix.checker }} on the public interface (./tests, ./demo_app)
         run: |
           case "${{ matrix.checker }}" in
-            mypy)    uv run mypy tests ;;
-            ty)      uv run ty check tests ;;
-            pyright) uv run pyright tests ;;
-            zuban)   uv run zuban check tests ;;
+            mypy)    uv run mypy tests demo_app ;;
+            ty)      uv run ty check tests demo_app ;;
+            pyright) uv run pyright tests demo_app ;;
+            zuban)   uv run zuban check tests demo_app ;;
           esac
 
   check-docs:
