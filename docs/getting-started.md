@@ -30,7 +30,9 @@ The `= None` default on a type parameter is [PEP 696](https://peps.python.org/pe
 which shipped in Python 3.13. The generic syntax itself
 ([PEP 695](https://peps.python.org/pep-0695/)) arrived in 3.12, so 3.12 can parse
 `[T: Struct]` but not the `[H: Struct | None = None]` default. jero relies on those
-defaults throughout, so 3.13 is the floor.
+defaults throughout, so 3.13 is the current floor, and there are no current plans to
+lower it. If you have a need to run on an earlier version, please get in touch on
+[GitHub Discussions](https://github.com/RogerThomas/jero/discussions).
 
 ## Your first app
 
