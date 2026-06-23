@@ -50,6 +50,7 @@ dev = [
     "zuban>=0.8.2",
     "mypy>=2.1.0",
     "openai>=2.43.0",
+    "pydantic-settings>=2.14.2",
 ]
 
 [build-system]

@@ -12,10 +12,9 @@ The short version: jero gives you one framework answer to common API questions. 
 fight the framework. Trust the shape for a while, build something real, and see whether
 the tradeoff pays for itself.
 
-## No decorators
+## No decorators, no DI container
 
-Route decorators are the common, well-understood default, and what most frameworks reach
-for:
+Route decorators are the common default, and what most frameworks reach for:
 
 ```python
 @app.get("/widgets/{widget_id}")
@@ -23,28 +22,23 @@ async def read_widget(widget_id: str) -> Widget:
     ...
 ```
 
-It's a simple approach with a real merit: for a single handler, the path, the verb, and
-the function sit together and read cleanly. But it carries tradeoffs. They surface not
-in any one route, but in how a whole API is *organized*, and above all in how handlers
-get their dependencies.
+For a single handler this reads cleanly: path, verb, and function sit together. But it
+carries tradeoffs, and they surface not in any one route but across a whole API: in how
+operations are grouped, and above all in how handlers get their dependencies. A plain
+function carries no state, so with no `self` to hold what a
+handler depends on (a database pool, an HTTP client, a service), those dependencies must
+arrive some other way. There are only two: module-level globals (Flask's `current_app` /
+`g`), or a framework-specific dependency-injection system (FastAPI's
+[`Depends`](https://fastapi.tiangolo.com/tutorial/dependencies/), Litestar's
+[`Provide`](https://docs.litestar.dev/latest/usage/dependency-injection.html), to name but
+a few). Grouping
+is loose for the same reason: the operations on one collection are separate functions
+sharing a path prefix, but nothing *is* the collection. A router to group routes and a DI
+layer to feed them are largely recovering what a plain class gives for free.
 
-A plain function carries no state of its own. With no `self` to hold the collaborators a
-handler depends on (a database pool, an HTTP client, a service, etc.), those dependencies have
-to be supplied some other way, and there are really only two options: reach for
-module-level singletons and globals (the Flask `current_app` / `g` / app-bound-extension
-pattern), or adopt a framework-specific dependency-injection system (for example
-FastAPI's [`Depends`](https://fastapi.tiangolo.com/tutorial/dependencies/) or Litestar's
-[`Provide`](https://docs.litestar.dev/latest/usage/dependency-injection.html)). Both
-exist to thread state into functions that can't hold it themselves.
-
-The grouping is loose for the same reason. The operations that belong together (create,
-read, list, update, delete on one collection) are separate functions that share a path
-prefix and a module; nothing *is* the collection. A router to group routes and a DI layer
-to feed them are, in large part, recovering what a plain class would give you for nothing.
-
-jero starts from that class. A route is a `Resource` for a REST collection, or an
-`Endpoint` for a one-off route. The path lives on the class and method names carry the
-HTTP semantics, while dependencies are ordinary constructor arguments:
+jero starts from that class. A route is a `Resource` for a REST collection or an
+`Endpoint` for a one-off route; the path lives on the class, method names carry the HTTP
+semantics, and dependencies are ordinary constructor arguments:
 
 ```python
 @dataclass
@@ -55,28 +49,11 @@ class WidgetResource(Resource, path="/widgets"):
         return await self._service.get_widget(path.widget_id)
 ```
 
-Now the collection is one object. Its operations live together because they *are*
-together; its dependencies are passed to `__init__`, so there are no globals and no DI
-container to learn; and it's a stable thing the framework can attach to: a shape to
-validate at startup, the target for reverse-routed `Location` / `Link` headers, and the
-anchor for OpenAPI generation. jero doesn't give you a better dependency-injection
-system. It removes the need for one.
-
-None of this makes decorators wrong. They're lighter for a handful of one-off routes,
-and they're what most people reach for first. jero takes the other side of the trade:
-for a typed, REST-shaped JSON API, a class can serve as a better unit of design.
-
-## No dependency injection container
-
-As the previous section noted, decorator routing nudges you toward a dependency-injection
-system to feed standalone functions. jero needs none. In the author's opinion, those
-containers are often needlessly complicated in Python web applications.
-
-Python already has a dependency injection mechanism: constructors. Build an object and
-pass it the things it needs. That approach is explicit, type-checkable, easy to debug,
-and easy to test. jero keeps that model instead of adding a resolver layer.
-
-The app's `_wire` method is ordinary async Python:
+The collection is now one object whose operations live together because they *are*
+together, and whose dependencies are passed to `__init__`. That is the whole dependency
+story: Python's own injection mechanism, constructors. Build an object, pass it what it
+needs. No globals, no resolver graph, no per-request container lookup, no dependency
+protocol to learn. Wiring is ordinary async Python:
 
 ```python
 class App(BaseApp[Factory]):
@@ -85,15 +62,15 @@ class App(BaseApp[Factory]):
         self._include_resource(WidgetResource(service))
 ```
 
-The framework does add one thing plain Python does not give you by default: lifecycle.
-If an object needs to be opened and closed for the app lifetime, enter it with `_enter`
-or `_aenter`. The app owns the exit stacks and shuts resources down in reverse order.
-For larger apps, a `BaseFactory` groups construction and still uses the same explicit
-constructor style.
+The framework adds one thing plain Python does not: lifecycle. Enter a resource that must
+be opened and closed with `_enter` or `_aenter`, and the app closes it in reverse order at
+shutdown; for larger apps a `BaseFactory` groups construction in the same explicit style.
 
-There is no hidden resolver graph, no per-request container lookup, no dependency
-function protocol to learn, and no framework-specific indirection between a class and
-its collaborators.
+None of this makes decorators wrong. They are lighter for a handful of one-off routes.
+jero takes the other side: for a typed, REST-shaped JSON API, a class can be the better
+unit of design, and it doubles as a stable thing the framework attaches to: a shape to
+validate at startup, the target for reverse-routed `Location` / `Link` headers, and the
+anchor for OpenAPI generation.
 
 ## msgspec first
 
@@ -158,12 +135,12 @@ jero's public API is fully supported and type-checks cleanly under it.
 
 ## Class-based resources
 
-Because a route is a class, the method *names* can carry the REST semantics directly.
-`create` is POST on the collection; `read_many` is GET on the collection; `read_one`,
-`update`, `partial_update`, and `delete` are the item operations. The table is small
-enough to learn quickly and strict enough for the framework to enforce at startup.
+The method *names* carry the REST semantics directly: `create` is POST on the collection,
+`read_many` is GET on the collection, and `read_one`, `update`, `partial_update`, and
+`delete` are the item operations. The set is small enough to learn quickly and strict
+enough for the framework to enforce at startup.
 
-The result is less freedom, but more shape. jero is comfortable with that tradeoff.
+Less freedom, but more shape. jero is comfortable with that tradeoff.
 
 ## Opinionated by design
 
