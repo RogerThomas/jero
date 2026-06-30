@@ -47,16 +47,16 @@ class WidgetPath(Struct):
 
 
 class WidgetResource(Resource, path="/widgets"):
-    async def create(self, json: WidgetIn) -> Widget:           # POST /widgets
+    async def create(self, json: WidgetIn) -> Widget:      # POST /widgets
         return Widget(id="widget-id", name=json.name)
 
-    async def read_many(self) -> list[Widget]:                  # GET  /widgets
+    async def read_many(self) -> list[Widget]:             # GET  /widgets
         return [Widget(id="widget-id", name="gizmo")]
 
-    async def read_one(self, path: WidgetPath) -> Widget:       # GET  /widgets/{widget_id}
+    async def read_one(self, path: WidgetPath) -> Widget:  # GET  /widgets/{widget_id}
         return Widget(id=path.widget_id, name="gizmo")
 
-    async def delete(self, path: WidgetPath) -> Widget:         # DELETE /widgets/{widget_id}
+    async def delete(self, path: WidgetPath) -> Widget:    # DELETE /widgets/{widget_id}
         return Widget(id=path.widget_id, name="gizmo")
 
 
@@ -88,7 +88,7 @@ class Health(Struct):
 
 
 class HealthEndpoint(Endpoint, path="/healthz"):
-    async def get(self) -> Health:        # GET /healthz
+    async def get(self) -> Health:  # GET /healthz
         return Health(status="ok")
 
 
@@ -193,8 +193,8 @@ class Widget(Struct):
 class WidgetsEndpoint(
     Endpoint,
     path="/widgets",
-    meta=EndpointMeta(tags=["widgets"]),                    # all operations
-    meta_get=OperationMeta(operation_id="listWidgets"),     # this operation
+    meta=EndpointMeta(tags=["widgets"]),                 # all operations
+    meta_get=OperationMeta(operation_id="listWidgets"),  # this operation
 ):
     async def get(self) -> list[Widget]:
         return [Widget(id="widget-id")]

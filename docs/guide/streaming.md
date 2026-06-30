@@ -187,8 +187,10 @@ don't need lifecycle, a one-yield generator if you do.
 
 jero watches the client connection while it streams. If the client disconnects, it
 stops pulling from your iterator and runs the lifecycle teardown — you don't write any
-of that bookkeeping. Errors raised inside the stream are swallowed after teardown so a
-broken stream can't crash the worker.
+of that bookkeeping. An error raised inside the stream (after the response has started)
+is logged with its traceback, then swallowed after teardown so a broken stream can't
+crash the worker — the client sees a truncated stream, and the `jero.core` logger has
+the cause.
 
 ## Status & headers
 

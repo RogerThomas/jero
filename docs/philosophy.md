@@ -26,7 +26,7 @@ For a single handler this reads cleanly: path, verb, and function sit together. 
 carries tradeoffs, and they surface not in any one route but across a whole API: in how
 operations are grouped, and above all in how handlers get their dependencies. A plain
 function carries no state, so with no `self` to hold what a
-handler depends on (a database pool, an HTTP client, a service), those dependencies must
+handler depends on (a database pool, an HTTP client, a service etc.), those dependencies must
 arrive some other way. There are only two: module-level globals (Flask's `current_app` /
 `g`), or a framework-specific dependency-injection system (FastAPI's
 [`Depends`](https://fastapi.tiangolo.com/tutorial/dependencies/), Litestar's

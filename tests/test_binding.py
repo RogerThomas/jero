@@ -1,5 +1,8 @@
 """Source binding and REST error semantics: 400 / 404 / 422 / 500."""
 
+import logging
+
+import pytest
 from msgspec import Struct
 from msgspec.json import decode as json_decode
 
@@ -123,6 +126,18 @@ def test_handler_side_decode_error_is_500() -> None:
     with TestClient(UpstreamDecodeApp()) as client:
         resp = client.get("/upstream-decode")
         assert resp.status_code == 500
+
+
+def test_unhandled_error_is_logged_with_traceback(caplog: pytest.LogCaptureFixture) -> None:
+    """The 500 is swallowed for the client, so the traceback must reach the log."""
+    with (
+        caplog.at_level(logging.ERROR, logger="jero"),
+        TestClient(UpstreamDecodeApp()) as client,
+    ):
+        resp = client.get("/upstream-validation")
+    assert resp.status_code == 500
+    assert "unhandled error handling GET /upstream-validation" in caplog.text
+    assert any(record.exc_info for record in caplog.records)
 
 
 # --- raw_headers: the opaque header bag, for forwarding / diagnostics ---

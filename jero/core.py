@@ -40,6 +40,7 @@ the body suppressed, and OPTIONS answers 204 with ``Allow``.
 import asyncio
 import contextlib
 import inspect
+import logging
 import os
 import sys
 from abc import ABC, abstractmethod
@@ -105,6 +106,11 @@ from jero.streaming import (
 # signature never evaluates annotations, so the format argument isn't needed there.
 if sys.version_info >= (3, 14):
     from annotationlib import Format
+
+# The package-level logger (not ``jero.core``): ``core`` is an internal module name, while
+# ``jero`` is the stable, user-facing namespace to configure. (``jero.background`` keeps its
+# own child name, since background tasks are a user-facing subsystem.)
+logger = logging.getLogger("jero")
 
 type Scope = dict[str, Any]
 type Receive = Callable[[], Awaitable[dict[str, Any]]]
@@ -1602,10 +1608,12 @@ class _StreamSender:
     async def _send_chunk(self, send: Send, chunk: bytes) -> None:
         await send({"type": "http.response.body", "body": chunk, "more_body": True})
 
-    async def _send_setup_error(self, send: Send, exc: Exception) -> None:
+    async def _send_setup_error(self, scope: Scope, send: Send, exc: Exception) -> None:
         if isinstance(exc, HTTPError):
             await _send_json(send, exc.status, msgspec_encoder.encode({"error": exc.detail}))
             return
+        # Unexpected setup failure (before the 200): log it, then send a generic 500.
+        logger.error("error opening stream for %s %s", scope["method"], scope["path"], exc_info=exc)
         await _send_json(send, 500, msgspec_encoder.encode({"error": "internal server error"}))
 
     async def __call__(
@@ -1625,7 +1633,7 @@ class _StreamSender:
         try:
             iterator, first, lifecycle = await _resolve_stream(result.stream)
         except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-            await self._send_setup_error(send, exc)
+            await self._send_setup_error(scope, send, exc)
             return
         await send({"type": "http.response.start", "status": status, "headers": headers})
         try:
@@ -1640,11 +1648,21 @@ class _StreamSender:
                     return
                 if item is not None:
                     await self._send_chunk(send, self._chunk(item))
-        except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        except Exception:  # pylint: disable=broad-exception-caught
+            # A client disconnect is handled above; reaching here means the stream itself
+            # faulted (the source raised, or a chunk wouldn't encode). The 200 is already
+            # sent, so the status can't change — log and stop.
+            logger.exception("error streaming response for %s %s", scope["method"], scope["path"])
             return
         finally:
-            with contextlib.suppress(Exception):
+            try:
                 await _finish_lifecycle(lifecycle)
+            except Exception:  # pylint: disable=broad-exception-caught
+                # Teardown failure: still swallowed so it can't crash the worker, but
+                # logged now rather than lost.
+                logger.exception(
+                    "error tearing down stream for %s %s", scope["method"], scope["path"]
+                )
         await send({"type": "http.response.body", "body": b"", "more_body": False})
 
 
@@ -1724,7 +1742,7 @@ class _SSEStreamSender(_StreamSender):
         try:
             iterator, first, lifecycle = await _resolve_stream(result.stream)
         except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-            await self._send_setup_error(send, exc)
+            await self._send_setup_error(scope, send, exc)
             return
         await send({"type": "http.response.start", "status": status, "headers": headers})
         try:
@@ -1736,11 +1754,21 @@ class _SSEStreamSender(_StreamSender):
                 send,
                 sse.keepalive,
             )
-        except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        except Exception:  # pylint: disable=broad-exception-caught
+            # A client disconnect is handled above; reaching here means the stream itself
+            # faulted (the source raised, or a chunk wouldn't encode). The 200 is already
+            # sent, so the status can't change — log and stop.
+            logger.exception("error streaming response for %s %s", scope["method"], scope["path"])
             return
         finally:
-            with contextlib.suppress(Exception):
+            try:
                 await _finish_lifecycle(lifecycle)
+            except Exception:  # pylint: disable=broad-exception-caught
+                # Teardown failure: still swallowed so it can't crash the worker, but
+                # logged now rather than lost.
+                logger.exception(
+                    "error tearing down stream for %s %s", scope["method"], scope["path"]
+                )
         await send({"type": "http.response.body", "body": b"", "more_body": False})
 
 
@@ -1795,7 +1823,10 @@ class _Route:
         except HTTPError as exc:
             await _send_json(send, exc.status, msgspec_encoder.encode({"error": exc.detail}))
             return
-        except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        except Exception:  # pylint: disable=broad-exception-caught
+            # Unexpected (not an HTTPError): jero swallows it to return a clean 500, so this
+            # is the only place it's seen — log the traceback or it's lost to operators.
+            logger.exception("unhandled error handling %s %s", scope["method"], scope["path"])
             await _send_json(send, 500, msgspec_encoder.encode({"error": "internal server error"}))
             return
         await self._send_result(scope, receive, send, result)
