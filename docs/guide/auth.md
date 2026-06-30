@@ -1,6 +1,6 @@
 # Authentication
 
-Auth is an object you pass to `_include_resource` / `_include_endpoint`. It implements
+Auth is an object you pass to `include_resource` / `include_endpoint`. It implements
 one method:
 
 ```python
@@ -90,10 +90,10 @@ class WhoAmIEndpoint(Endpoint, path="/me"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
+    async def wire(self) -> None:
         auth = TokenAuth({"token": User(id="user-id", name="user-name")})
-        self._include_endpoint(WhoAmIEndpoint(), auth=auth)
-        self._include_endpoint(HealthEndpoint())   # no auth
+        self.include_endpoint(WhoAmIEndpoint(), auth=auth)
+        self.include_endpoint(HealthEndpoint())   # no auth
 
 
 app = App()

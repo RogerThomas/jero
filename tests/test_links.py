@@ -84,11 +84,11 @@ class LinksDemoApp(BaseApp):
     Whether the emitted URLs are relative or absolute is decided by the environment
     (``JERO_BASE_URL`` / ``JERO_TRUST_FORWARDED``), read once at construction."""
 
-    async def _wire(self) -> None:
+    async def wire(self) -> None:
         """Wire the jobs resource and the cross-module link / redirect endpoints."""
-        self._include_resource(JobsResource())
-        self._include_endpoint(JobLinkEndpoint())
-        self._include_endpoint(JobRedirectEndpoint())
+        self.include_resource(JobsResource())
+        self.include_endpoint(JobLinkEndpoint())
+        self.include_endpoint(JobRedirectEndpoint())
 
 
 class _SubJobPath(JobPath):
@@ -323,9 +323,9 @@ class _JobsAtB(_SharedReadMixin, Resource, path="/b"):
 class _AmbiguousApp(BaseApp):
     """Mounts the same inherited handler at two paths, so its reversal is ambiguous."""
 
-    async def _wire(self) -> None:
-        self._include_resource(_JobsAtA())
-        self._include_resource(_JobsAtB())
+    async def wire(self) -> None:
+        self.include_resource(_JobsAtA())
+        self.include_resource(_JobsAtB())
 
 
 class _DupRefAEndpoint(Endpoint, path="/dup-a", ref="dup"):
@@ -347,9 +347,9 @@ class _DupRefBEndpoint(Endpoint, path="/dup-b", ref="dup"):
 class _DupRefApp(BaseApp):
     """Mounts two classes that claim the same ref."""
 
-    async def _wire(self) -> None:
-        self._include_endpoint(_DupRefAEndpoint())
-        self._include_endpoint(_DupRefBEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(_DupRefAEndpoint())
+        self.include_endpoint(_DupRefBEndpoint())
 
 
 class _UnmountedJobs(Resource, path="/unmounted"):
@@ -387,9 +387,9 @@ class _DanglingRefEndpoint(Endpoint, path="/dangling-ref"):
 class _DanglingApp(BaseApp):
     """Wires only the dangling-link endpoints, not their targets."""
 
-    async def _wire(self) -> None:
-        self._include_endpoint(_DanglingOpEndpoint())
-        self._include_endpoint(_DanglingRefEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(_DanglingOpEndpoint())
+        self.include_endpoint(_DanglingRefEndpoint())
 
 
 def test_ambiguous_reverse_target_fails_at_wiring() -> None:

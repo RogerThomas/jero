@@ -57,13 +57,13 @@ protocol to learn. Wiring is ordinary async Python:
 
 ```python
 class App(BaseApp[Factory]):
-    async def _wire(self) -> None:
-        service = await self._factory.create_widget_service()
-        self._include_resource(WidgetResource(service))
+    async def wire(self) -> None:
+        service = await self.factory.create_widget_service()
+        self.include_resource(WidgetResource(service))
 ```
 
 The framework adds one thing plain Python does not: lifecycle. Enter a resource that must
-be opened and closed with `_enter` or `_aenter`, and the app closes it in reverse order at
+be opened and closed with `enter` or `aenter`, and the app closes it in reverse order at
 shutdown; for larger apps a `BaseFactory` groups construction in the same explicit style.
 
 None of this makes decorators wrong. They are lighter for a handful of one-off routes.
@@ -153,10 +153,10 @@ How do I bind request data? Name the handler argument `json`, `params`, `path`,
 
 How do I return JSON? Return a `Struct`, `list[Struct]`, or `JSONResponse[T, H]`.
 
-How do I wire dependencies? Construct them in `_wire` or a `BaseFactory`, then pass
+How do I wire dependencies? Construct them in `wire` or a `BaseFactory`, then pass
 them to class constructors.
 
-How do I manage app lifetime resources? Use `_enter` and `_aenter`.
+How do I manage app lifetime resources? Use `enter` and `aenter`.
 
 This is the promise and the cost of jero. It is not a toolkit for assembling your own
 framework style. It is a framework with a style. If you try to fight it, it will feel

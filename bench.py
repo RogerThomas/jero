@@ -44,8 +44,8 @@ class MoviesEndpoint(Endpoint, path="/movies"):
 class App(BaseApp):
     """The benchmark app: one POST endpoint."""
 
-    async def _wire(self) -> None:
-        self._include_endpoint(MoviesEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(MoviesEndpoint())
 
 
 _BODY = encode(

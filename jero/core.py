@@ -4,7 +4,7 @@ The contract:
 
 - Resources are plain classes with any of the CRUD methods ``create`` / ``read_one`` /
   ``read_many`` / ``update`` / ``partial_update`` / ``delete``, mapped to POST / GET (item) /
-  GET (collection) / PUT / PATCH / DELETE on the path given to ``_include_resource``. ``read_many``
+  GET (collection) / PUT / PATCH / DELETE on the path given to ``include_resource``. ``read_many``
   serves the mount path itself and cannot extend it with trailing segments — items belong to
   ``read_one``.
 - The mount path is a template: static segments plus ``{slot}`` params (snake_case, matching the
@@ -18,16 +18,16 @@ The contract:
   application/octet-stream), or a ``BytesResponse`` / ``JSONResponse`` to control response headers.
   msgspec ``rename`` is honored everywhere (e.g. ``Struct, rename="camel"`` for camelCase on the
   wire, snake_case in code) — define your own base Struct for the wire convention.
-- Auth is an object passed to ``_include_resource`` implementing
+- Auth is an object passed to ``include_resource`` implementing
   ``authenticate(headers: SomeStruct) -> UserStruct``; raise ``HTTPError(401, ...)`` to reject. When
   set, it runs for every method on the resource, before the body is decoded. Handlers that declare
   ``user`` receive its result; the annotation is checked against the authenticator's return type at
   startup.
-- Dependencies are wired by hand in the overridden ``BaseApp._wire`` method (runs once at startup).
-  Open resources with ``self._aenter(cm)`` / ``self._enter(cm)`` — the app holds them on exit stacks
+- Dependencies are wired by hand in the overridden ``BaseApp.wire`` method (runs once at startup).
+  Open resources with ``self.aenter(cm)`` / ``self.enter(cm)`` — the app holds them on exit stacks
   and closes them (reverse order) at shutdown. No ``yield``, no DI container.
 
-All introspection happens once, at ``_include_resource`` time. Routing is dict lookups: static
+All introspection happens once, at ``include_resource`` time. Routing is dict lookups: static
 routes match exactly; templated routes are bucketed by (method, segment count) and matched on their
 static segments — no regexes, no route-table scans, no ordering rules.
 
@@ -1808,18 +1808,18 @@ class _StackScope:
     _stack: ExitStack
     _astack: AsyncExitStack
 
-    def _enter[T](self, cm: AbstractContextManager[T]) -> T:
+    def enter[T](self, cm: AbstractContextManager[T]) -> T:
         """Open a sync context manager; closed at shutdown."""
         return self._stack.enter_context(cm)
 
-    async def _aenter[T](self, cm: AbstractAsyncContextManager[T]) -> T:
+    async def aenter[T](self, cm: AbstractAsyncContextManager[T]) -> T:
         """Open an async context manager; closed at shutdown."""
         return await self._astack.enter_async_context(cm)
 
 
 class BaseFactory(_StackScope):
     """Base for an app's factory. Subclass and add ``create_*`` methods that
-    build services with ``self._enter`` / ``self._aenter``.
+    build services with ``self.enter`` / ``self.aenter``.
 
     The app injects its exit stacks (``es`` / ``aes``); anything opened via the
     helpers is closed when the app shuts down.
@@ -1850,13 +1850,13 @@ def instantiate_factory[F](factory_cls: type[F], stack: ExitStack, astack: Async
 
 
 class BaseApp[FactoryT = None](_StackScope, ABC):
-    """Subclass and override ``_wire`` to open resources and include resources/endpoints.
+    """Subclass and override ``wire`` to open resources and include resources/endpoints.
 
     The app owns the two exit stacks. Parameterize with a factory class —
     ``class MyApp(BaseApp[MyFactory])`` — and the app builds it at construction,
     injecting the stacks the factory's ``__init__`` names (``es`` for the
     ExitStack, ``aes`` for the AsyncExitStack). The built factory is then
-    ``self._factory`` (typed as ``MyFactory``) inside ``_wire``, and any resource
+    ``self.factory`` (typed as ``MyFactory``) inside ``wire``, and any resource
     it registers on those stacks is closed at shutdown.
 
     Pass ``factory=`` to supply a prebuilt factory instead of building one — the
@@ -1878,7 +1878,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         self._reverser = _Reverser(base_url=base_url, trust_forwarded=trust_forwarded)
         self._stack = ExitStack()
         self._astack = AsyncExitStack()
-        self._factory: FactoryT = factory if factory is not None else self._make_factory()
+        self.factory: FactoryT = factory if factory is not None else self._make_factory()
 
     def _decoder(self, struct_type: type[Struct]) -> Decoder[Struct]:
         """The reusable typed JSON decoder for ``struct_type``, built once per app.
@@ -1908,8 +1908,8 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         return cast("FactoryT", instantiate_factory(factory_type, self._stack, self._astack))
 
     @abstractmethod
-    async def _wire(self) -> None:
-        """Override to open resources (via ``_enter`` / ``_aenter``) and include them.
+    async def wire(self) -> None:
+        """Override to open resources (via ``enter`` / ``aenter``) and include them.
 
         Runs once at startup. Anything entered via the helpers is torn
         down (in reverse order) at shutdown.
@@ -1990,20 +1990,22 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         if not registered:
             raise WiringError(f"{cls.__name__} defines none of: {', '.join(methods)}")
 
-    def _include_resource[THeaders: Struct, TUser: Struct](
+    def include_resource[THeaders: Struct, TUser: Struct](
         self,
         resource: Resource,
         *,
         auth: Auth[THeaders, TUser] | None = None,
     ) -> None:
+        """Register a ``Resource``'s CRUD methods as routes, optionally behind ``auth``."""
         self._include(resource, Resource.METHODS, auth=auth)
 
-    def _include_endpoint[THeaders: Struct, TUser: Struct](
+    def include_endpoint[THeaders: Struct, TUser: Struct](
         self,
         endpoint: Endpoint,
         *,
         auth: Auth[THeaders, TUser] | None = None,
     ) -> None:
+        """Register an ``Endpoint``'s verb methods as routes, optionally behind ``auth``."""
         self._include(endpoint, Endpoint.METHODS, auth=auth)
 
     def _resolve(self, method: str, path: str) -> tuple[_Handler, dict[str, str]] | None:
@@ -2053,7 +2055,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
     async def _handle_lifespan(self, receive: Receive, send: Send) -> None:
         await receive()  # lifespan.startup
         try:
-            await self._wire()
+            await self.wire()
         except BaseException as exc:
             await self._close_resources()  # release anything entered before the failure
             await send(

@@ -66,8 +66,8 @@ class WidgetResource(Resource, path="/widgets"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_resource(WidgetResource())
+    async def wire(self) -> None:
+        self.include_resource(WidgetResource())
 
 
 app = App()
@@ -106,7 +106,7 @@ startup error.
 - **Returns are typed**: a `Struct`, `list[Struct]`, `bytes`, or a response wrapper
   (`JSONResponse[T]`, `BytesResponse`, a streaming response) when you need to control
   headers or status. See [Responses & headers](guide/responses.md).
-- **Dependencies are hand-wired** in `_wire` — no DI container. The framework adds the
+- **Dependencies are hand-wired** in `wire` — no DI container. The framework adds the
   one thing plain Python doesn't: resource lifecycle. See [Wiring & lifecycle](guide/wiring.md).
 - For a complete application shape, see the [complete example](guide/complete-example.md).
 

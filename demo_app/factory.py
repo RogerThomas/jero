@@ -2,7 +2,7 @@
 
 ``WidgetService`` owns a lifecycle resource (the upstream client) opened on the app's
 exit stack; ``AnalyticsService`` is a plain in-memory recorder. Both are built here so
-the app's ``_wire`` stays a short list of includes. Tests swap a stand-in factory in
+the app's ``wire`` stays a short list of includes. Tests swap a stand-in factory in
 through ``BaseApp``'s ``factory=`` seam to mock the I/O service.
 """
 
@@ -28,7 +28,7 @@ class Factory(BaseFactory):
 
     async def create_widget_service(self) -> WidgetService:
         """Build a WidgetService with a client opened on the app's stack."""
-        client = await self._aenter(niquests.AsyncSession())
+        client = await self.aenter(niquests.AsyncSession())
         return WidgetService(client, self._settings.widget_base_url, self._settings.widget_api_key)
 
     async def create_analytics_service(self) -> AnalyticsService:
@@ -37,5 +37,5 @@ class Factory(BaseFactory):
 
     async def create_questions_service(self) -> QuestionsService:
         """Build a QuestionsService with an OpenAI client opened on the app's stack."""
-        client = await self._aenter(AsyncOpenAI(api_key=self._settings.openai_api_key))
+        client = await self.aenter(AsyncOpenAI(api_key=self._settings.openai_api_key))
         return QuestionsService(client, self._settings.openai_model)
