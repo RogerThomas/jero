@@ -143,10 +143,10 @@ class HeadersEndpoint(Endpoint, path="/headers"):
 class UploadApp(BaseApp):
     """App wiring the form endpoints."""
 
-    async def _wire(self) -> None:
-        self._include_endpoint(UploadEndpoint())
-        self._include_endpoint(ParamsOnlyEndpoint())
-        self._include_endpoint(HeadersEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(UploadEndpoint())
+        self.include_endpoint(ParamsOnlyEndpoint())
+        self.include_endpoint(HeadersEndpoint())
 
 
 class BodyOnPostResource(Resource, path="/x"):
@@ -204,8 +204,8 @@ class ResourceApp(BaseApp):
         self._resource = resource
         super().__init__()
 
-    async def _wire(self) -> None:
-        self._include_resource(self._resource)
+    async def wire(self) -> None:
+        self.include_resource(self._resource)
 
 
 @pytest.fixture(name="client")

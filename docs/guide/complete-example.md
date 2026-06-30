@@ -2,7 +2,7 @@
 
 This is a small but complete jero app shape: factory, lifecycle-managed service,
 authentication, path binding, JSON binding, typed response headers, a resource, and
-`_wire`.
+`wire`.
 
 ```python
 from collections.abc import AsyncIterator
@@ -95,7 +95,7 @@ async def open_widget_store() -> AsyncIterator[WidgetStore]:
 
 class Factory(BaseFactory):
     async def create_widget_service(self) -> WidgetService:
-        store = await self._aenter(open_widget_store())
+        store = await self.aenter(open_widget_store())
         return WidgetService(store)
 
 
@@ -119,17 +119,17 @@ class WidgetResource(Resource, path="/widgets"):
 
 
 class App(BaseApp[Factory]):
-    async def _wire(self) -> None:
+    async def wire(self) -> None:
         auth = TokenAuth()
-        widgets = await self._factory.create_widget_service()
-        self._include_resource(WidgetResource(widgets), auth=auth)
+        widgets = await self.factory.create_widget_service()
+        self.include_resource(WidgetResource(widgets), auth=auth)
 
 
 app = App()
 ```
 
 The important part is where the framework boundary sits. The app constructs normal
-Python objects in `_wire`, enters anything with lifecycle through the factory, and then
+Python objects in `wire`, enters anything with lifecycle through the factory, and then
 includes route classes. Handlers only declare typed inputs by name: `json` for the
 request body, `path` for URL slots, and `user` for the authentication result.
 

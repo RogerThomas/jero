@@ -48,8 +48,8 @@ class Widgets(Resource, path="/widgets"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_resource(Widgets())
+    async def wire(self) -> None:
+        self.include_resource(Widgets())
 
 
 app = App()
@@ -79,7 +79,7 @@ request/response contract, and they're verified at startup.
 </tr>
 </table>
 
-No DI container, either: dependencies are hand-wired in `_wire`; the framework adds
+No DI container, either: dependencies are hand-wired in `wire`; the framework adds
 only lifecycle — the one thing plain Python doesn't give you.
 
 ## What you get
@@ -95,7 +95,7 @@ only lifecycle — the one thing plain Python doesn't give you.
 - **Multipart forms & uploads** — typed parts, file uploads, per-part headers.
 - **Auth checked at startup** — the `user` type is verified against your authenticator
   before a single request is served, not at runtime.
-- **Lifecycle without a DI container** — hand-wire in `_wire`, open resources on exit
+- **Lifecycle without a DI container** — hand-wire in `wire`, open resources on exit
   stacks, group construction in a `BaseFactory`.
 - **REST semantics for free** — 404/400/422/401/405, auto `HEAD` + `OPTIONS`, camelCase
   on the wire.
@@ -110,7 +110,7 @@ browse the full [Guide](https://RogerThomas.github.io/jero/).
 For anything real, a resource delegates to a service, and a `Factory` builds that
 service — opening any resources it needs (HTTP clients, DB pools, …) on the app's
 exit stacks, which jero closes in reverse at shutdown. The app is parameterised with
-the factory type (`BaseApp[Factory]`), exposing it as `self._factory` in `_wire`.
+the factory type (`BaseApp[Factory]`), exposing it as `self.factory` in `wire`.
 
 ```python
 from dataclasses import dataclass
@@ -167,14 +167,14 @@ class WidgetResource(Resource, path="/widgets"):
 
 class Factory(BaseFactory):
     async def create_widget_service(self) -> WidgetService:
-        client = await self._aenter(niquests.AsyncSession(base_url="https://api.example.com"))
+        client = await self.aenter(niquests.AsyncSession(base_url="https://api.example.com"))
         return WidgetService(client)
 
 
 class App(BaseApp[Factory]):
-    async def _wire(self) -> None:
-        widget_service = await self._factory.create_widget_service()
-        self._include_resource(WidgetResource(widget_service))
+    async def wire(self) -> None:
+        widget_service = await self.factory.create_widget_service()
+        self.include_resource(WidgetResource(widget_service))
 
 
 app = App()

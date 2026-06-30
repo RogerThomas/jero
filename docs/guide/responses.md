@@ -42,9 +42,9 @@ class ExportEndpoint(Endpoint, path="/export"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_resource(WidgetResource())
-        self._include_endpoint(ExportEndpoint())
+    async def wire(self) -> None:
+        self.include_resource(WidgetResource())
+        self.include_endpoint(ExportEndpoint())
 
 
 app = App()
@@ -87,8 +87,8 @@ class WidgetResource(Resource, path="/widgets"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_resource(WidgetResource())
+    async def wire(self) -> None:
+        self.include_resource(WidgetResource())
 
 
 app = App()
@@ -175,8 +175,8 @@ class WidgetResource(Resource, path="/widgets"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_resource(WidgetResource())
+    async def wire(self) -> None:
+        self.include_resource(WidgetResource())
 
 
 app = App()

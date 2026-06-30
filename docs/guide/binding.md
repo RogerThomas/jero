@@ -48,8 +48,8 @@ class WidgetResource(Resource, path="/widgets"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_resource(WidgetResource())
+    async def wire(self) -> None:
+        self.include_resource(WidgetResource())
 
 
 app = App()
@@ -83,8 +83,8 @@ class UploadResource(Resource, path="/uploads"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_resource(UploadResource())
+    async def wire(self) -> None:
+        self.include_resource(UploadResource())
 
 
 app = App()
@@ -123,8 +123,8 @@ class TraceEndpoint(Endpoint, path="/trace"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_endpoint(TraceEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(TraceEndpoint())
 
 
 app = App()
@@ -153,8 +153,8 @@ class HeadersEndpoint(Endpoint, path="/echo"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_endpoint(HeadersEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(HeadersEndpoint())
 
 
 app = App()

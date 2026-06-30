@@ -45,8 +45,8 @@ class WidgetResource(Resource, path="/widgets"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_resource(WidgetResource())
+    async def wire(self) -> None:
+        self.include_resource(WidgetResource())
 
 
 app = App()
@@ -96,8 +96,8 @@ class WidgetResource(Resource, path="/widgets"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_resource(WidgetResource())
+    async def wire(self) -> None:
+        self.include_resource(WidgetResource())
 
 
 app = App()
@@ -195,9 +195,9 @@ class JobLinkEndpoint(Endpoint, path="/job-link"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_resource(JobsResource())
-        self._include_endpoint(JobLinkEndpoint())
+    async def wire(self) -> None:
+        self.include_resource(JobsResource())
+        self.include_endpoint(JobLinkEndpoint())
 
 
 app = App()

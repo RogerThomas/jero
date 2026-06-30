@@ -37,8 +37,8 @@ class BlobResource(Resource, path="/blobs"):
 class BlobApp(BaseApp):
     """App exercising the non-JSON response kinds."""
 
-    async def _wire(self) -> None:
-        self._include_resource(BlobResource())
+    async def wire(self) -> None:
+        self.include_resource(BlobResource())
 
 
 @pytest.fixture(name="blob_client")
@@ -101,8 +101,8 @@ class RawRespResource(Resource, path="/raw-resp"):
 class RawRespApp(BaseApp):
     """App wiring the RawHeaders-response resource."""
 
-    async def _wire(self) -> None:
-        self._include_resource(RawRespResource())
+    async def wire(self) -> None:
+        self.include_resource(RawRespResource())
 
 
 def test_response_accepts_raw_headers_bag() -> None:
@@ -176,8 +176,8 @@ class TypedHeaderResource(Resource, path="/typed"):
 class TypedHeaderApp(BaseApp):
     """App wiring the typed-header resource."""
 
-    async def _wire(self) -> None:
-        self._include_resource(TypedHeaderResource())
+    async def wire(self) -> None:
+        self.include_resource(TypedHeaderResource())
 
 
 @pytest.fixture(name="typed_client")
@@ -230,8 +230,8 @@ class UUIDHeaderResource(Resource, path="/uuid"):
 class UUIDHeaderApp(BaseApp):
     """App wiring the UUID-header resource."""
 
-    async def _wire(self) -> None:
-        self._include_resource(UUIDHeaderResource())
+    async def wire(self) -> None:
+        self.include_resource(UUIDHeaderResource())
 
 
 def test_uuid_typed_header_is_bare_string() -> None:
@@ -258,8 +258,8 @@ class StatusResource(Resource, path="/status"):
 class StatusApp(BaseApp):
     """App wiring the status-override resource."""
 
-    async def _wire(self) -> None:
-        self._include_resource(StatusResource())
+    async def wire(self) -> None:
+        self.include_resource(StatusResource())
 
 
 def test_status_code_overrides_verb_default() -> None:

@@ -205,8 +205,8 @@ class _EndpointApp(BaseApp):
         self._endpoint = endpoint
         super().__init__()
 
-    async def _wire(self) -> None:
-        self._include_endpoint(self._endpoint)
+    async def wire(self) -> None:
+        self.include_endpoint(self._endpoint)
 
 
 def test_finite_ndjson_stream() -> None:

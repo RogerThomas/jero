@@ -1,7 +1,7 @@
 # Testing
 
 jero ships a synchronous, in-process `TestClient` — it drives the ASGI app directly,
-no socket and no running server. It runs the app's full lifespan (so `_wire` registers
+no socket and no running server. It runs the app's full lifespan (so `wire` registers
 routes and the dependency context stays open) on a background event loop, and exposes a
 `requests`-style API.
 
