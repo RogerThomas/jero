@@ -38,8 +38,8 @@ class UploadEndpoint(Endpoint, path="/jobs"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_endpoint(UploadEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(UploadEndpoint())
 
 
 app = App()

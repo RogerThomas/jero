@@ -61,8 +61,8 @@ class WidgetResource(Resource, path="/widgets"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_resource(WidgetResource())
+    async def wire(self) -> None:
+        self.include_resource(WidgetResource())
 
 
 app = App()
@@ -93,8 +93,8 @@ class HealthEndpoint(Endpoint, path="/healthz"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_endpoint(HealthEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(HealthEndpoint())
 
 
 app = App()
@@ -111,7 +111,7 @@ class WidgetResource(Resource, path="/widgets"):
     ...
 ```
 
-jero reads it once at wiring, so registering is just `self._include_resource(WidgetResource())` — no path passed at the call site. The class is the **single source of truth** for its path, which is exactly what URL reversal ([`Link` / `Location`](links-and-location.md)) and the OpenAPI work read off it.
+jero reads it once at wiring, so registering is just `self.include_resource(WidgetResource())` — no path passed at the call site. The class is the **single source of truth** for its path, which is exactly what URL reversal ([`Link` / `Location`](links-and-location.md)) and the OpenAPI work read off it.
 
 ## Path templates
 
@@ -141,8 +141,8 @@ class ItemResource(Resource, path="/collections/{collection_id}/items"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_resource(ItemResource())
+    async def wire(self) -> None:
+        self.include_resource(ItemResource())
 
 
 app = App()
@@ -161,13 +161,13 @@ doesn't identify a resource.
 
 ## Registering them
 
-Resources and endpoints are wired in `BaseApp._wire`:
+Resources and endpoints are wired in `BaseApp.wire`:
 
 ```python
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_resource(WidgetResource())
-        self._include_endpoint(HealthEndpoint())
+    async def wire(self) -> None:
+        self.include_resource(WidgetResource())
+        self.include_endpoint(HealthEndpoint())
 ```
 
 Routing is pure dict lookup: static routes match exactly; templated routes are
@@ -201,8 +201,8 @@ class WidgetsEndpoint(
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_endpoint(WidgetsEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(WidgetsEndpoint())
 
 
 app = App()

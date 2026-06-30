@@ -1,7 +1,7 @@
 """Bearer-token authentication for the demo app.
 
 A pure in-memory token-to-user map — no lifecycle resource, so it is built directly in
-the app's ``_wire`` rather than the factory. Swapping the factory in tests therefore
+the app's ``wire`` rather than the factory. Swapping the factory in tests therefore
 replaces only the I/O services and leaves auth wiring intact.
 """
 

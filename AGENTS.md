@@ -94,7 +94,7 @@ These pull against each other constantly; keep all three in mind on every change
   routes (health, webhooks, actions). One exact path per Endpoint; a different path is a
   different `Endpoint`.
 - **The path is declared on the class, not at wiring** — `class Widgets(Resource,
-  path="/widgets")`, read once at wiring; `_include_resource(Widgets())` takes no
+  path="/widgets")`, read once at wiring; `include_resource(Widgets())` takes no
   `path=`. The class is the single source of truth for its path (what URL reversal /
   `Link` / `Location` and the OpenAPI spec read). Optional OpenAPI metadata rides the
   same class kwargs: `meta` (all operations) and `meta_<op>` per operation, typed
@@ -143,17 +143,23 @@ These pull against each other constantly; keep all three in mind on every change
 - **Auth**: an object with `authenticate(headers: Struct) -> UserStruct`; the
   user type is checked against handlers at startup.
 - **Wiring / DI**: there is **no DI container** — and that's deliberate, not a
-  gap. You hand-wire classes in the overridden `_wire` (`BaseApp` is an `ABC` and
-  `_wire` is abstract; subclass `BaseApp[Factory]`, linear async, no yield); a
+  gap. You hand-wire classes in the overridden `wire` (`BaseApp` is an `ABC` and
+  `wire` is abstract; subclass `BaseApp[Factory]`, linear async, no yield); a
   dependency is just a constructor argument. The one thing
   the language doesn't give you free — lifecycle — is what the framework adds:
-  open resources with `self._aenter` / `self._enter` (the app owns two exit
+  open resources with `self.aenter` / `self.enter` (the app owns two exit
   stacks, closed in reverse at shutdown, even on partial failure), and a
   `BaseFactory` (stacks injected) groups construction. Past that there's nothing
   to "resolve." Per-request resources are an `async with` inside the handler.
   Do **not** add an injection/resolver system.
+  - **Naming**: the extension surface is intentionally **public** (`wire`,
+    `include_resource`, `include_endpoint`, `enter`, `aenter`, `factory`). Technically
+    these are private (only called from inside a subclass), but a leading `_` reads as
+    "keep out" for the API users are meant to use, so they're public. Underscore is
+    reserved for genuine internals (`_include`, `_register`, `_make_factory`, the
+    exit-stack fields). Do **not** re-underscore the extension surface.
 - **Background tasks**: `BackgroundTasks` is an in-process, fire-and-forget queue
-  (not durable). Build it in `_wire` and open it with `_aenter` (it's an async CM —
+  (not durable). Build it in `wire` and open it with `aenter` (it's an async CM —
   worker starts at startup, drains at shutdown); `register(handler)` infers the item
   type from the handler's one Struct param; endpoints `await tasks.add(item)`. One
   handler per type (`allow_one_to_many=True` to fan out); `drain_timeout: float | None`

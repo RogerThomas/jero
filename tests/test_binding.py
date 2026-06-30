@@ -66,8 +66,8 @@ class IntResource(Resource, path="/things"):
 class IntApp(BaseApp):
     """App wiring IntResource at /things."""
 
-    async def _wire(self) -> None:
-        self._include_resource(IntResource())
+    async def wire(self) -> None:
+        self.include_resource(IntResource())
 
 
 def test_path_value_that_fails_conversion_is_404() -> None:
@@ -106,9 +106,9 @@ class UpstreamDecodeEndpoint(Endpoint, path="/upstream-decode"):
 class UpstreamDecodeApp(BaseApp):
     """App wiring the upstream-error endpoints."""
 
-    async def _wire(self) -> None:
-        self._include_endpoint(UpstreamValidationEndpoint())
-        self._include_endpoint(UpstreamDecodeEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(UpstreamValidationEndpoint())
+        self.include_endpoint(UpstreamDecodeEndpoint())
 
 
 def test_handler_side_validation_error_is_500() -> None:
@@ -159,9 +159,9 @@ class BothHeadersEndpoint(Endpoint, path="/both"):
 class RawHeadersApp(BaseApp):
     """App wiring the raw_headers endpoints."""
 
-    async def _wire(self) -> None:
-        self._include_endpoint(RawHeadersEndpoint())
-        self._include_endpoint(BothHeadersEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(RawHeadersEndpoint())
+        self.include_endpoint(BothHeadersEndpoint())
 
 
 def test_raw_headers_handler_sees_request_headers() -> None:

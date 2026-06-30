@@ -79,8 +79,8 @@ class WidgetResource(Resource, path="/widgets"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_resource(WidgetResource())
+    async def wire(self) -> None:
+        self.include_resource(WidgetResource())
 
 
 app = App()
@@ -114,7 +114,7 @@ New here? Start with [Getting Started](getting-started.md).
   it to the handler registered for its type, drained at shutdown. [→](guide/background-tasks.md)
 - **Auth that's checked at startup** — the `user` type is verified against the
   authenticator before the app serves a request. [→](guide/auth.md)
-- **Lifecycle without a DI container** — hand-wire in `_wire`, open resources on exit
+- **Lifecycle without a DI container** — hand-wire in `wire`, open resources on exit
   stacks, group construction in a `BaseFactory`. [→](guide/wiring.md)
 - **REST semantics for free** — 404/400/422/401/405, auto `HEAD` + `OPTIONS`, camelCase
   on the wire. [→](guide/rest.md)
