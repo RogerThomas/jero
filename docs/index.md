@@ -16,9 +16,9 @@ uv add jero
 ## What is jero?
 
 jero is an AI-powered ([a note on AI usage](note-on-ai-usage.md)), [msgspec](https://msgspec.dev/)-first [ASGI](https://asgi.readthedocs.io/en/latest/) framework where your type hints are the API contract.
-Routing, binding, validation, serialization, auth checks, and the coming OpenAPI
-generation all derive from statically declared types, while the request path stays
-close to raw msgspec performance: route lookup → decode → call → encode.
+Routing, binding, validation, serialization, auth checks, and [OpenAPI
+generation](guide/openapi.md) all derive from statically declared types, while the
+request path stays close to raw msgspec performance: route lookup → decode → call → encode.
 
 There are no route decorators and no dependency-injection container. Routes are plain
 classes (`Resource` for REST collections, `Endpoint` for one-off routes); the method
@@ -29,9 +29,9 @@ Almost everything that flows in and out of jero is a
 msgspec `Struct`: request and response bodies,
 headers, path params, query params, and multipart forms alike. You don't pass or return
 raw `dict`s; the `Struct` is what gives jero validation, serialization, precise startup
-checks, future
-schema generation, and (most importantly) maximum performance from msgspec's compiled
-codecs (whose [benchmarks](https://msgspec.dev/benchmarks) are almost hard to believe).
+checks, [schema generation](guide/openapi.md), and (most importantly) maximum performance
+from msgspec's compiled codecs (whose [benchmarks](https://msgspec.dev/benchmarks) are
+almost hard to believe).
 
 ## Core principles
 
@@ -43,7 +43,7 @@ build on.
 | ------------------ | ------------- |
 | **Speed**          | Introspection happens once, at startup. The per-request path stays minimal and predictable. |
 | **Opinionated&nbsp;DX** | One blessed way to do each thing, encoded so you can't get it wrong. Contracts fail loud at startup with a precise `WiringError`, never quietly at runtime. |
-| **Strict typing**  | Fully static under pyrefly, with the public interface checked by every major type checker. Types are the contract, the validation source, and the source of the coming OpenAPI spec. |
+| **Strict typing**  | Fully static under pyrefly, with the public interface checked by every major type checker. Types are the contract, the validation source, and the source of the [OpenAPI spec](guide/openapi.md). |
 
 jero leans hard into modern Python typing: [PEP 695](https://peps.python.org/pep-0695) generics
 (`JSONResponse[Body, Headers]`, `BaseApp[Factory]`,

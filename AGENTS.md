@@ -27,7 +27,7 @@ being aggressively opinionated rather than flexible.
 3. **Strict, expressive typing — not optional.** Everything is fully, statically
    typed under pyright-strict. If you don't like typing, this is not your
    framework. Types are not decoration — they *are* the contract (the binding,
-   the `WiringError`s) and, soon, the source of the OpenAPI spec (see roadmap).
+   the `WiringError`s) and the source of the OpenAPI spec (`jero/openapi.py`).
    Every design decision must produce precise static types; prefer rich,
    self-documenting generics (`-> NDJSONStreamingResponse[Movie]`,
    `BaseApp[Factory]`) over loose annotations. A feature that can't be expressed
@@ -99,7 +99,8 @@ These pull against each other constantly; keep all three in mind on every change
   `Link` / `Location` and the OpenAPI spec read). Optional OpenAPI metadata rides the
   same class kwargs: `meta` (all operations) and `meta_<op>` per operation, typed
   `EndpointMeta` / `ResourceMeta` / `OperationMeta` (the wrong meta type on a shape is a
-  loud failure; `operation_id` lives only on `OperationMeta`). `path` is **required** on
+  loud failure; `operation_id` lives only on `OperationMeta`; `summary`/`description`/
+  `responses` refine the generated spec). `path` is **required** on
   the concrete shapes — omitting it is a pyright error, not just a startup `WiringError`.
   An optional `ref="..."` gives the class a string handle for URL reversal across import
   cycles (see Links/Location below).
@@ -177,6 +178,17 @@ These pull against each other constantly; keep all three in mind on every change
 ## Layout
 
 - `jero/core.py` — the framework (routing, binding, response senders, lifecycle).
+  `jero/_wiring_types.py` — the resolved wiring contracts (`_Sources`, `_FormSpec`,
+  `_OperationSpec`, the `*Meta` types, `_is_struct_type`/`_strip_list`); a leaf depending
+  only on msgspec + `jero.openapi`. `jero/openapi.py` — the dependency-free OpenAPI 3.1
+  builder (`SecurityScheme`, `ResponseSpec`, `ModelMeta`, `build_openapi`).
+  `jero/structs.py` — `Struct`, jero's drop-in `msgspec.Struct` base whose `meta=` class
+  keyword (handled by a `msgspec.StructMeta` subclass) attaches a `ModelMeta` as
+  `__model_meta__`; the builder reads it to set a model's schema description. `jero/_openapi_wiring.py` —
+  the translation layer (`operation_input`) turning an `_OperationSpec` into the builder's
+  inputs. The graph is a strict DAG: `core` and `_openapi_wiring` both import the contracts
+  from `_wiring_types`; `core` imports `_openapi_wiring`; nothing imports `core` back (the
+  shared contracts sit *below* both, which is what keeps it acyclic — no lazy imports).
   `jero/testing.py` — sync in-process `TestClient` + `FactoryHarness`.
   `jero/forms.py` / `jero/streaming.py` — multipart parts and streaming response
   types. `jero/background.py` — the in-process `BackgroundTasks` queue.
@@ -214,7 +226,13 @@ These pull against each other constantly; keep all three in mind on every change
   response kinds — generic `JSONResponse[T, H]` / `BytesResponse[H]` / streaming
   `[T, H]` with typed response headers, `raw_headers`, and `status_code` overrides
   — `BaseApp`/`BaseFactory` lifecycle, in-process `BackgroundTasks`, reverse-routed
-  `Location` / `Link` responses, `TestClient`, the test suite.
+  `Location` / `Link` responses, `TestClient`, the test suite. **OpenAPI 3.1**:
+  `include_openapi` serves `/openapi.json` + a Scalar `/docs` UI, derived from the
+  wired types (sources, returns incl. generics, `msgspec.Meta`). **Docstrings are never
+  published** — public prose is explicit: `OperationMeta` (summary/description), `ModelMeta`
+  via `jero.Struct`'s `meta=` class keyword (model description, attached through a
+  `msgspec.StructMeta` subclass), field `Meta`. `SecurityScheme` / `BearerAuth` /
+  `BasicAuth` for security; per-source error responses.
 - **Performance (validated natively)**: on the authed write path
   (`POST /movies` — bearer auth + JSON decode + encode + 201, C=200), jero ≈
   blacksheep (~43k req/s, a tie), ~2× litestar, ~3× robyn, ~6× idiomatic FastAPI.
@@ -225,10 +243,19 @@ These pull against each other constantly; keep all three in mind on every change
   a deliberate follow-up. Minor polish:
   the factory's `es`/`aes` stack injection matches by name with no startup check — a
   `WiringError` on an unrecognized param would close that.
-- **Roadmap**: auto-generated **OpenAPI spec + live, hosted docs**. This is the
-  reason every endpoint must be statically typed end to end — the schema is
-  *derived from the types* (Struct sources, typed returns including generics like
-  `NDJSONStreamingResponse[Movie]`), with no runtime guessing. Any feature that
-  escapes static typing won't appear in the spec, so don't add one.
+- **The OpenAPI spec is *derived from the types*** (Struct sources, typed returns
+  including generics like `NDJSONStreamingResponse[Movie]`), with no runtime guessing.
+  This is the reason every endpoint must be statically typed end to end — any feature
+  that escapes static typing won't appear in the spec, so don't add one. The builder
+  (`jero/openapi.py`) takes resolved operations and never imports `core`; the translation
+  lives in `jero/_openapi_wiring.py` (`operation_input`). Keep that boundary. Forms can't
+  be schema'd whole — schema-ing a form model yields the jero-side envelope
+  (`FormPart.data`/`content_type`/`headers`/`raw_headers`, `bytes` as base64, `RawHeaders`
+  internals) instead of the multipart wire shape. So `_form_fields` captures each field's
+  *resolved payload type* (with its `Meta`), the builder routes the non-binary ones through
+  the shared `schema_components` pass (so constraints/description/examples and struct
+  `$ref`s come out right) and emits `{type: string, format: binary}` for files/raw bytes.
+  Note this is why `_payload_kind` strips `Annotated` to classify while keeping the
+  annotated type for both `convert` (constraint enforcement) and the schema.
 - **Untested**: no non-trivial real app has been built on it yet — that's where
   the opinions (pagination, streaming, cross-cutting concerns) get stress-tested.

@@ -6,6 +6,8 @@ from jero.core import (
     Auth,
     BaseApp,
     BaseFactory,
+    BasicAuth,
+    BearerAuth,
     BytesResponse,
     Endpoint,
     EndpointMeta,
@@ -19,7 +21,9 @@ from jero.core import (
 from jero.forms import FilePart, FormPart
 from jero.headers import RawHeaders
 from jero.links import Link, Location
+from jero.openapi import ModelMeta, ResponseSpec, SecurityScheme, Tag
 from jero.streaming import NDJSONStreamingResponse, ServerSentEvent, SSEResponse, StreamingResponse
+from jero.structs import Struct
 from jero.testing import FactoryHarness, TestClient, TestResponse, TestSSEEvent
 
 __all__ = [
@@ -27,6 +31,8 @@ __all__ = [
     "BackgroundTasks",
     "BaseApp",
     "BaseFactory",
+    "BasicAuth",
+    "BearerAuth",
     "BytesResponse",
     "Endpoint",
     "EndpointMeta",
@@ -37,14 +43,19 @@ __all__ = [
     "JSONResponse",
     "Link",
     "Location",
+    "ModelMeta",
     "NDJSONStreamingResponse",
     "OperationMeta",
     "RawHeaders",
     "Resource",
     "ResourceMeta",
+    "ResponseSpec",
     "SSEResponse",
+    "SecurityScheme",
     "ServerSentEvent",
     "StreamingResponse",
+    "Struct",
+    "Tag",
     "TestClient",
     "TestResponse",
     "TestSSEEvent",

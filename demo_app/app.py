@@ -42,6 +42,10 @@ class DemoApp(BaseApp[Factory]):
         self.include_endpoint(FeaturedWidgetEndpoint())
         self.include_endpoint(QuestionsEndpoint(questions_service))
         self.include_endpoint(NotificationsEndpoint())
+        # Serve the auto-generated OpenAPI 3.1 spec at /openapi.json and a Scalar UI at /docs.
+        # Tag descriptions are defined on the resources/endpoints themselves (see their meta);
+        # pass tags=[Tag(...)] here only for app-level tags or to pin the section order.
+        self.include_openapi(title="Demo API", version="0.1.0")
 
 
 app = DemoApp()

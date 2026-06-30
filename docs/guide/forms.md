@@ -57,6 +57,12 @@ A form field can be:
 - **`list[...]`** of any of the above — repeated parts under the same name.
 - Any of the above wrapped in `| None` — an optional part.
 
+Fields accept `msgspec.Meta` like anywhere else — `quantity:
+Annotated[int, Meta(ge=1, description="How many")]` (or inside the wrapper,
+`FormPart[Annotated[str, Meta(min_length=2)]]`). The constraints are enforced on the
+request and surface in the [OpenAPI schema](openapi.md) (files are documented as binary;
+everything else carries its full schema, `Meta` and `$ref`s included).
+
 ## Envelope metadata — `FormPart` and `FilePart`
 
 Plain field types give you just the value. When you need a part's `content_type`,

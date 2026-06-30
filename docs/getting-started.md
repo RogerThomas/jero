@@ -89,7 +89,7 @@ response, and a method name (`read_one`) that maps to `GET`.
 The `Struct` requirement is deliberate. JSON request bodies, JSON responses, query
 params, path params, headers, forms, auth users, and response headers all use typed
 contracts. That is what gives jero validation, fast msgspec serialization, startup
-errors for invalid wiring, and the source material for the coming OpenAPI generator.
+errors for invalid wiring, and the source material for the [OpenAPI generator](guide/openapi.md).
 If a handler returns a raw `dict`, jero can't prove or document its shape, so it is a
 startup error.
 

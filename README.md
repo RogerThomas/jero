@@ -75,7 +75,7 @@ request/response contract, and they're verified at startup.
 </tr>
 <tr>
 <td>🔒&nbsp;<strong>Typed</strong></td>
-<td>Fully static under pyright-strict, leaning hard into modern Python typing — PEP 695 generics (<code>JSONResponse[Body, Headers]</code>, <code>BaseApp[Factory]</code>), bounded type-params, generic inheritance, <code>Protocol</code>s. A handler's signature <em>is</em> its schema, and the source of the coming OpenAPI spec.</td>
+<td>Fully static under pyright-strict, leaning hard into modern Python typing — PEP 695 generics (<code>JSONResponse[Body, Headers]</code>, <code>BaseApp[Factory]</code>), bounded type-params, generic inheritance, <code>Protocol</code>s. A handler's signature <em>is</em> its schema, and the source of the generated OpenAPI spec.</td>
 </tr>
 </table>
 
@@ -95,6 +95,8 @@ only lifecycle — the one thing plain Python doesn't give you.
 - **Multipart forms & uploads** — typed parts, file uploads, per-part headers.
 - **Auth checked at startup** — the `user` type is verified against your authenticator
   before a single request is served, not at runtime.
+- **OpenAPI 3.1, derived** — one `include_openapi` call serves the spec and a Scalar UI,
+  built from your types, docstrings, and `msgspec.Meta` constraints — no decorators.
 - **Lifecycle without a DI container** — hand-wire in `wire`, open resources on exit
   stacks, group construction in a `BaseFactory`.
 - **REST semantics for free** — 404/400/422/401/405, auto `HEAD` + `OPTIONS`, camelCase

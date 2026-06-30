@@ -21,7 +21,7 @@ msgspec-first ASGI framework for typed JSON APIs.
 | JSON responses | `Struct`, `list[Struct]`, or typed response wrappers | Broad return support | Broad return support | Broad return support |
 | Startup validation | Aggressive wiring checks before serving | Some checks at startup, many errors remain request-dependent | Framework-dependent | Broad configuration and route validation |
 | Runtime introspection | Avoided on the request path | More dynamic | Depends on feature | Depends on feature |
-| OpenAPI direction | Derived from typed contracts | Built in | Supported | Built in |
+| OpenAPI | Built in, derived from typed contracts | Built in | Supported | Built in |
 | Philosophy | Narrow and opinionated | Ergonomic and broadly useful | Performance-oriented and flexible | Feature-rich and structured |
 
 This table is necessarily simplified. Each framework has more nuance than a matrix can

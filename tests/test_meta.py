@@ -6,7 +6,15 @@ import types
 
 import pytest
 
-from jero import Endpoint, EndpointMeta, OperationMeta, Resource, ResourceMeta, WiringError
+from jero import (
+    Endpoint,
+    EndpointMeta,
+    OperationMeta,
+    Resource,
+    ResourceMeta,
+    ResponseSpec,
+    WiringError,
+)
 
 
 class ThingsEndpoint(
@@ -84,3 +92,24 @@ def test_operation_id_is_operation_only() -> None:
     assert not hasattr(EndpointMeta(), "operation_id")
     assert not hasattr(ResourceMeta(), "operation_id")
     assert OperationMeta().operation_id is None
+
+
+def test_operation_meta_carries_summary_description_responses() -> None:
+    """OperationMeta stores the documentation overrides and extra responses."""
+    meta = OperationMeta(
+        summary="summary",
+        description="description",
+        responses=[ResponseSpec(409, "conflict")],
+    )
+    assert meta.summary == "summary"
+    assert meta.description == "description"
+    assert meta.responses == [ResponseSpec(409, "conflict")]
+
+
+def test_documentation_fields_default_to_none_and_empty() -> None:
+    """The new fields default to None / empty, so undeclared meta documents nothing extra."""
+    assert OperationMeta().summary is None
+    assert OperationMeta().description is None
+    assert not OperationMeta().responses
+    assert not EndpointMeta().responses
+    assert not ResourceMeta().responses
