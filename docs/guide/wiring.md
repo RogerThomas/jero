@@ -23,8 +23,8 @@ service across resources? Build it once and pass it to each.
 > **Why `include_resource`, not `_include_resource`?** Technically they're private — you
 > only ever call them from *inside* your subclass. But a leading `_` reads as "keep out,"
 > which is wrong for the API you're meant to use. So the extension surface (`wire`,
-> `include_resource`, `enter`, `aenter`) is named publicly: looking off-limits for your
-> main tool is the worse failure.
+> `include_resource`, `include_endpoint`, `enter`, `aenter`, `factory`) is named publicly:
+> looking off-limits for your main tool is the worse failure.
 
 ## Lifecycle: `enter` / `aenter`
 

@@ -1809,11 +1809,13 @@ class _StackScope:
     _astack: AsyncExitStack
 
     def enter[T](self, cm: AbstractContextManager[T]) -> T:
-        """Open a sync context manager; closed at shutdown."""
+        """Open a sync context manager, closed at the app's shutdown (a ``BaseFactory``
+        borrows the app's stacks, so resources it enters share the app's lifetime)."""
         return self._stack.enter_context(cm)
 
     async def aenter[T](self, cm: AbstractAsyncContextManager[T]) -> T:
-        """Open an async context manager; closed at shutdown."""
+        """Open an async context manager, closed at the app's shutdown (a ``BaseFactory``
+        borrows the app's stacks, so resources it enters share the app's lifetime)."""
         return await self._astack.enter_async_context(cm)
 
 
@@ -1878,7 +1880,12 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         self._reverser = _Reverser(base_url=base_url, trust_forwarded=trust_forwarded)
         self._stack = ExitStack()
         self._astack = AsyncExitStack()
-        self.factory: FactoryT = factory if factory is not None else self._make_factory()
+        self._factory: FactoryT = factory if factory is not None else self._make_factory()
+
+    @property
+    def factory(self) -> FactoryT:
+        """The built factory, read inside ``wire``. Set once at construction (read-only)."""
+        return self._factory
 
     def _decoder(self, struct_type: type[Struct]) -> Decoder[Struct]:
         """The reusable typed JSON decoder for ``struct_type``, built once per app.
