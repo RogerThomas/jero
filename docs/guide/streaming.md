@@ -44,8 +44,8 @@ class MoviesEndpoint(Endpoint, path="/movies"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_endpoint(MoviesEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(MoviesEndpoint())
 
 
 app = App()
@@ -78,8 +78,8 @@ class EventsEndpoint(Endpoint, path="/events"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_endpoint(EventsEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(EventsEndpoint())
 
 
 app = App()
@@ -114,8 +114,8 @@ class CSVEndpoint(Endpoint, path="/export"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_endpoint(CSVEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(CSVEndpoint())
 
 
 app = App()
@@ -169,8 +169,8 @@ class ExportEndpoint(Endpoint, path="/movies/export"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_endpoint(ExportEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(ExportEndpoint())
 
 
 app = App()

@@ -15,7 +15,7 @@ msgspec-first ASGI framework for typed JSON APIs.
 | ---- | ---- | ------- | ---------- | -------- |
 | Route style | Class-based `Resource` / `Endpoint` | Decorator functions | Decorators and controller-style APIs | Decorators and controller-style APIs |
 | REST resources | First-class CRUD method names | User-defined routes | User-defined routes/controllers | User-defined routes/controllers |
-| Dependency model | Constructor wiring in `_wire`; no DI container | Dependency injection system | Framework services / injection features | Dependency injection system |
+| Dependency model | Constructor wiring in `wire`; no DI container | Dependency injection system | Framework services / injection features | Dependency injection system |
 | Validation model | msgspec `Struct`s | Pydantic / typing based | Framework validation options | Pydantic, msgspec, attrs, dataclasses, and others |
 | JSON request bodies | `Struct` only | Model or compatible body types | Multiple supported styles | Multiple supported styles |
 | JSON responses | `Struct`, `list[Struct]`, or typed response wrappers | Broad return support | Broad return support | Broad return support |
@@ -51,7 +51,7 @@ class WidgetResource(Resource, path="/widgets"):
 ```
 
 FastAPI also has a powerful dependency system. jero deliberately does not. In jero,
-dependencies are constructor arguments, and `_wire` is where objects are built and
+dependencies are constructor arguments, and `wire` is where objects are built and
 registered. That loses some convenience and some plugin-style flexibility, but it makes
 the application graph explicit and keeps framework work out of the request path.
 
