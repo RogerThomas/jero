@@ -355,7 +355,7 @@ wheels = [
 
 [[package]]
 name = "jero"
-version = "0.0.35"
+version = "0.0.36"
 source = { editable = "." }
 dependencies = [
     { name = "msgspec" },
@@ -597,7 +597,7 @@ name = "markdown-it-py"
 version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "mdurl", marker = "python_full_version >= '3.14'" },
+    { name = "mdurl" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/06/ff/7841249c247aa650a76b9ee4bbaeae59370dc8bfd2f6c01f3630c35eb134/markdown_it_py-4.2.0.tar.gz", hash = "sha256:04a21681d6fbb623de53f6f364d352309d4094dd4194040a10fd51833e418d49", size = 82454, upload-time = "2026-05-07T12:08:28.36Z" }
 wheels = [
@@ -1323,8 +1323,8 @@ name = "rich"
 version = "15.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "markdown-it-py", marker = "python_full_version >= '3.14'" },
-    { name = "pygments", marker = "python_full_version >= '3.14'" },
+    { name = "markdown-it-py" },
+    { name = "pygments" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c0/8f/0722ca900cc807c13a6a0c696dacf35430f72e0ec571c4275d2371fca3e9/rich-15.0.0.tar.gz", hash = "sha256:edd07a4824c6b40189fb7ac9bc4c52536e9780fbbfbddf6f1e2502c31b068c36", size = 230680, upload-time = "2026-04-12T08:24:00.75Z" }
 wheels = [
@@ -1336,7 +1336,7 @@ name = "rich-argparse"
 version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "rich", marker = "python_full_version >= '3.14'" },
+    { name = "rich" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6a/e5/1064c43203a357d668cd42435f7a15fe6af51512d85b2104fecb937aa861/rich_argparse-1.8.0.tar.gz", hash = "sha256:679df3d832fa94ad6e4bdb07ded088cd7ea2dddc58ae9b2b46346a40b06cbc0c", size = 38940, upload-time = "2026-05-01T15:18:43.604Z" }
 wheels = [
@@ -1538,8 +1538,8 @@ name = "yeetr"
 version = "2026.6.20"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "rich", marker = "python_full_version >= '3.14'" },
-    { name = "rich-argparse", marker = "python_full_version >= '3.14'" },
+    { name = "rich" },
+    { name = "rich-argparse" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/bf/46/68522b6a366da54de8c33f235aa0b9b000b7e78c20f73889f7058d36e368/yeetr-2026.6.20.tar.gz", hash = "sha256:4c88f594fdca6584a1ade5480aaf21997dce28194825f9f967063477c764a0cf", size = 20471, upload-time = "2026-06-20T11:36:54.395Z" }
 wheels = [
