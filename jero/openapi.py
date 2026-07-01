@@ -14,7 +14,7 @@ no extra work here.
 """
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from msgspec import Struct
 from msgspec.json import schema_components
@@ -108,10 +108,17 @@ class Error(Struct):
 
 class ModelMeta(Struct):
     """OpenAPI metadata for a model (a wire ``Struct``), attached via the ``meta=`` class
-    keyword of :class:`~jero.Struct`. ``description`` becomes the model's schema
-    description — explicit, never inferred from the class docstring."""
+    keyword of :class:`~jero.Struct`.
+
+    ``description`` becomes the model's schema description — explicit, never inferred from
+    the class docstring. ``name`` overrides the key the model gets under
+    ``components.schemas`` (and every ``$ref`` that points at it); use it to give a model a
+    stable public name or to disambiguate two same-named Structs that would otherwise
+    collide.
+    """
 
     description: str | None = None
+    name: str | None = None
 
 
 class Tag(Struct):
@@ -203,6 +210,11 @@ class OperationInput:
     security: tuple[str, ...] = ()  # required scheme names (referenced from securitySchemes)
 
 
+class OpenAPINameConflictError(Exception):
+    """Two OpenAPI components would claim the same ``components.schemas`` name — e.g. two
+    models with the same ``ModelMeta(name=...)``, or a ``name`` that hits an existing key."""
+
+
 def _ref_name(ref_schema: dict[str, Any]) -> str:
     """The bare component name from a ``{"$ref": "#/components/schemas/Name"}`` schema."""
     return ref_schema["$ref"].rsplit("/", 1)[-1]
@@ -281,6 +293,46 @@ def _model_examples(properties: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _rewrite_refs(node: object, renames: dict[str, str]) -> None:
+    """Rewrite, in place, every ``$ref`` under ``node`` whose component was renamed."""
+    if isinstance(node, dict):
+        mapping = cast("dict[str, Any]", node)
+        ref = mapping.get("$ref")
+        if isinstance(ref, str):
+            name = ref.rsplit("/", 1)[-1]
+            if name in renames:
+                mapping["$ref"] = f"#/components/schemas/{renames[name]}"
+        for value in mapping.values():
+            _rewrite_refs(value, renames)
+    elif isinstance(node, list):
+        for item in cast("list[Any]", node):
+            _rewrite_refs(item, renames)
+
+
+def _apply_component_names(
+    components: dict[str, dict[str, Any]],
+    refs: dict[object, dict[str, Any]],
+    renames: dict[str, str],
+) -> dict[str, dict[str, Any]]:
+    """Rename component keys per ``renames`` and rewrite every ``$ref`` (in the components
+    and in the per-type ref map) to match, in place. Raises ``OpenAPINameConflictError`` if two
+    components would end up sharing a name."""
+    seen: set[str] = set()
+    for name in (renames.get(name, name) for name in components):
+        if name in seen:
+            raise OpenAPINameConflictError(
+                f"OpenAPI component name {name!r} is claimed by more than one model — "
+                f"give each a unique ModelMeta(name=...)",
+            )
+        seen.add(name)
+    renamed = {renames.get(name, name): schema for name, schema in components.items()}
+    for schema in renamed.values():
+        _rewrite_refs(schema, renames)
+    for ref in refs.values():
+        _rewrite_refs(ref, renames)
+    return renamed
+
+
 def _build_schemas(types: list[object]) -> _Schemas:
     schemas, components = schema_components(types, ref_template="#/components/schemas/{name}")
     refs = dict(zip(types, schemas, strict=True))
@@ -289,12 +341,20 @@ def _build_schemas(types: list[object]) -> _Schemas:
     # jero.Struct's meta=). Field-level descriptions live in `properties`, untouched.
     for component in components.values():
         component.pop("description", None)
+    renames: dict[str, str] = {}
     for typ, ref in refs.items():
         # Read from the type's own __dict__, not getattr (which walks the MRO): a subclass
-        # without its own meta= must not inherit — and publish — its parent's description.
+        # without its own meta= must not inherit — and publish — its parent's metadata.
         meta = typ.__dict__.get("__model_meta__") if isinstance(typ, type) else None
-        if isinstance(meta, ModelMeta) and meta.description is not None:
-            components[_ref_name(ref)]["description"] = meta.description
+        if not isinstance(meta, ModelMeta):
+            continue
+        name = _ref_name(ref)
+        if meta.description is not None:
+            components[name]["description"] = meta.description
+        if meta.name is not None and meta.name != name:
+            renames[name] = meta.name
+    if renames:
+        components = _apply_component_names(components, refs, renames)
     return _Schemas(refs=refs, components=components)
 
 

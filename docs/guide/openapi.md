@@ -134,6 +134,20 @@ A model's schema `description` is **explicit**, never taken from the class docst
 maintainer note can't leak into the public spec) — it comes only from a `ModelMeta` passed
 through the `meta=` keyword above, exactly like `Resource`/`Endpoint` take their `meta`.
 
+### Component names
+
+By default a model's key under `components.schemas` (and every `$ref` that points at it) is
+its class name. `ModelMeta(name=...)` overrides it:
+
+```python
+class Widget(Base, meta=ModelMeta(name="PublicWidget")):
+    name: str
+```
+
+Use it to give a model a stable public name independent of the Python class, or to
+disambiguate two same-named Structs that would otherwise collide. Two models resolving to
+the same component name is a startup `WiringError`.
+
 > **Docstrings are never published.** Public prose is always explicit:
 > `OperationMeta.summary`/`description` for operations, `ModelMeta` for models, field
 > `Meta` for fields. A docstring stays what it should be — a note to maintainers.

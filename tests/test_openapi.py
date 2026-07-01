@@ -1179,3 +1179,85 @@ def test_meta_field_coexists_with_meta_kwarg() -> None:
         envelope = document["components"]["schemas"]["EnvelopeModel"]
         assert "meta" in envelope["properties"]  # the wire field survives
         assert envelope["description"] == "A response envelope."  # the meta= description applies
+
+
+# --- Model component name (ModelMeta.name) ---
+
+
+class RenamedModel(JeroStruct, meta=ModelMeta(name="CustomWidget")):
+    """A model whose component key is overridden via ModelMeta(name=...)."""
+
+    id: str
+
+
+class WrapperModel(Struct):
+    """Embeds the renamed model, so its property is a $ref that must be rewritten too."""
+
+    item: RenamedModel
+
+
+class NameEndpoint(Endpoint, path="/renamed"):
+    """Uses the renamed model as a body and a wrapper of it as the response."""
+
+    async def post(self, json: RenamedModel) -> WrapperModel:
+        """Post."""
+        return WrapperModel(item=json)
+
+
+class NameApp(BaseApp):
+    """App exercising ModelMeta(name=...)."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(NameEndpoint())
+        self.include_openapi(title="title", version="version")
+
+
+def test_model_name_overrides_component_key() -> None:
+    """ModelMeta(name=...) renames the component and every $ref that points at it."""
+    with TestClient(NameApp()) as client:
+        document = client.get("/openapi.json").json()
+        schemas = document["components"]["schemas"]
+        assert "CustomWidget" in schemas  # the override is the component key
+        assert "RenamedModel" not in schemas  # the class name is gone
+        body = document["paths"]["/renamed"]["post"]["requestBody"]
+        assert body["content"]["application/json"]["schema"]["$ref"] == (
+            "#/components/schemas/CustomWidget"
+        )
+        # a nested $ref (WrapperModel.item -> RenamedModel) is rewritten to the new name
+        assert schemas["WrapperModel"]["properties"]["item"]["$ref"] == (
+            "#/components/schemas/CustomWidget"
+        )
+
+
+class DupeNameA(JeroStruct, meta=ModelMeta(name="Shared")):
+    """First model claiming the component name 'Shared'."""
+
+    a: str
+
+
+class DupeNameB(JeroStruct, meta=ModelMeta(name="Shared")):
+    """Second model claiming the same component name 'Shared'."""
+
+    b: str
+
+
+class DupeNameEndpoint(Endpoint, path="/dupe"):
+    """Two models that both claim the component name 'Shared'."""
+
+    async def post(self, json: DupeNameA) -> DupeNameB:
+        """Post."""
+        return DupeNameB(b=json.a)
+
+
+class DupeNameApp(BaseApp):
+    """App whose two models collide on ModelMeta(name=...)."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(DupeNameEndpoint())
+        self.include_openapi(title="title", version="version")
+
+
+def test_conflicting_model_names_is_a_wiring_error() -> None:
+    """Two models claiming the same component name fail loud at startup."""
+    with pytest.raises(RuntimeError, match="claimed by more than one model"):
+        TestClient(DupeNameApp())

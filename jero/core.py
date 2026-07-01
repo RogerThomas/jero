@@ -108,7 +108,14 @@ from jero.links import (
     validate_path_params,
 )
 from jero.multipart import MultipartError, MultipartParser, parse_options_header
-from jero.openapi import Info, OperationInput, SecurityScheme, Tag, build_openapi
+from jero.openapi import (
+    Info,
+    OpenAPINameConflictError,
+    OperationInput,
+    SecurityScheme,
+    Tag,
+    build_openapi,
+)
 from jero.streaming import (
     NDJSONStreamingResponse,
     ServerSentEvent,
@@ -2187,6 +2194,9 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         )
         try:
             document = build_openapi(info, operations, schemes)
+        except OpenAPINameConflictError as exc:
+            # A ModelMeta(name=...) override collided with another component's name.
+            raise WiringError(str(exc)) from exc
         except KeyError as exc:
             # msgspec.json.schema_components keys components by type name and raises KeyError
             # when two distinct Structs share a name in the same module.
