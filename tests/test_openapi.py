@@ -23,9 +23,12 @@ from jero import (
     JSONResponse,
     ModelMeta,
     OperationMeta,
+    Resource,
+    ResourceMeta,
     ResponseSpec,
     SecurityScheme,
     SSEResponse,
+    StreamingResponse,
     Tag,
     TestClient,
 )
@@ -820,6 +823,11 @@ def test_security_scheme_constructors() -> None:
         "in": "cookie",
         "name": "session",
     }
+    assert SecurityScheme.http_bearer(description="A JWT bearer token.").to_openapi() == {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "A JWT bearer token.",
+    }
 
 
 @pytest.mark.parametrize("base", [BearerAuth, type("X", (), {})])
@@ -1261,3 +1269,70 @@ def test_conflicting_model_names_is_a_wiring_error() -> None:
     """Two models claiming the same component name fail loud at startup."""
     with pytest.raises(RuntimeError, match="claimed by more than one model"):
         TestClient(DupeNameApp())
+
+
+# --- Class-level meta responses & body-carrying response specs ---
+
+
+class Conflict(Struct):
+    """A domain conflict body, documented via a class-level meta response."""
+
+    reason: str
+
+
+class ClassRespResource(
+    Resource,
+    path="/things",
+    meta=ResourceMeta(responses=[ResponseSpec(409, "Already exists", model=Conflict)]),
+):
+    """A class-level ResourceMeta.responses entry with a body model, applied to every op."""
+
+    async def create(self, json: Item) -> Item:
+        """Create."""
+        return json
+
+
+class ClassRespApp(BaseApp):
+    """A class-level meta response that carries a body model."""
+
+    async def wire(self) -> None:
+        self.include_resource(ClassRespResource())
+        self.include_openapi(title="title", version="version")
+
+
+def test_class_meta_response_with_model() -> None:
+    """A class-level ResourceMeta.responses entry with a model documents a $ref body."""
+    with TestClient(ClassRespApp()) as client:
+        post = client.get("/openapi.json").json()["paths"]["/things"]["post"]
+        response = post["responses"]["409"]
+        assert response["description"] == "Already exists"
+        assert response["content"]["application/json"]["schema"]["$ref"] == (
+            "#/components/schemas/Conflict"
+        )
+
+
+class BytesStreamEndpoint(Endpoint, path="/bytes-stream"):
+    """StreamingResponse[H] documents an octet-stream body with typed response headers."""
+
+    async def _chunks(self) -> AsyncIterator[bytes]:
+        yield b"chunk"
+
+    async def get(self) -> StreamingResponse[RateHeaders]:
+        """Get."""
+        return StreamingResponse(stream=self._chunks(), headers=RateHeaders(x_rate_limit=1))
+
+
+class BytesStreamApp(BaseApp):
+    """A bytes-stream response carrying typed headers."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(BytesStreamEndpoint())
+        self.include_openapi(title="title", version="version")
+
+
+def test_bytes_stream_documents_octet_stream_and_headers() -> None:
+    """StreamingResponse[H] is octet-stream, and H becomes the documented response headers."""
+    with TestClient(BytesStreamApp()) as client:
+        ok = client.get("/openapi.json").json()["paths"]["/bytes-stream"]["get"]["responses"]["200"]
+        assert "application/octet-stream" in ok["content"]
+        assert "x-rate-limit" in ok["headers"]

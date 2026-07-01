@@ -47,24 +47,45 @@ class SecurityScheme(Struct, frozen=True):
 
     @classmethod
     def http_bearer(
-        cls, *, bearer_format: str | None = None, scheme_name: str = "bearerAuth"
+        cls,
+        *,
+        bearer_format: str | None = None,
+        description: str | None = None,
+        scheme_name: str = "bearerAuth",
     ) -> "SecurityScheme":
         """An ``Authorization: Bearer <token>`` scheme (the authed-route default)."""
         return cls(
-            type="http", scheme="bearer", bearer_format=bearer_format, scheme_name=scheme_name
+            type="http",
+            scheme="bearer",
+            bearer_format=bearer_format,
+            description=description,
+            scheme_name=scheme_name,
         )
 
     @classmethod
-    def http_basic(cls, *, scheme_name: str = "basicAuth") -> "SecurityScheme":
+    def http_basic(
+        cls, *, description: str | None = None, scheme_name: str = "basicAuth"
+    ) -> "SecurityScheme":
         """An ``Authorization: Basic <credentials>`` scheme."""
-        return cls(type="http", scheme="basic", scheme_name=scheme_name)
+        return cls(type="http", scheme="basic", description=description, scheme_name=scheme_name)
 
     @classmethod
     def api_key(
-        cls, *, name: str, location: ApiKeyLocation, scheme_name: str = "apiKeyAuth"
+        cls,
+        *,
+        name: str,
+        location: ApiKeyLocation,
+        description: str | None = None,
+        scheme_name: str = "apiKeyAuth",
     ) -> "SecurityScheme":
         """A token carried in a named header, query param, or cookie."""
-        return cls(type="apiKey", name=name, location=location, scheme_name=scheme_name)
+        return cls(
+            type="apiKey",
+            name=name,
+            location=location,
+            description=description,
+            scheme_name=scheme_name,
+        )
 
     def to_openapi(self) -> dict[str, Any]:
         """Render the OpenAPI ``securitySchemes`` entry for this scheme."""
