@@ -29,11 +29,13 @@ class DemoApp(BaseApp[Factory]):
         widgets_service = await self._factory.create_widget_service()
         analytics_service = await self._factory.create_analytics_service()
         questions_service = await self._factory.create_questions_service()
+        upstream_response_error_handler = self._factory.create_upstream_response_error_handler()
         # The queue is opened after the analytics service it dispatches to, so it drains
         # before that service would be torn down.
         background_tasks = await self._aenter(BackgroundTasks(drain_timeout=1.0))
         background_tasks.register(analytics_service.process)
         auth = TokenAuth({"token": User(id="user-id", name="user-name")})
+        self._add_exception_handler(upstream_response_error_handler)
         self._include_resource(WidgetResource(widgets_service, background_tasks), auth=auth)
         self._include_endpoint(WhoAmIEndpoint(), auth=auth)
         self._include_endpoint(HealthEndpoint())

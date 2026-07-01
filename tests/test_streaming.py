@@ -19,6 +19,15 @@ from jero import (
 )
 
 
+class SetupFailedError(
+    HTTPError,
+    type="stream-setup-failed",
+    title="Stream setup failed",
+    status=418,
+):
+    """The stream failed before response headers were sent."""
+
+
 class Item(Struct):
     """A streamed payload item."""
 
@@ -137,7 +146,7 @@ class SetupErrorEndpoint(Endpoint, path="/stream"):
         yield Item(name="never")
 
     async def _lifecycle(self) -> AsyncGenerator[AsyncIterable[Item]]:
-        raise HTTPError(418, "setup failed")
+        raise SetupFailedError()
         # Unreachable, but required to make this an async generator: setup raises
         # before any item is produced.
         yield self._items()  # pylint: disable=unreachable
@@ -268,7 +277,11 @@ def test_setup_error_is_normal_error_response() -> None:
     with TestClient(_EndpointApp(SetupErrorEndpoint())) as client:
         resp = client.get("/stream")
         assert resp.status_code == 418
-        assert resp.json() == {"error": "setup failed"}
+        assert resp.json() == {
+            "type": "stream-setup-failed",
+            "title": "Stream setup failed",
+            "status": 418,
+        }
 
 
 def test_head_skips_stream_iteration() -> None:

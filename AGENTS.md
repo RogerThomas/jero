@@ -136,6 +136,25 @@ These pull against each other constantly; keep all three in mind on every change
   `@dataclass` (like the streaming ones), generic over body `T` and headers `H` so
   both schemas survive to the OpenAPI spec — a bare `JSONResponse` (no `[T]`) is a
   pyright-strict error on purpose.
+- **Errors**: API errors use jero's typed Problem Details format. Its intentional RFC
+  9457 deviation is that `type` is a stable short machine code, not a URI. Define a
+  static error as an `HTTPError` subclass with class-level `type` / `title` / `status`
+  and optional `docs`; use `DataclassHTTPError[Params]` plus `detail_template` when an
+  occurrence has runtime values. Parameterized errors always emit both human-only
+  `detail` and machine-readable typed `params`; static errors emit neither. Uncaught
+  exceptions become the generic `internal-server-error` problem. Always raise an
+  exception instance (`raise WidgetNotFoundError()`), never the exception class.
+- **Custom exception handlers**: hand-wire a structurally typed object with
+  `handle_exception(exception: E) -> ErrorResponse1 | ErrorResponse2 | None` via
+  `_add_exception_handler`; no base class or decorator. Returning `None` continues
+  default handling (`HTTPError` serializes itself, anything else becomes the generic
+  500); returning a declared `HTTPError` sends its Problem Details, while returning
+  `ExceptionResponse` sends its required per-occurrence `status_code`, typed JSON
+  Struct, and optional typed/raw headers and links. Signatures are compiled from every
+  concrete `HTTPError` / `ExceptionResponse[T, H]` return-union member
+  at wiring, nearest-MRO registration wins, and registering the same exception type
+  twice is a `WiringError`. Its status must be 400–599; a handler failure becomes the
+  generic 500 without recursively invoking handlers.
 - **A JSON body is always a Struct — never a raw `dict`.** The
   `@api.get(...) → return {"a": 1}` idiom is gone: a `dict`/blob return is a
   `WiringError` at startup. JSON in and out is a typed Struct, every time — that's
@@ -176,6 +195,8 @@ These pull against each other constantly; keep all three in mind on every change
   types. `jero/background.py` — the in-process `BackgroundTasks` queue.
   `jero/links.py` — `Location` / `Link` and their reverse-routing targets (a leaf module
   `core` and `streaming` both import). `jero/headers.py` — the `RawHeaders` opaque bag.
+  `jero/errors.py` — typed Problem Details Structs, `HTTPError` foundations, and the
+  framework's fixed error types.
   `jero/codecs.py` — the
   shared reusable `msgspec_encoder` / `msgspec_decoder` (imported by `core`,
   `streaming`, `testing`; SSE wire-formatting lives in `streaming.py` as the
@@ -208,7 +229,8 @@ These pull against each other constantly; keep all three in mind on every change
   response kinds — generic `JSONResponse[T, H]` / `BytesResponse[H]` / streaming
   `[T, H]` with typed response headers, `raw_headers`, and `status_code` overrides
   — `BaseApp`/`BaseFactory` lifecycle, in-process `BackgroundTasks`, reverse-routed
-  `Location` / `Link` responses, `TestClient`, the test suite.
+  `Location` / `Link` responses, typed Problem Details errors, structurally registered
+  custom exception handlers, `TestClient`, the test suite.
 - **Performance (validated natively)**: on the authed write path
   (`POST /movies` — bearer auth + JSON decode + encode + 201, C=200), jero ≈
   blacksheep (~43k req/s, a tie), ~2× litestar, ~3× robyn, ~6× idiomatic FastAPI.

@@ -10,15 +10,17 @@ import niquests
 from msgspec.json import decode as json_decode
 from msgspec.json import encode as json_encode
 
+from demo_app.errors import UpstreamResponseError, WidgetNotFoundError
 from demo_app.models import Widget, WidgetIn, WidgetPatch
-from jero import HTTPError
 
 
 def _body(resp: niquests.Response) -> bytes:
     """The response body, guarding niquests' optional ``content``."""
+    if resp.status_code == 503:
+        raise UpstreamResponseError(retryable=True)
     content = resp.content
     if content is None:
-        raise HTTPError(502, "empty upstream response")
+        raise UpstreamResponseError(retryable=False)
     return content
 
 
@@ -50,7 +52,7 @@ class WidgetService:
         """Fetch one widget, raising 404 when the upstream has none."""
         resp = await self._request("GET", f"/widgets/{widget_id}")
         if resp.status_code == 404:
-            raise HTTPError(404, "widget not found")
+            raise WidgetNotFoundError(widget_id=widget_id)
         return json_decode(_body(resp), type=Widget)
 
     async def create_widget(self, data: WidgetIn) -> Widget:

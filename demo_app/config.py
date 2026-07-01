@@ -22,6 +22,7 @@ class Settings(Struct):
     widget_api_key: str
     openai_api_key: str
     widget_base_url: str = "http://base-url"
+    widget_retry_after_seconds: int = 30
     openai_model: str = "gpt-4o-mini"
 
 

@@ -187,15 +187,6 @@ too.
 
 ## Errors
 
-Raise `HTTPError(status, detail)` from anywhere in a handler to short-circuit with a
-JSON error body:
-
-```python
-from jero import HTTPError
-
-if widget is None:
-    raise HTTPError(404, "widget not found")
-# -> 404  {"error": "widget not found"}
-```
-
-See [REST & error semantics](rest.md) for the full status-code map.
+Raise a typed `HTTPError` subclass from a handler to short-circuit with a Problem
+Details response. See [REST & error semantics](rest.md) for static and parameterized
+errors, custom exception handlers, and the full status-code map.

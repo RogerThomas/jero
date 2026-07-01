@@ -374,6 +374,11 @@ def test_form_requires_multipart_content_type(client: TestClient) -> None:
     resp = client.post("/jobs", json={})
 
     assert resp.status_code == 415
+    assert resp.json() == {
+        "type": "unsupported-media-type",
+        "title": "Unsupported media type",
+        "status": 415,
+    }
 
 
 def test_form_without_content_type_is_415(client: TestClient) -> None:

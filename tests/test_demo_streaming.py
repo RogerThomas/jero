@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from pytest_mock import MockerFixture
 
 from demo_app import AnalyticsService, DemoApp, Factory, QuestionsService, WidgetService
+from demo_app.errors import UpstreamResponseErrorHandler
 from demo_app.models import AnswerChunk
 from jero import TestClient
 
@@ -26,6 +27,7 @@ def test_questions_streams_ndjson_answer_chunks(mocker: MockerFixture) -> None:
     )
     factory.create_analytics_service.return_value = AnalyticsService(processed=[])
     factory.create_questions_service.return_value = questions_service
+    factory.create_upstream_response_error_handler.return_value = UpstreamResponseErrorHandler(30)
     with TestClient(DemoApp(factory=factory)) as client:
         chunks = list(client.stream_post("/questions", json={"text": "question"}))
     assert chunks == [{"text": "chunk-one"}, {"text": "chunk-two"}]

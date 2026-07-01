@@ -14,6 +14,22 @@ from msgspec import Struct
 from jero import BaseApp, BaseFactory, HTTPError, JSONResponse, Resource
 
 
+class InvalidTokenError(
+    HTTPError,
+    type="invalid-token",
+    title="Invalid token",
+    status=401,
+): ...
+
+
+class WidgetNotFoundError(
+    HTTPError,
+    type="widget-not-found",
+    title="Widget not found",
+    status=404,
+): ...
+
+
 class Credentials(Struct):
     authorization: str
 
@@ -44,7 +60,7 @@ class TokenAuth:
     def authenticate(self, headers: Credentials) -> User:
         token = headers.authorization.removeprefix("Bearer ").strip()
         if token != "token":
-            raise HTTPError(401, "invalid token")
+            raise InvalidTokenError()
         return User(id="user-id", name="user-name")
 
 
@@ -56,7 +72,7 @@ class WidgetStore:
         try:
             return self._widgets[widget_id]
         except KeyError:
-            raise HTTPError(404, "widget not found") from None
+            raise WidgetNotFoundError() from None
 
     async def list_for_user(self, user: User) -> list[Widget]:
         return [widget for widget in self._widgets.values() if widget.owner_id == user.id]
@@ -75,7 +91,7 @@ class WidgetService:
     async def get_widget(self, user: User, widget_id: str) -> Widget:
         widget = await self._store.get(widget_id)
         if widget.owner_id != user.id:
-            raise HTTPError(404, "widget not found")
+            raise WidgetNotFoundError()
         return widget
 
     async def list_widgets(self, user: User) -> list[Widget]:

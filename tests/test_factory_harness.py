@@ -14,6 +14,11 @@ from typing import Self
 import pytest
 
 from demo_app import Factory, WidgetService
+from demo_app.errors import (
+    UpstreamResponseError,
+    UpstreamResponseErrorHandler,
+    UpstreamUnavailableError,
+)
 from jero import BaseFactory, FactoryHarness
 
 
@@ -91,3 +96,14 @@ def test_harness_builds_the_real_factory_service(harness: FactoryHarness[Factory
     """The harness builds an actual service from the demo app's factory."""
     service = harness.run(harness.factory.create_widget_service())
     assert isinstance(service, WidgetService)
+
+
+def test_harness_builds_upstream_response_error_handler(
+    harness: FactoryHarness[Factory],
+) -> None:
+    """The real factory builds the handler from settings."""
+    handler = harness.factory.create_upstream_response_error_handler()
+    assert isinstance(handler, UpstreamResponseErrorHandler)
+    error = harness.run(handler.handle_exception(UpstreamResponseError(retryable=True)))
+    assert isinstance(error, UpstreamUnavailableError)
+    assert error.retry_after_seconds == 30

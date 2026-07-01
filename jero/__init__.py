@@ -9,12 +9,18 @@ from jero.core import (
     BytesResponse,
     Endpoint,
     EndpointMeta,
-    HTTPError,
+    ExceptionResponse,
     JSONResponse,
     OperationMeta,
     Resource,
     ResourceMeta,
     WiringError,
+)
+from jero.errors import (
+    DataclassHTTPError,
+    HTTPError,
+    ParameterizedHTTPError,
+    Problem,
 )
 from jero.forms import FilePart, FormPart
 from jero.headers import RawHeaders
@@ -28,8 +34,10 @@ __all__ = [
     "BaseApp",
     "BaseFactory",
     "BytesResponse",
+    "DataclassHTTPError",
     "Endpoint",
     "EndpointMeta",
+    "ExceptionResponse",
     "FactoryHarness",
     "FilePart",
     "FormPart",
@@ -39,6 +47,8 @@ __all__ = [
     "Location",
     "NDJSONStreamingResponse",
     "OperationMeta",
+    "ParameterizedHTTPError",
+    "Problem",
     "RawHeaders",
     "Resource",
     "ResourceMeta",

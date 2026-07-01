@@ -12,9 +12,17 @@ def test_valid_token_injects_user(client: TestClient) -> None:
 
 def test_bad_token_is_401(client: TestClient) -> None:
     """An incorrect bearer token is rejected with 401."""
-    assert client.get("/me", headers={"authorization": "Bearer wrong"}).status_code == 401
+    resp = client.get("/me", headers={"authorization": "Bearer wrong"})
+    assert resp.status_code == 401
+    assert resp.json() == {"type": "invalid-token", "title": "Invalid token", "status": 401}
 
 
 def test_missing_auth_header_is_401(client: TestClient) -> None:
     """A missing authorization header is rejected with 401."""
-    assert client.get("/me").status_code == 401
+    resp = client.get("/me")
+    assert resp.status_code == 401
+    assert resp.json() == {
+        "type": "authentication-required",
+        "title": "Authentication required",
+        "status": 401,
+    }

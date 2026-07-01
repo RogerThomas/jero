@@ -10,6 +10,7 @@ import niquests
 from openai import AsyncOpenAI
 
 from demo_app.config import get_settings
+from demo_app.errors import UpstreamResponseErrorHandler
 from demo_app.services.analytics_service import AnalyticsService
 from demo_app.services.questions_service import QuestionsService
 from demo_app.services.widgets_service import WidgetService
@@ -24,6 +25,11 @@ class Factory(BaseFactory):
         settings = get_settings()
         client = await self._aenter(niquests.AsyncSession())
         return WidgetService(client, settings.widget_base_url, settings.widget_api_key)
+
+    def create_upstream_response_error_handler(self) -> UpstreamResponseErrorHandler:
+        """Build the upstream handler from its environment-selected retry setting."""
+        settings = get_settings()
+        return UpstreamResponseErrorHandler(settings.widget_retry_after_seconds)
 
     async def create_analytics_service(self) -> AnalyticsService:
         """Build the in-memory analytics recorder."""

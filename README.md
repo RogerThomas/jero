@@ -123,6 +123,14 @@ from msgspec.json import encode as json_encode
 from jero import BaseApp, BaseFactory, HTTPError, Resource
 
 
+class WidgetNotFoundError(
+    HTTPError,
+    type="widget-not-found",
+    title="Widget not found",
+    status=404,
+): ...
+
+
 class WidgetPath(Struct):
     widget_id: str
 
@@ -144,7 +152,7 @@ class WidgetService:
     async def fetch(self, widget_id: str) -> Widget:
         resp = await self._client.get(f"/widgets/{widget_id}")
         if resp.status_code == 404:
-            raise HTTPError(404, "widget not found")
+            raise WidgetNotFoundError()
         return json_decode(resp.content, type=Widget)
 
     async def create(self, data: WidgetIn) -> Widget:

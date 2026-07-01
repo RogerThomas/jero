@@ -14,12 +14,22 @@ def test_bad_body_type_is_422(client: TestClient) -> None:
         headers={"authorization": "Bearer token"},
     )
     assert resp.status_code == 422
+    assert resp.json() == {
+        "type": "validation-failed",
+        "title": "Validation failed",
+        "status": 422,
+    }
 
 
 def test_malformed_body_is_400(client: TestClient) -> None:
     """A syntactically invalid JSON body fails decoding with 400."""
     resp = client.post("/widgets", content=b'{"name":', headers={"authorization": "Bearer token"})
     assert resp.status_code == 400
+    assert resp.json() == {
+        "type": "malformed-request",
+        "title": "Malformed request",
+        "status": 400,
+    }
 
 
 def test_bad_query_param_is_400(client: TestClient) -> None:
@@ -116,6 +126,11 @@ def test_handler_side_validation_error_is_500() -> None:
     with TestClient(UpstreamDecodeApp()) as client:
         resp = client.get("/upstream-validation")
         assert resp.status_code == 500
+        assert resp.json() == {
+            "type": "internal-server-error",
+            "title": "Internal server error",
+            "status": 500,
+        }
 
 
 def test_handler_side_decode_error_is_500() -> None:
