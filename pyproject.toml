@@ -43,7 +43,6 @@ dev = [
     "pytest-mock>=3.15.1",
     "pytest-timeout>=2.4.0",
     "ruff>=0.15.16",
-    "yeetr>=2026.6.13; python_version >= '3.14'",
     "zensical>=0.0.26",
     "pyrefly>=1.1.1",
     "ty>=0.0.51",
@@ -52,6 +51,7 @@ dev = [
     "openai>=2.43.0",
     "pydantic-settings>=2.14.2",
     "openapi-spec-validator>=0.7.1",
+    "yeetr>=2026.7.1.post1",
 ]
 
 [build-system]
