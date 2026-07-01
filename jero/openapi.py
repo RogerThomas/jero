@@ -290,7 +290,9 @@ def _build_schemas(types: list[object]) -> _Schemas:
     for component in components.values():
         component.pop("description", None)
     for typ, ref in refs.items():
-        meta = getattr(typ, "__model_meta__", None) if isinstance(typ, type) else None
+        # Read from the type's own __dict__, not getattr (which walks the MRO): a subclass
+        # without its own meta= must not inherit — and publish — its parent's description.
+        meta = typ.__dict__.get("__model_meta__") if isinstance(typ, type) else None
         if isinstance(meta, ModelMeta) and meta.description is not None:
             components[_ref_name(ref)]["description"] = meta.description
     return _Schemas(refs=refs, components=components)

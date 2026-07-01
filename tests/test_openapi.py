@@ -1101,6 +1101,20 @@ class PlainModel(Struct):
     name: str
 
 
+class InheritingModel(DescribedModel):
+    """Subclass of a described model, with no ModelMeta of its own."""
+
+    extra: str
+
+
+class InheritingEndpoint(Endpoint, path="/inheriting-model"):
+    """Returns a subclass that declares no ModelMeta of its own."""
+
+    async def get(self) -> InheritingModel:
+        """Get."""
+        return InheritingModel(name="name", extra="extra")
+
+
 class ModelMetaEndpoint(Endpoint, path="/described-model"):
     """Uses the described model as a body and the plain one as the response."""
 
@@ -1114,7 +1128,7 @@ class EnvelopeEndpoint(Endpoint, path="/envelope"):
 
     async def get(self) -> EnvelopeModel:
         """Get."""
-        return EnvelopeModel(meta="m", name="n")
+        return EnvelopeModel(meta="meta", name="name")
 
 
 class ModelMetaApp(BaseApp):
@@ -1123,6 +1137,7 @@ class ModelMetaApp(BaseApp):
     async def wire(self) -> None:
         self.include_endpoint(ModelMetaEndpoint())
         self.include_endpoint(EnvelopeEndpoint())
+        self.include_endpoint(InheritingEndpoint())
         self.include_openapi(title="t", version="1")
 
 
@@ -1147,6 +1162,14 @@ def test_handler_docstring_is_not_published() -> None:
         post = client.get("/openapi.json").json()["paths"]["/described-model"]["post"]
         assert "summary" not in post
         assert "description" not in post
+
+
+def test_model_description_is_not_inherited_by_subclass() -> None:
+    """A subclass without its own ModelMeta gets no description — the parent's doesn't leak."""
+    with TestClient(ModelMetaApp()) as client:
+        schemas = client.get("/openapi.json").json()["components"]["schemas"]
+        assert schemas["DescribedModel"]["description"] == "A described model."
+        assert "description" not in schemas["InheritingModel"]
 
 
 def test_meta_field_coexists_with_meta_kwarg() -> None:
