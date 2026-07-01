@@ -5,23 +5,36 @@ user) is a ``Struct``. ``Camel`` is the shared base giving camelCase on the wire
 snake_case in code.
 """
 
-from msgspec import Struct
+from typing import Annotated
 
-from jero import FormPart
+from msgspec import Meta
+
+from jero import FormPart, ModelMeta, Struct
 
 
 class Camel(Struct, rename="camel"):
-    """camelCase on the wire, snake_case in code."""
+    """camelCase on the wire, snake_case in code.
+
+    Uses jero's ``Struct`` (a drop-in for ``msgspec.Struct``) so any model can carry a
+    ``meta=ModelMeta(...)`` description. (This docstring is for maintainers — it never
+    reaches the OpenAPI spec.)
+    """
 
 
-class WidgetIn(Camel):
-    """Inbound widget payload (no id yet)."""
+class WidgetIn(Camel, meta=ModelMeta(description="The fields needed to create a widget.")):
+    """Inbound widget payload (no id yet).
 
-    name: str
-    price_cents: int
+    The ``Meta`` constraints are validation *and* documentation: msgspec enforces them on
+    the request body and the OpenAPI generator emits them as ``minLength`` / ``minimum`` /
+    ``description`` on the schema. The model-level description comes from ``meta=`` above,
+    not this docstring.
+    """
+
+    name: Annotated[str, Meta(min_length=1, description="Human-readable widget name")]
+    price_cents: Annotated[int, Meta(ge=0, description="Price in cents, never negative")]
 
 
-class Widget(WidgetIn):
+class Widget(WidgetIn, meta=ModelMeta(description="A stored widget, including its id.")):
     """A stored widget, including its assigned id."""
 
     id: str

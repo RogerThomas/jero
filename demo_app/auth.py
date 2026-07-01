@@ -8,16 +8,22 @@ replaces only the I/O services and leaves auth wiring intact.
 from dataclasses import dataclass
 
 from demo_app.models import Credentials, User
-from jero import HTTPError
+from jero import BearerAuth, HTTPError
 
 
 @dataclass
-class TokenAuth:
-    """Bearer-token authenticator over a static token-to-user map."""
+class TokenAuth(BearerAuth[Credentials, User]):
+    """Bearer-token authenticator over a static token-to-user map.
+
+    Subclassing :class:`~jero.BearerAuth` makes its routes advertise HTTP bearer in the
+    generated OpenAPI spec; the ``authenticate`` contract is otherwise unchanged.
+    """
 
     _users: dict[str, User]
 
-    async def authenticate(self, headers: Credentials) -> User:
+    # Auth.authenticate is declared sync-or-async (-> TUser | Awaitable[TUser]); pylint
+    # only sees the sync arm of the union and flags the async override. It's a false positive.
+    async def authenticate(self, headers: Credentials) -> User:  # pylint: disable=invalid-overridden-method
         """Resolve the bearer token to a user, or raise 401."""
         token = headers.authorization.removeprefix("Bearer ").strip()
         user = self._users.get(token)

@@ -97,7 +97,7 @@ That is not ceremony for its own sake. The type is the contract.
 
 When a handler accepts `json: WidgetIn`, jero knows the request body shape. When it
 returns `Widget`, jero knows the response body shape. That single source drives
-validation, serialization, startup checks, and the coming OpenAPI generator. A raw
+validation, serialization, startup checks, and the OpenAPI generator. A raw
 `dict` does not carry enough information. It may be convenient in the moment, but it
 turns the framework blind at exactly the boundary where the contract matters most.
 

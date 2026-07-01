@@ -64,6 +64,7 @@ from enum import Enum
 from io import BytesIO
 from types import NoneType, UnionType, get_original_bases
 from typing import (
+    Annotated,
     Any,
     ClassVar,
     Literal,
@@ -80,6 +81,20 @@ from msgspec import DecodeError, Struct, ValidationError, convert, to_builtins
 from msgspec.json import Decoder
 from msgspec.structs import fields as struct_fields
 
+from jero._openapi_wiring import operation_input
+from jero._wiring_types import (
+    EndpointMeta,
+    FormField,
+    FormSpec,
+    OperationMeta,
+    OperationSpec,
+    PayloadKind,
+    ResourceMeta,
+    ReturnKind,
+    Sources,
+    is_struct_type,
+    strip_list,
+)
 from jero.codecs import msgspec_encoder
 from jero.forms import FilePart, FormPart
 from jero.headers import RawHeaders
@@ -93,6 +108,14 @@ from jero.links import (
     validate_path_params,
 )
 from jero.multipart import MultipartError, MultipartParser, parse_options_header
+from jero.openapi import (
+    Info,
+    OpenAPINameConflictError,
+    OperationInput,
+    SecurityScheme,
+    Tag,
+    build_openapi,
+)
 from jero.streaming import (
     NDJSONStreamingResponse,
     ServerSentEvent,
@@ -126,19 +149,9 @@ type _DynamicRoutes = dict[tuple[_HttpMethod, int], list[_Pattern]]
 # (see the METHODS tables); HEAD/OPTIONS are synthesized for the Allow header.
 type _HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
 type _AllowedMethods = dict[str, list[_HttpMethod]]
-# How a handler's return value is encoded onto the wire; see _return_kind / _result_sender.
-type _ReturnKind = Literal[
-    "json",
-    "json-response",
-    "bytes",
-    "bytes-response",
-    "stream-bytes",
-    "stream-ndjson",
-    "stream-sse",
-]
-# How a multipart form field's body is decoded; see _payload_kind / _decode_form_payload.
-type _PayloadKind = Literal["bytes", "struct", "scalar"]
 # Resolves a Struct type to its reusable typed JSON decoder (the app's per-type cache).
+# ReturnKind / PayloadKind (the other wire-shape aliases) live in jero._wiring_types,
+# shared with the OpenAPI generator.
 type _DecoderFor = Callable[[type[Struct]], Decoder[Struct]]
 
 # Argument names the binder understands, shared by every handler kind.
@@ -222,29 +235,6 @@ class JSONResponse[T: Struct, H: Struct | None = None](BaseResponse[H]):
     """A Struct encoded as JSON; content-type defaults to application/json."""
 
     json: T
-
-
-class EndpointMeta(Struct):
-    """OpenAPI metadata shared by all of an ``Endpoint``'s operations."""
-
-    tags: Sequence[str] = ()
-
-
-class ResourceMeta(Struct):
-    """OpenAPI metadata shared by all of a ``Resource``'s operations."""
-
-    tags: Sequence[str] = ()
-
-
-class OperationMeta(Struct):
-    """OpenAPI metadata for a single operation (``meta_get``, ``meta_create``, …).
-
-    ``operation_id`` lives here, never on the class-level ``meta`` — operation ids must
-    be unique, so they can't sensibly cascade to every operation.
-    """
-
-    tags: Sequence[str] = ()
-    operation_id: str | None = None
 
 
 def _validate_meta(
@@ -435,6 +425,22 @@ class Auth[THeaders: Struct, TUser: Struct](Protocol):
         ...  # pylint: disable=unnecessary-ellipsis  # Protocol stub; pyright needs the body
 
 
+class BearerAuth[THeaders: Struct, TUser: Struct](Auth[THeaders, TUser]):
+    """An ``Auth`` whose operations advertise HTTP bearer in the OpenAPI spec.
+
+    Sugar over the ``openapi_security`` attribute the spec generator reads — subclass
+    this instead of writing the attribute by hand. Implement ``authenticate`` as usual.
+    """
+
+    openapi_security: ClassVar[SecurityScheme] = SecurityScheme.http_bearer()
+
+
+class BasicAuth[THeaders: Struct, TUser: Struct](Auth[THeaders, TUser]):
+    """An ``Auth`` whose operations advertise HTTP basic in the OpenAPI spec."""
+
+    openapi_security: ClassVar[SecurityScheme] = SecurityScheme.http_basic()
+
+
 class _StreamResult(Protocol):
     stream: Any
     headers: Struct | None
@@ -528,19 +534,22 @@ def _alias_value(ann: object) -> object:
     return ann if value is None else value
 
 
-def _is_struct_type(ann: object) -> bool:
-    return isinstance(ann, type) and issubclass(ann, Struct)
+def _strip_annotated(ann: object) -> object:
+    """The underlying type of an ``Annotated[T, ...]``. Used only to *classify* a payload —
+    the original annotation (with its ``msgspec.Meta``) is kept for conversion and schema,
+    so constraints/description/examples are still enforced and documented."""
+    return get_args(ann)[0] if get_origin(ann) is Annotated else ann
 
 
 def _is_struct_payload(ann: object) -> bool:
     ann = _alias_value(ann)
-    if _is_struct_type(ann):
+    if is_struct_type(ann):
         return True
     args = get_args(ann)
     return (
         bool(args)
         and any(_is_none_type(arg) for arg in args) is False
-        and all(_is_struct_type(arg) for arg in args)
+        and all(is_struct_type(arg) for arg in args)
     )
 
 
@@ -581,46 +590,18 @@ def _strip_optional(ann: object) -> tuple[object, bool]:
     return payload, True
 
 
-def _strip_list(ann: object) -> tuple[object, bool]:
-    if get_origin(ann) is not list:
-        return ann, False
-    args = get_args(ann)
-    if len(args) != 1:
-        return ann, False
-    return args[0], True
-
-
-def _payload_kind(cls: type, method: str, field_name: str, ann: object) -> _PayloadKind:
-    if ann is bytes:
+def _payload_kind(cls: type, method: str, field_name: str, ann: object) -> PayloadKind:
+    bare = _strip_annotated(ann)  # classify by the underlying type; Meta stays on `ann`
+    if bare is bytes:
         return "bytes"
-    if _is_struct_payload(ann):
+    if _is_struct_payload(bare):
         return "struct"
-    if _is_scalar_payload(ann):
+    if _is_scalar_payload(bare):
         return "scalar"
     raise WiringError(
         f"{cls.__name__}.{method}: form field {field_name!r} has unsupported payload "
         f"type {ann!r}; expected bytes, a msgspec.Struct, or a scalar",
     )
-
-
-@dataclass(frozen=True, slots=True)
-class _FormField:
-    name: str
-    wire_name: str
-    payload_type: object
-    headers_type: type[Struct] | None
-    payload_kind: _PayloadKind
-    decoder: Decoder[Struct] | None  # reusable typed decoder; set iff payload_kind == "struct"
-    required: bool
-    repeated: bool
-    enveloped: bool
-    file: bool
-
-
-@dataclass(frozen=True, slots=True)
-class _FormSpec:
-    struct_type: type[Struct]
-    fields: tuple[_FormField, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -635,11 +616,11 @@ class _Part:
 
 def _compile_form(
     cls: type, method: str, form_type: type[Struct], decoder_for: _DecoderFor
-) -> _FormSpec:
-    descriptors: list[_FormField] = []
+) -> FormSpec:
+    descriptors: list[FormField] = []
     for field in struct_fields(form_type):
         field_type, optional = _strip_optional(field.type)
-        item_type, repeated = _strip_list(field_type)
+        item_type, repeated = strip_list(field_type)
         part_types = _form_part_types(item_type)
         enveloped = part_types is not None
         file = item_type is FilePart or get_origin(item_type) is FilePart
@@ -659,7 +640,7 @@ def _compile_form(
             decoder_for(cast("type[Struct]", payload_type)) if payload_kind == "struct" else None
         )
         descriptors.append(
-            _FormField(
+            FormField(
                 name=field.name,
                 wire_name=field.encode_name,
                 payload_type=payload_type,
@@ -672,7 +653,7 @@ def _compile_form(
                 file=file,
             )
         )
-    return _FormSpec(form_type, tuple(descriptors))
+    return FormSpec(form_type, tuple(descriptors))
 
 
 def _content_type_header(headers: dict[str, str]) -> tuple[str, str] | None:
@@ -723,7 +704,7 @@ def _parse_form_parts(body: bytes, raw_headers: dict[str, str]) -> dict[str, lis
     return parts
 
 
-def _decode_form_payload(field: _FormField, part: _Part) -> object:
+def _decode_form_payload(field: FormField, part: _Part) -> object:
     if field.payload_kind == "bytes":
         return part.body
     if field.decoder is not None:  # struct payload — reuse the prebuilt typed decoder
@@ -741,7 +722,7 @@ def _decode_form_payload(field: _FormField, part: _Part) -> object:
         raise HTTPError(422, str(exc)) from None
 
 
-def _decode_form_value(field: _FormField, part: _Part) -> object:
+def _decode_form_value(field: FormField, part: _Part) -> object:
     data = _decode_form_payload(field, part)
     if not field.enveloped:
         return data
@@ -768,7 +749,7 @@ def _decode_form_value(field: _FormField, part: _Part) -> object:
     )
 
 
-def _decode_form_body(body: bytes, raw_headers: dict[str, str], spec: _FormSpec) -> Struct:
+def _decode_form_body(body: bytes, raw_headers: dict[str, str], spec: FormSpec) -> Struct:
     parts = _parse_form_parts(body, raw_headers)
     values: dict[str, object] = {}
     for field in spec.fields:
@@ -797,24 +778,7 @@ def _struct_annotation(cls: type, method: str, name: str, ann: object) -> type[S
     return ann
 
 
-@dataclass(slots=True)
-class _Sources:
-    """The resolved Struct types for one handler's arguments."""
-
-    json: type[Struct] | None = None
-    json_decoder: Decoder[Struct] | None = None  # prebuilt decoder for the json body type
-    form: _FormSpec | None = None
-    params: type[Struct] | None = None
-    path: type[Struct] | None = None
-    headers: type[Struct] | None = None
-    user: type[Struct] | None = None
-    content: bool = False
-    raw_headers: bool = False
-    return_kind: _ReturnKind = "json"
-    arity: int = 0  # number of binding args the handler declares
-
-
-def _return_kind(ann: object) -> _ReturnKind | None:  # noqa: C901
+def _return_kind(ann: object) -> ReturnKind | None:  # noqa: C901
     if isinstance(ann, type):
         if issubclass(ann, StreamingResponse):
             return "stream-bytes"
@@ -856,11 +820,11 @@ def _return_kind(ann: object) -> _ReturnKind | None:  # noqa: C901
 
 def _bind_sources(  # noqa: C901
     cls: type, name: str, fn: Callable[..., Any], http_method: _HttpMethod, decoder_for: _DecoderFor
-) -> _Sources:
+) -> Sources:
     """Resolve and validate the Struct types for a handler's arguments."""
     hints = get_type_hints(fn)
     types: dict[str, type[Struct]] = {}
-    form: _FormSpec | None = None
+    form: FormSpec | None = None
     wants_content = False
     wants_raw_headers = False
 
@@ -914,13 +878,14 @@ def _bind_sources(  # noqa: C901
     json_decoder = decoder_for(json_type) if json_type is not None else None
     arity = len(types) + (form is not None) + wants_content + wants_raw_headers
 
-    return _Sources(
+    return Sources(
         **types,
         json_decoder=json_decoder,
         form=form,
         content=wants_content,
         raw_headers=wants_raw_headers,
         return_kind=return_kind,
+        return_annotation=hints.get("return"),
         arity=arity,
     )
 
@@ -1080,7 +1045,7 @@ class _Binder:
         "_wants_user",
     )
 
-    def __init__(self, sources: _Sources, auth: _CompiledAuth | None) -> None:
+    def __init__(self, sources: Sources, auth: _CompiledAuth | None) -> None:
         self._json_decoder = sources.json_decoder
         self._form_spec = sources.form
         self._params_type = sources.params
@@ -1772,7 +1737,7 @@ class _SSEStreamSender(_StreamSender):
         await send({"type": "http.response.body", "body": b"", "more_body": False})
 
 
-def _result_sender(kind: _ReturnKind, status: int, reverser: _Reverser) -> _Sender:
+def _result_sender(kind: ReturnKind, status: int, reverser: _Reverser) -> _Sender:
     if kind == "bytes":
         return _BytesSender(status)
     if kind == "bytes-response":
@@ -1797,7 +1762,7 @@ class _Route:
         self,
         fn: Callable[..., Any],
         status: int,
-        sources: _Sources,
+        sources: Sources,
         auth: _CompiledAuth | None,
         reverser: _Reverser,
     ) -> None:
@@ -1830,6 +1795,99 @@ class _Route:
             await _send_json(send, 500, msgspec_encoder.encode({"error": "internal server error"}))
             return
         await self._send_result(scope, receive, send, result)
+
+
+def _camel(name: str) -> str:
+    """A snake_case handler name as camelCase, for the default operationId."""
+    head, *rest = name.split("_")
+    return head + "".join(part.title() for part in rest)
+
+
+def _json_doc_handler(config: "_OpenAPIConfig") -> _Handler:
+    """A handler serving the cached OpenAPI document. The payload is filled in at
+    ``_finalize`` (after wiring), so the route can be registered before the document
+    exists — the closure reads ``config.payload`` at request time."""
+
+    async def handler(
+        scope: Scope, receive: Receive, send: Send, path_values: dict[str, str]
+    ) -> None:
+        _ = (scope, receive, path_values)
+        await _send_json(send, 200, config.payload)
+
+    return handler
+
+
+def _docs_handler(html: bytes) -> _Handler:
+    """A handler serving the (static) docs UI HTML page."""
+
+    async def handler(
+        scope: Scope, receive: Receive, send: Send, path_values: dict[str, str]
+    ) -> None:
+        _ = (scope, receive, path_values)
+        headers = [
+            (b"content-type", b"text/html; charset=utf-8"),
+            (b"content-length", str(len(html)).encode()),
+        ]
+        await send({"type": "http.response.start", "status": 200, "headers": headers})
+        await send({"type": "http.response.body", "body": html})
+
+    return handler
+
+
+def _scalar_html(title: str, openapi_path: str) -> str:
+    """The default docs page: Scalar's API reference, loaded from a CDN, pointed at the spec."""
+    return (
+        "<!doctype html>\n"
+        '<html lang="en">\n'
+        "<head>\n"
+        '<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        f"<title>{title}</title>\n"
+        "</head>\n"
+        "<body>\n"
+        f'<script id="api-reference" data-url="{openapi_path}"></script>\n'
+        '<script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>\n'
+        "</body>\n"
+        "</html>\n"
+    )
+
+
+@dataclass(slots=True)
+class _OpenAPIConfig:
+    """The settings stashed by ``include_openapi`` and read at ``_finalize`` / startup."""
+
+    title: str
+    version: str
+    description: str | None
+    servers: tuple[str, ...]
+    tags: tuple[Tag, ...]
+    openapi_path: str
+    docs_path: str | None
+    payload: bytes = b"{}"  # the built OpenAPI document, filled in at _finalize
+
+
+def _assemble_openapi_tags(
+    central: tuple[Tag, ...], operations: tuple[OperationInput, ...]
+) -> tuple[Tag, ...]:
+    """The document-level ``tags`` array: every distinct tag from the central declaration
+    and the operations' ``meta``, in first-seen order (central first). A tag is described
+    once — a bare ``Tag(name)`` references it, a ``Tag(name, description)`` defines it, in
+    any order. The same name given two *different* descriptions anywhere is a loud wiring
+    error, so a tag's description can't silently fork."""
+    resolved: dict[str, str | None] = {}
+    sources: list[Tag] = [*central]
+    for op in operations:
+        sources += op.tags
+    for tag in sources:
+        existing = resolved.get(tag.name)
+        if tag.name not in resolved or existing is None:
+            resolved[tag.name] = tag.description
+        elif tag.description is not None and tag.description != existing:
+            raise WiringError(
+                f"OpenAPI tag {tag.name!r} is given conflicting descriptions "
+                f"({existing!r} and {tag.description!r}); describe each tag once",
+            )
+    return tuple(Tag(name=name, description=desc) for name, desc in resolved.items())
 
 
 class _StackScope:
@@ -1907,6 +1965,8 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         self._allowed: _AllowedMethods = {}
         self._allow_cache: dict[str, bytes] = {}
         self._decoders: dict[type[Struct], Decoder[Struct]] = {}
+        self._operations: list[OperationSpec] = []  # captured for the OpenAPI document
+        self._openapi: _OpenAPIConfig | None = None  # set by include_openapi, built at _finalize
         base_url, trust_forwarded = _forwarded_config_from_env()
         self._reverser = _Reverser(base_url=base_url, trust_forwarded=trust_forwarded)
         self._stack = ExitStack()
@@ -2007,6 +2067,13 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
             )
         template = _parse_template(path)
         compiled_auth = _CompiledAuth(auth) if auth is not None else None
+        # An authed route with no declared scheme defaults to HTTP bearer (the common case).
+        security_scheme: SecurityScheme | None = None
+        if auth is not None:
+            declared = getattr(type(auth), "openapi_security", None)
+            security_scheme = (
+                declared if isinstance(declared, SecurityScheme) else (SecurityScheme.http_bearer())
+            )
 
         registered = False
         for name, verb in methods.items():
@@ -2022,6 +2089,19 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
             self._register(verb.method, segments, handler)
             self._reverser.register(
                 fn.__func__, cls.ref, name, _RouteRef(tuple(segments), sources.path)
+            )
+            self._operations.append(
+                OperationSpec(
+                    path=_template_str(segments),
+                    method=verb.method.lower(),
+                    success_status=verb.success_status,
+                    sources=sources,
+                    authed=compiled_auth is not None,
+                    security_scheme=security_scheme,
+                    class_meta=cls.meta,
+                    op_meta=getattr(cls, f"meta_{name}", None),
+                    operation_id_default=f"{cls.__name__}_{_camel(name)}",
+                )
             )
             registered = True
 
@@ -2045,6 +2125,86 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
     ) -> None:
         """Register an ``Endpoint``'s verb methods as routes, optionally behind ``auth``."""
         self._include(endpoint, Endpoint.METHODS, auth=auth)
+
+    def include_openapi(
+        self,
+        *,
+        title: str,
+        version: str,
+        description: str | None = None,
+        openapi_path: str = "/openapi.json",
+        docs_path: str | None = "/docs",
+        servers: Sequence[str] = (),
+        tags: Sequence[Tag] = (),
+        docs_html: str | None = None,
+    ) -> None:
+        """Serve an auto-generated OpenAPI 3.1 document and a docs UI.
+
+        Call inside ``wire`` (order among the ``include_*`` calls doesn't matter — the
+        document is built once after wiring completes). ``openapi_path`` serves the JSON
+        spec; ``docs_path`` serves a Scalar UI pointed at it (pass ``None`` to omit the
+        UI, or ``docs_html`` to replace the page — e.g. for offline / strict-CSP hosting).
+
+        ``tags`` declares document-level ``Tag``\\ s to describe operation groups and pin the
+        order they appear in the docs UI. Operations may also define/use tags via their
+        ``meta`` (a bare name, or a ``Tag`` with a description); all are merged here. The one
+        rule: describing the same tag name two different ways is a startup ``WiringError``.
+
+        The spec is derived from your wired resources/endpoints: their typed sources
+        (path/query/header params, request bodies), return types (responses), auth
+        (security), ``msgspec.Meta`` field constraints, and the metadata you declare —
+        ``OperationMeta`` (summary/description/tags/responses) and a model's ``ModelMeta``.
+        Docstrings are never published; public prose is always explicit.
+        """
+        self._openapi = _OpenAPIConfig(
+            title=title,
+            version=version,
+            description=description,
+            servers=tuple(servers),
+            tags=tuple(tags),
+            openapi_path=openapi_path,
+            docs_path=docs_path,
+        )
+        self._register("GET", _parse_template(openapi_path), _json_doc_handler(self._openapi))
+        if docs_path is not None:
+            html = docs_html if docs_html is not None else _scalar_html(title, openapi_path)
+            self._register("GET", _parse_template(docs_path), _docs_handler(html.encode()))
+
+    def _build_openapi_document(self, config: _OpenAPIConfig) -> bytes:
+        """Translate the captured operations into the OpenAPI document, encoded as JSON."""
+        operations = tuple(operation_input(spec) for spec in self._operations)
+        schemes: dict[str, SecurityScheme] = {}
+        for spec in self._operations:
+            scheme = spec.security_scheme
+            if scheme is None:
+                continue
+            existing = schemes.get(scheme.scheme_name)
+            if existing is not None and existing != scheme:
+                raise WiringError(
+                    f"two different OpenAPI security schemes share the name "
+                    f"{scheme.scheme_name!r}; give each a distinct scheme_name",
+                )
+            schemes[scheme.scheme_name] = scheme
+        info = Info(
+            title=config.title,
+            version=config.version,
+            description=config.description,
+            servers=config.servers,
+            tags=_assemble_openapi_tags(config.tags, operations),
+        )
+        try:
+            document = build_openapi(info, operations, schemes)
+        except OpenAPINameConflictError as exc:
+            # A ModelMeta(name=...) override collided with another component's name.
+            raise WiringError(str(exc)) from exc
+        except KeyError as exc:
+            # msgspec.json.schema_components keys components by type name and raises KeyError
+            # when two distinct Structs share a name in the same module.
+            raise WiringError(
+                f"could not generate the OpenAPI schema for {exc}; two different msgspec "
+                f"Structs likely share a name in the same module — rename one",
+            ) from exc
+        return msgspec_encoder.encode(document)
 
     def _resolve(self, method: str, path: str) -> tuple[_Handler, dict[str, str]] | None:
         # Static hit is the hot path: look it up directly, before narrowing the verb
@@ -2080,11 +2240,27 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         allowed = self._allowed_methods(path)
         return _allow_header(allowed) if allowed else None
 
+    def _log_openapi_docs(self, config: _OpenAPIConfig) -> None:
+        """Announce where the docs/spec are served, once, at startup.
+
+        jero is the ASGI app, not the server, so it can't know the bound host/port — the
+        URL is absolute only when ``JERO_BASE_URL`` names the public origin, otherwise the
+        path is relative (the server prints its own ``Listening at`` line with the host).
+        """
+        base = (os.environ.get("JERO_BASE_URL") or "").rstrip("/")
+        if config.docs_path is not None:
+            logger.info("Serving API docs at %s%s", base, config.docs_path)
+        else:
+            logger.info("Serving OpenAPI spec at %s%s", base, config.openapi_path)
+
     def _finalize(self) -> None:
-        """Precompute Allow headers for all static paths; runs once after wiring."""
+        """Precompute Allow headers and build the OpenAPI document; runs once after wiring."""
         self._allow_cache = {
             path: _allow_header(self._allowed_methods(path)) for path in self._allowed
         }
+        if self._openapi is not None:
+            self._openapi.payload = self._build_openapi_document(self._openapi)
+            self._log_openapi_docs(self._openapi)
 
     async def _close_resources(self) -> None:
         await self._astack.aclose()
@@ -2094,6 +2270,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         await receive()  # lifespan.startup
         try:
             await self.wire()
+            self._finalize()  # builds the OpenAPI doc; can raise WiringError (e.g. tag conflict)
         except BaseException as exc:
             await self._close_resources()  # release anything entered before the failure
             await send(
@@ -2103,7 +2280,6 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
                 },
             )
             raise
-        self._finalize()
         await send({"type": "lifespan.startup.complete"})
 
         await receive()  # lifespan.shutdown

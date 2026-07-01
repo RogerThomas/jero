@@ -189,7 +189,7 @@ jero watches the client connection while it streams. If the client disconnects, 
 stops pulling from your iterator and runs the lifecycle teardown — you don't write any
 of that bookkeeping. An error raised inside the stream (after the response has started)
 is logged with its traceback, then swallowed after teardown so a broken stream can't
-crash the worker — the client sees a truncated stream, and the `jero.core` logger has
+crash the worker — the client sees a truncated stream, and the `jero` logger has
 the cause.
 
 ## Status & headers

@@ -111,3 +111,24 @@ startup error.
 
     Handlers that don't declare `user` still run behind the auth gate; they just don't
     receive the result.
+
+## Auth in the OpenAPI spec
+
+An operation mounted behind `auth` gets a `security` requirement in the
+[generated spec](openapi.md). To advertise the *scheme*, subclass an auth base instead
+of writing the attribute by hand:
+
+```python
+from jero import BearerAuth
+
+
+class TokenAuth(BearerAuth[Credentials, User]):   # adds {"type": "http", "scheme": "bearer"}
+    async def authenticate(self, headers: Credentials) -> User:
+        ...
+```
+
+`BearerAuth` and `BasicAuth` are sugar over an optional
+`openapi_security: ClassVar[SecurityScheme]` attribute any authenticator can set; an
+authed route that declares nothing defaults to HTTP bearer. For a token in a header,
+query param, or cookie, set the attribute with `SecurityScheme.api_key(...)`. See
+[OpenAPI & docs](openapi.md#security-schemes).

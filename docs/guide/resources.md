@@ -175,7 +175,7 @@ bucketed by `(method, segment-count)` and matched on their static segments — n
 regexes, no route-table scans, no ordering rules. All of it is resolved **once**, at
 wiring time.
 
-## Metadata (for the coming OpenAPI spec)
+## Metadata
 
 Alongside the path, a route can declare OpenAPI metadata at class definition. `meta`
 applies to every operation; `meta_<operation>` to one (`meta_get`, `meta_create`, …):
@@ -209,9 +209,9 @@ app = App()
 ```
 
 The three types — `EndpointMeta`, `ResourceMeta`, `OperationMeta` — carry `tags`,
-`operation_id`, and the like (`operation_id` lives only on `OperationMeta`, so it can't
-cascade to every operation). They're stored on the class and don't affect routing today:
-they're the authoring input to an **upcoming auto OpenAPI spec generator**, which will
-derive the rest of the spec from your types and handler docstrings.
+`operation_id`, `summary`, `description`, and `responses` (`operation_id` lives only on
+`OperationMeta`, so it can't cascade to every operation). They don't affect routing;
+they refine the [auto-generated OpenAPI spec](openapi.md), which derives the rest from
+your types (docstrings are never published — public prose is always explicit).
 
 See [Wiring & lifecycle](wiring.md) for how resources get their dependencies.
