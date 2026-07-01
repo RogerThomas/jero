@@ -178,14 +178,14 @@ These pull against each other constantly; keep all three in mind on every change
 ## Layout
 
 - `jero/core.py` — the framework (routing, binding, response senders, lifecycle).
-  `jero/_wiring_types.py` — the resolved wiring contracts (`_Sources`, `_FormSpec`,
-  `_OperationSpec`, the `*Meta` types, `_is_struct_type`/`_strip_list`); a leaf depending
+  `jero/_wiring_types.py` — the resolved wiring contracts (`Sources`, `FormSpec`,
+  `OperationSpec`, the `*Meta` types, `is_struct_type`/`strip_list`), all msgspec Structs; a leaf depending
   only on msgspec + `jero.openapi`. `jero/openapi.py` — the dependency-free OpenAPI 3.1
   builder (`SecurityScheme`, `ResponseSpec`, `ModelMeta`, `build_openapi`).
   `jero/structs.py` — `Struct`, jero's drop-in `msgspec.Struct` base whose `meta=` class
   keyword (handled by a `msgspec.StructMeta` subclass) attaches a `ModelMeta` as
   `__model_meta__`; the builder reads it to set a model's schema description. `jero/_openapi_wiring.py` —
-  the translation layer (`operation_input`) turning an `_OperationSpec` into the builder's
+  the translation layer (`operation_input`) turning an `OperationSpec` into the builder's
   inputs. The graph is a strict DAG: `core` and `_openapi_wiring` both import the contracts
   from `_wiring_types`; `core` imports `_openapi_wiring`; nothing imports `core` back (the
   shared contracts sit *below* both, which is what keeps it acyclic — no lazy imports).

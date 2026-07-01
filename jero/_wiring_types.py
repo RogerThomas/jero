@@ -10,7 +10,6 @@ below both modules is what makes the dependency graph acyclic.
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Literal, get_args, get_origin
 
 from msgspec import Struct
@@ -97,8 +96,7 @@ class OperationMeta(Struct):
     responses: Sequence[ResponseSpec] = ()
 
 
-@dataclass(frozen=True, slots=True)
-class FormField:
+class FormField(Struct, frozen=True):
     """One resolved multipart form field: its wire name, payload type, and reusable decoder."""
 
     name: str
@@ -113,16 +111,14 @@ class FormField:
     file: bool
 
 
-@dataclass(frozen=True, slots=True)
-class FormSpec:
+class FormSpec(Struct, frozen=True):
     """A handler's resolved multipart form: the form Struct and its compiled fields."""
 
     struct_type: type[Struct]
     fields: tuple[FormField, ...]
 
 
-@dataclass(slots=True)
-class Sources:
+class Sources(Struct):
     """The resolved Struct types for one handler's arguments."""
 
     json: type[Struct] | None = None
@@ -139,8 +135,7 @@ class Sources:
     arity: int = 0  # number of binding args the handler declares
 
 
-@dataclass(slots=True)
-class OperationSpec:
+class OperationSpec(Struct):
     """One captured operation, all the inputs the OpenAPI document needs. Built at wiring
     time (in ``BaseApp._include``) and translated to an ``OperationInput`` at ``_finalize``."""
 
