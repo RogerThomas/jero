@@ -1,11 +1,13 @@
 """Problem Details errors and structurally registered custom exception handlers."""
 
+import logging
 from dataclasses import dataclass
+from typing import cast
 
 import pytest
 from msgspec import Struct
 
-from jero import BaseApp, DataclassHTTPError, Endpoint, ExceptionResponse, TestClient
+from jero import BaseApp, DataclassHTTPError, Endpoint, ExceptionResponse, HTTPError, TestClient
 
 
 class ErrorParams(Struct):
@@ -117,6 +119,32 @@ class BrokenHandler:
         raise RuntimeError("handler failed")
 
 
+class BadReturnError(Exception):
+    """An exception whose handler returns a value outside its declared contract."""
+
+
+class BadReturnHandler:
+    """A handler that breaches its (statically valid) return contract at runtime."""
+
+    def handle_exception(self, exception: BadReturnError) -> ExceptionResponse[ServiceErrorBody]:
+        """Return a value outside the declared type — a runtime-only contract breach."""
+        _ = exception
+        return cast("ExceptionResponse[ServiceErrorBody]", "not-a-response")
+
+
+class TeapotError(HTTPError, type="teapot", title="I'm a teapot", status=418):
+    """A deliberately raised typed error whose custom handler then crashes."""
+
+
+class TeapotHandler:
+    """A handler for a deliberately-raised HTTPError that itself fails."""
+
+    def handle_exception(self, exception: TeapotError) -> ExceptionResponse[ServiceErrorBody]:
+        """Raise while translating an HTTPError (which must not itself be logged)."""
+        _ = exception
+        raise RuntimeError("teapot handler failed")
+
+
 class ErrorsEndpoint(Endpoint, path="/errors"):
     """Raise each error shape selected by the query parameter."""
 
@@ -134,27 +162,33 @@ class ErrorsEndpoint(Endpoint, path="/errors"):
             raise SpecificServiceError(retryable=False)
         if params.mode == "handler-fails":
             raise BrokenHandlerError()
+        if params.mode == "bad-return":
+            raise BadReturnError()
+        if params.mode == "teapot-crash":
+            raise TeapotError()
         return Result(ok=True)
 
 
 class ErrorsApp(BaseApp):
     """Wire the endpoint with base and subclass exception handlers."""
 
-    async def _wire(self) -> None:
+    async def wire(self) -> None:
         """Register handlers before exposing the endpoint."""
-        self._add_exception_handler(ServiceErrorHandler())
-        self._add_exception_handler(SpecificServiceErrorHandler())
-        self._add_exception_handler(BrokenHandler())
-        self._include_endpoint(ErrorsEndpoint())
+        self.add_exception_handler(ServiceErrorHandler())
+        self.add_exception_handler(SpecificServiceErrorHandler())
+        self.add_exception_handler(BrokenHandler())
+        self.add_exception_handler(BadReturnHandler())
+        self.add_exception_handler(TeapotHandler())
+        self.include_endpoint(ErrorsEndpoint())
 
 
 class DuplicateHandlerApp(BaseApp):
     """Invalid app registering the same exact exception type twice."""
 
-    async def _wire(self) -> None:
+    async def wire(self) -> None:
         """Trigger duplicate-registration validation during startup."""
-        self._add_exception_handler(ServiceErrorHandler())
-        self._add_exception_handler(ServiceErrorHandler())
+        self.add_exception_handler(ServiceErrorHandler())
+        self.add_exception_handler(ServiceErrorHandler())
 
 
 def test_parameterized_problem_details() -> None:
@@ -216,9 +250,15 @@ def test_most_specific_exception_handler_wins() -> None:
     assert resp.json() == {"code": "specific-service-failed", "retryable": False}
 
 
-def test_exception_handler_failure_is_internal_server_problem() -> None:
-    """A failure inside a custom handler does not recurse or escape the app."""
-    with TestClient(ErrorsApp()) as client:
+def test_exception_handler_failure_is_internal_server_problem(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failure inside a custom handler does not recurse or escape the app, and logs both
+    the handler's own crash and the original exception it was meant to translate."""
+    with (
+        caplog.at_level(logging.ERROR, logger="jero"),
+        TestClient(ErrorsApp()) as client,
+    ):
         resp = client.get("/errors", params={"mode": "handler-fails"})
 
     assert resp.status_code == 500
@@ -227,6 +267,52 @@ def test_exception_handler_failure_is_internal_server_problem() -> None:
         "title": "Internal server error",
         "status": 500,
     }
+    # The handler's own crash (naming the handler) and the original exception are both logged.
+    assert "exception handler BrokenHandler raised handling GET /errors" in caplog.text
+    assert "handler failed" in caplog.text
+    assert "unhandled error handling GET /errors" in caplog.text
+    assert any(record.exc_info for record in caplog.records)
+
+
+def test_handler_returning_invalid_value_is_internal_server_problem(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A handler that returns outside its declared contract 500s, naming the handler and
+    the bad type, and still surfaces the original exception it was meant to translate."""
+    with (
+        caplog.at_level(logging.ERROR, logger="jero"),
+        TestClient(ErrorsApp()) as client,
+    ):
+        resp = client.get("/errors", params={"mode": "bad-return"})
+
+    assert resp.status_code == 500
+    assert resp.json() == {
+        "type": "internal-server-error",
+        "title": "Internal server error",
+        "status": 500,
+    }
+    assert "exception handler BadReturnHandler returned an invalid str handling GET /errors" in (
+        caplog.text
+    )
+    assert "unhandled error handling GET /errors" in caplog.text
+
+
+def test_httperror_original_is_not_logged_when_its_handler_crashes(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When a deliberately-raised HTTPError's handler crashes, the handler failure is logged
+    but the HTTPError (expected control flow) is not."""
+    with (
+        caplog.at_level(logging.ERROR, logger="jero"),
+        TestClient(ErrorsApp()) as client,
+    ):
+        resp = client.get("/errors", params={"mode": "teapot-crash"})
+
+    assert resp.status_code == 500
+    assert "exception handler TeapotHandler raised handling GET /errors" in caplog.text
+    assert "teapot handler failed" in caplog.text
+    # The original is an HTTPError — expected control flow — so it is never logged.
+    assert "unhandled error handling GET /errors" not in caplog.text
 
 
 def test_duplicate_exception_handler_is_wiring_error() -> None:

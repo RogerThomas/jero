@@ -47,22 +47,22 @@ class WidgetPath(Struct):
 
 
 class WidgetResource(Resource, path="/widgets"):
-    async def create(self, json: WidgetIn) -> Widget:           # POST /widgets
+    async def create(self, json: WidgetIn) -> Widget:      # POST /widgets
         return Widget(id="widget-id", name=json.name)
 
-    async def read_many(self) -> list[Widget]:                  # GET  /widgets
+    async def read_many(self) -> list[Widget]:             # GET  /widgets
         return [Widget(id="widget-id", name="gizmo")]
 
-    async def read_one(self, path: WidgetPath) -> Widget:       # GET  /widgets/{widget_id}
+    async def read_one(self, path: WidgetPath) -> Widget:  # GET  /widgets/{widget_id}
         return Widget(id=path.widget_id, name="gizmo")
 
-    async def delete(self, path: WidgetPath) -> Widget:         # DELETE /widgets/{widget_id}
+    async def delete(self, path: WidgetPath) -> Widget:    # DELETE /widgets/{widget_id}
         return Widget(id=path.widget_id, name="gizmo")
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_resource(WidgetResource())
+    async def wire(self) -> None:
+        self.include_resource(WidgetResource())
 
 
 app = App()
@@ -88,13 +88,13 @@ class Health(Struct):
 
 
 class HealthEndpoint(Endpoint, path="/healthz"):
-    async def get(self) -> Health:        # GET /healthz
+    async def get(self) -> Health:  # GET /healthz
         return Health(status="ok")
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_endpoint(HealthEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(HealthEndpoint())
 
 
 app = App()
@@ -111,7 +111,7 @@ class WidgetResource(Resource, path="/widgets"):
     ...
 ```
 
-jero reads it once at wiring, so registering is just `self._include_resource(WidgetResource())` — no path passed at the call site. The class is the **single source of truth** for its path, which is exactly what URL reversal ([`Link` / `Location`](links-and-location.md)) and the OpenAPI work read off it.
+jero reads it once at wiring, so registering is just `self.include_resource(WidgetResource())` — no path passed at the call site. The class is the **single source of truth** for its path, which is exactly what URL reversal ([`Link` / `Location`](links-and-location.md)) and the OpenAPI work read off it.
 
 ## Path templates
 
@@ -141,8 +141,8 @@ class ItemResource(Resource, path="/collections/{collection_id}/items"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_resource(ItemResource())
+    async def wire(self) -> None:
+        self.include_resource(ItemResource())
 
 
 app = App()
@@ -161,13 +161,13 @@ doesn't identify a resource.
 
 ## Registering them
 
-Resources and endpoints are wired in `BaseApp._wire`:
+Resources and endpoints are wired in `BaseApp.wire`:
 
 ```python
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_resource(WidgetResource())
-        self._include_endpoint(HealthEndpoint())
+    async def wire(self) -> None:
+        self.include_resource(WidgetResource())
+        self.include_endpoint(HealthEndpoint())
 ```
 
 Routing is pure dict lookup: static routes match exactly; templated routes are
@@ -175,7 +175,7 @@ bucketed by `(method, segment-count)` and matched on their static segments — n
 regexes, no route-table scans, no ordering rules. All of it is resolved **once**, at
 wiring time.
 
-## Metadata (for the coming OpenAPI spec)
+## Metadata
 
 Alongside the path, a route can declare OpenAPI metadata at class definition. `meta`
 applies to every operation; `meta_<operation>` to one (`meta_get`, `meta_create`, …):
@@ -193,25 +193,25 @@ class Widget(Struct):
 class WidgetsEndpoint(
     Endpoint,
     path="/widgets",
-    meta=EndpointMeta(tags=["widgets"]),                    # all operations
-    meta_get=OperationMeta(operation_id="listWidgets"),     # this operation
+    meta=EndpointMeta(tags=["widgets"]),                 # all operations
+    meta_get=OperationMeta(operation_id="listWidgets"),  # this operation
 ):
     async def get(self) -> list[Widget]:
         return [Widget(id="widget-id")]
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_endpoint(WidgetsEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(WidgetsEndpoint())
 
 
 app = App()
 ```
 
 The three types — `EndpointMeta`, `ResourceMeta`, `OperationMeta` — carry `tags`,
-`operation_id`, and the like (`operation_id` lives only on `OperationMeta`, so it can't
-cascade to every operation). They're stored on the class and don't affect routing today:
-they're the authoring input to an **upcoming auto OpenAPI spec generator**, which will
-derive the rest of the spec from your types and handler docstrings.
+`operation_id`, `summary`, `description`, and `responses` (`operation_id` lives only on
+`OperationMeta`, so it can't cascade to every operation). They don't affect routing;
+they refine the [auto-generated OpenAPI spec](openapi.md), which derives the rest from
+your types (docstrings are never published — public prose is always explicit).
 
 See [Wiring & lifecycle](wiring.md) for how resources get their dependencies.

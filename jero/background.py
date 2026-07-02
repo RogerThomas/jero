@@ -1,8 +1,8 @@
 """In-process, fire-and-forget background tasks.
 
 Endpoints drop a ``Struct`` on a bounded queue; a single worker dispatches each item to
-the handler registered for its type. Built in ``_wire`` via the factory and opened with
-``_aenter`` (it is an async context manager), so the worker starts at startup and
+the handler registered for its type. Built in ``wire`` via the factory and opened with
+``aenter`` (it is an async context manager), so the worker starts at startup and
 drains/stops at shutdown — riding the app's existing exit stack.
 
 Not durable: queued items live only in memory and are lost on crash or restart. For
@@ -50,7 +50,7 @@ class BackgroundTasks:
 
     Register one handler per ``Struct`` type (inferred from the handler's parameter);
     endpoints call :meth:`add` to enqueue an item, and a single serial worker dispatches
-    each to its handler. Open it with ``self._aenter`` inside ``_wire`` so the worker
+    each to its handler. Open it with ``self.aenter`` inside ``wire`` so the worker
     starts at startup and drains/stops at shutdown.
 
     Enter it *after* the resources its handlers use, so reverse-order shutdown drains the

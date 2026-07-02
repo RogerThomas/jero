@@ -13,7 +13,7 @@
 - [6. Configuration and service settings](#6-configuration-and-service-settings)
   - [When to use configuration vs. service settings](#when-to-use-configuration-vs-service-settings)
 - [7. Almost never test private methods/functions](#7-almost-never-test-private-methodsfunctions)
-- [8. Use `@dataclass(slots=True)` for internal DTOs](#8-use-dataclassslotstrue-for-internal-dtos)
+- [8. Use `Struct` for pure DTOs, `@dataclass` for classes with behavior](#8-use-struct-for-pure-dtos-dataclass-for-classes-with-behavior)
 - [9. Use `create_autospec` for mocking in tests](#9-use-create_autospec-for-mocking-in-tests)
 - [10. Almost never use globals](#10-almost-never-use-globals)
 - [11. Prefer operators over mutating method calls](#11-prefer-operators-over-mutating-method-calls)
@@ -308,32 +308,32 @@ def test_service_calls_handler_with_correct_args(service: Service):
     service._handler.handle.assert_called_once_with("input")  # Accessing internals
 ```
 
-## 8. Use `@dataclass(slots=True)` for internal DTOs<a name="8-use-dataclassslotstrue-for-internal-dtos"></a>
+## 8. Use `Struct` for pure DTOs, `@dataclass` for classes with behavior<a name="8-use-struct-for-pure-dtos-dataclass-for-classes-with-behavior"></a>
 
-When defining internal data transfer objects (DTOs) — structs that carry data between layers within the application — use `@dataclass(slots=True)` rather than a plain `@dataclass`, `NamedTuple`, or Pydantic `BaseModel`.
+When a type is a **pure data container** — a DTO that just carries fields between layers — use a `msgspec.Struct`. This codebase is msgspec-first, so a `Struct` is the native vocabulary; it's also slotted (no per-instance `__dict__`) and constructs faster and uses less memory than `@dataclass(slots=True)`, which is what made slotted dataclasses the right DTO in non-msgspec projects. Use a `Struct` whether or not the data ever crosses the wire — internal resolved contracts are Structs too.
 
-Slots eliminate the per-instance `__dict__`, reducing memory usage and improving attribute access speed. Based on benchmarks over 10 million iterations:
+```Python
+from msgspec import Struct
 
-| Operation             | `dataclass(slots=True)` | `namedtuple`         | `dataclass`          | `pydantic`           |
-| --------------------- | ----------------------- | -------------------- | -------------------- | -------------------- |
-| Create                | **1316ms** ✓            | 1771ms (1.3x slower) | 1460ms (1.1x slower) | 7781ms (5.9x slower) |
-| Attribute access      | **716ms** ✓             | 1080ms (1.5x slower) | 723ms (1.0x slower)  | 1862ms (2.6x slower) |
-| Memory (per instance) | **274 B** ✓             | 290 B (1.1x larger)  | 631 B (2.3x larger)  | 1551 B (5.7x larger) |
 
-`@dataclass(slots=True)` is the fastest across all benchmarks. The memory saving is the most significant benefit — slotted dataclasses use roughly the same memory as a `namedtuple` and 2.3x less than a plain `@dataclass`.
+class ParsedDocument(Struct):
+    document_id: str
+    page_count: int
+    text: str
+```
 
-**Pydantic should still be used at I/O boundaries** (router request/response models, external API payloads, config deserialization) where validation, serialization, and schema generation are needed. For everything in between — data passed between services, controllers, and internal helpers — prefer `@dataclass(slots=True)`.
+When a class carries **behavior or dependencies** rather than just data — a controller or service holding injected collaborators — keep the `@dataclass` approach from §1 (it composes with `field(init=False)` / `__post_init__`, which Structs don't):
 
 ```Python
 from dataclasses import dataclass
 
 
-@dataclass(slots=True)
-class ParsedDocument:
-    document_id: str
-    page_count: int
-    text: str
+@dataclass
+class Thing:
+    _service: Service
 ```
+
+Rule of thumb: **just fields → `Struct`; fields plus injected dependencies or behavior → `@dataclass`.**
 
 ## 9. Use `create_autospec` for mocking in tests<a name="9-use-create_autospec-for-mocking-in-tests"></a>
 

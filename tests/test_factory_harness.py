@@ -27,9 +27,9 @@ def _harness(monkeypatch: pytest.MonkeyPatch) -> Generator[FactoryHarness[Factor
     """A FactoryHarness over the demo app's real Factory, torn down after the test.
 
     The real factory reads settings from the environment, so the env is set here."""
-    monkeypatch.setenv("DEMO_WIDGET_APP_ENV", "dev")
-    monkeypatch.setenv("DEMO_WIDGET_APP_API_KEY", "api-key")
-    monkeypatch.setenv("OPENAI_API_KEY", "openai-api-key")
+    monkeypatch.setenv("DEMO_APP_ENV", "dev")
+    monkeypatch.setenv("DEMO_APP_WIDGET_API_KEY", "api-key")
+    monkeypatch.setenv("DEMO_APP_OPENAI_API_KEY", "openai-api-key")
     with FactoryHarness(Factory) as harness:
         yield harness
 
@@ -69,11 +69,11 @@ class ProbeFactory(BaseFactory):
 
     async def create_async_probe(self) -> AsyncProbe:
         """Open an async probe on the async exit stack."""
-        return await self._aenter(AsyncProbe())
+        return await self.aenter(AsyncProbe())
 
     def create_sync_probe(self) -> SyncProbe:
         """Open a sync probe on the sync exit stack."""
-        return self._enter(SyncProbe())
+        return self.enter(SyncProbe())
 
 
 def test_harness_runs_async_create_and_closes_on_exit() -> None:

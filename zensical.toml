@@ -22,6 +22,7 @@ nav = [
         { "Background tasks" = "guide/background-tasks.md" },
         { "Forms & uploads" = "guide/forms.md" },
         { "Authentication" = "guide/auth.md" },
+        { "OpenAPI & docs" = "guide/openapi.md" },
         { "Wiring & lifecycle" = "guide/wiring.md" },
         { "Testing" = "guide/testing.md" },
         { "Testing approach" = "guide/testing-approach.md" },

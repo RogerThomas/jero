@@ -1,6 +1,7 @@
 """Streaming response contract (pyright venv check)."""
 
 import asyncio
+import logging
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from dataclasses import dataclass
 
@@ -10,6 +11,7 @@ from msgspec import Struct
 from jero import (
     BaseApp,
     Endpoint,
+    ExceptionResponse,
     HTTPError,
     NDJSONStreamingResponse,
     ServerSentEvent,
@@ -156,6 +158,36 @@ class SetupErrorEndpoint(Endpoint, path="/stream"):
         return NDJSONStreamingResponse(stream=self._lifecycle())
 
 
+class UnexpectedSetupErrorEndpoint(Endpoint, path="/stream"):
+    """Endpoint whose stream setup raises an unexpected (non-HTTP) error."""
+
+    async def _items(self) -> AsyncIterator[Item]:
+        yield Item(name="never")
+
+    async def _lifecycle(self) -> AsyncGenerator[AsyncIterable[Item]]:
+        raise RuntimeError("setup boom")
+        yield self._items()  # pylint: disable=unreachable
+
+    async def get(self) -> NDJSONStreamingResponse[Item]:
+        """Return an NDJSON stream whose setup raises an unexpected error."""
+        return NDJSONStreamingResponse(stream=self._lifecycle())
+
+
+class TeardownErrorEndpoint(Endpoint, path="/stream"):
+    """Endpoint whose stream completes normally but whose teardown then raises."""
+
+    async def _items(self) -> AsyncIterator[Item]:
+        yield Item(name="ready")
+
+    async def _lifecycle(self) -> AsyncGenerator[AsyncIterable[Item]]:
+        yield self._items()
+        raise RuntimeError("teardown boom")
+
+    async def get(self) -> NDJSONStreamingResponse[Item]:
+        """Return an NDJSON stream whose post-yield teardown raises."""
+        return NDJSONStreamingResponse(stream=self._lifecycle())
+
+
 @dataclass
 class HeadEndpoint(Endpoint, path="/stream"):
     """Endpoint recording whether its stream body was iterated."""
@@ -214,8 +246,8 @@ class _EndpointApp(BaseApp):
         self._endpoint = endpoint
         super().__init__()
 
-    async def _wire(self) -> None:
-        self._include_endpoint(self._endpoint)
+    async def wire(self) -> None:
+        self.include_endpoint(self._endpoint)
 
 
 def test_finite_ndjson_stream() -> None:
@@ -282,6 +314,85 @@ def test_setup_error_is_normal_error_response() -> None:
             "title": "Stream setup failed",
             "status": 418,
         }
+
+
+def test_mid_stream_error_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    """A stream that faults mid-iteration logs the traceback (it's swallowed otherwise)."""
+    state = StreamState()
+    # Read the first item; the server then pulls the next one, which raises (the error path
+    # returns without a stream terminator, so don't consume to completion).
+    with (
+        caplog.at_level(logging.ERROR, logger="jero"),
+        TestClient(_EndpointApp(ErrorStreamEndpoint(state))) as client,
+        client.stream_get("/stream") as events,
+    ):
+        assert next(events) == {"name": "ready"}
+    assert "error streaming response for GET /stream" in caplog.text
+    assert "stream boom" in caplog.text
+    assert any(record.exc_info for record in caplog.records)
+
+
+def test_unexpected_setup_error_is_500_and_logged(caplog: pytest.LogCaptureFixture) -> None:
+    """A non-HTTP error during stream setup becomes a 500 Problem and is logged."""
+    with (
+        caplog.at_level(logging.ERROR, logger="jero"),
+        TestClient(_EndpointApp(UnexpectedSetupErrorEndpoint())) as client,
+    ):
+        resp = client.get("/stream")
+    assert resp.status_code == 500
+    assert resp.json() == {
+        "type": "internal-server-error",
+        "title": "Internal server error",
+        "status": 500,
+    }
+    assert "unhandled error handling GET /stream" in caplog.text
+    assert "setup boom" in caplog.text
+
+
+class SetupErrorBody(Struct):
+    """Custom body a handler returns for an intercepted stream-setup failure."""
+
+    detail: str
+
+
+class SetupErrorHandler:
+    """Translate a stream-setup ``RuntimeError`` into a custom response."""
+
+    def handle_exception(self, exception: RuntimeError) -> ExceptionResponse[SetupErrorBody]:
+        """Return an occurrence-specific response for the setup failure."""
+        return ExceptionResponse(status_code=502, json=SetupErrorBody(detail=str(exception)))
+
+
+class _HandlerEndpointApp(BaseApp):
+    """An app that registers a custom exception handler before the endpoint."""
+
+    def __init__(self, endpoint: Endpoint) -> None:
+        self._endpoint = endpoint
+        super().__init__()
+
+    async def wire(self) -> None:
+        self.add_exception_handler(SetupErrorHandler())
+        self.include_endpoint(self._endpoint)
+
+
+def test_custom_handler_intercepts_stream_setup_error() -> None:
+    """A registered handler translates a pre-stream setup failure, like any other error."""
+    with TestClient(_HandlerEndpointApp(UnexpectedSetupErrorEndpoint())) as client:
+        resp = client.get("/stream")
+    assert resp.status_code == 502
+    assert resp.json() == {"detail": "setup boom"}
+
+
+def test_stream_teardown_error_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    """A teardown failure after the stream completes is logged (still swallowed)."""
+    with (
+        caplog.at_level(logging.ERROR, logger="jero"),
+        TestClient(_EndpointApp(TeardownErrorEndpoint())) as client,
+    ):
+        # The stream itself completes cleanly, so it's safe to consume to the end.
+        assert list(client.stream_get("/stream")) == [{"name": "ready"}]
+    assert "error tearing down stream for GET /stream" in caplog.text
+    assert "teardown boom" in caplog.text
 
 
 def test_head_skips_stream_iteration() -> None:

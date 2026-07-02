@@ -2,7 +2,7 @@
 
 It wires authed widgets (CRUD + background analytics + links), an authed ``/me``, open
 health checks, a raw-form echo, and a ``from_ref`` link demo. Auth is a pure in-memory
-token map built in ``_wire`` (no lifecycle), so swapping the factory in tests replaces
+token map built in ``wire`` (no lifecycle), so swapping the factory in tests replaces
 only the I/O services and leaves auth intact.
 """
 
@@ -24,26 +24,30 @@ from jero import BackgroundTasks, BaseApp
 class DemoApp(BaseApp[Factory]):
     """Factory-injected demo app: authed widgets and ``/me``; open health, raw-form, links."""
 
-    async def _wire(self) -> None:
+    async def wire(self) -> None:
         """Build services from the factory, open the background queue, and wire the routes."""
-        widgets_service = await self._factory.create_widget_service()
-        analytics_service = await self._factory.create_analytics_service()
-        questions_service = await self._factory.create_questions_service()
-        upstream_response_error_handler = self._factory.create_upstream_response_error_handler()
+        widgets_service = await self.factory.create_widget_service()
+        analytics_service = await self.factory.create_analytics_service()
+        questions_service = await self.factory.create_questions_service()
+        upstream_response_error_handler = self.factory.create_upstream_response_error_handler()
         # The queue is opened after the analytics service it dispatches to, so it drains
         # before that service would be torn down.
-        background_tasks = await self._aenter(BackgroundTasks(drain_timeout=1.0))
+        background_tasks = await self.aenter(BackgroundTasks(drain_timeout=1.0))
         background_tasks.register(analytics_service.process)
         auth = TokenAuth({"token": User(id="user-id", name="user-name")})
-        self._add_exception_handler(upstream_response_error_handler)
-        self._include_resource(WidgetResource(widgets_service, background_tasks), auth=auth)
-        self._include_endpoint(WhoAmIEndpoint(), auth=auth)
-        self._include_endpoint(HealthEndpoint())
-        self._include_endpoint(RawHealthEndpoint())
-        self._include_endpoint(RawFormEndpoint())
-        self._include_endpoint(FeaturedWidgetEndpoint())
-        self._include_endpoint(QuestionsEndpoint(questions_service))
-        self._include_endpoint(NotificationsEndpoint())
+        self.add_exception_handler(upstream_response_error_handler)
+        self.include_resource(WidgetResource(widgets_service, background_tasks), auth=auth)
+        self.include_endpoint(WhoAmIEndpoint(), auth=auth)
+        self.include_endpoint(HealthEndpoint())
+        self.include_endpoint(RawHealthEndpoint())
+        self.include_endpoint(RawFormEndpoint())
+        self.include_endpoint(FeaturedWidgetEndpoint())
+        self.include_endpoint(QuestionsEndpoint(questions_service))
+        self.include_endpoint(NotificationsEndpoint())
+        # Serve the auto-generated OpenAPI 3.1 spec at /openapi.json and a Scalar UI at /docs.
+        # Tag descriptions are defined on the resources/endpoints themselves (see their meta);
+        # pass tags=[Tag(...)] here only for app-level tags or to pin the section order.
+        self.include_openapi(title="Demo API", version="0.1.0")
 
 
 app = DemoApp()

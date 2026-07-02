@@ -10,7 +10,7 @@ queue (Celery, a message bus, your database etc.).
 
 ## A complete example
 
-`BackgroundTasks` is a normal dependency: build it in `_wire`, open it with `_aenter`
+`BackgroundTasks` is a normal dependency: build it in `wire`, open it with `aenter`
 (it's an async context manager, so the worker starts at startup and drains at shutdown),
 register your handlers, and inject it into the endpoints that enqueue.
 
@@ -49,11 +49,11 @@ class Factory(BaseFactory):
 
 
 class App(BaseApp[Factory]):
-    async def _wire(self) -> None:
-        analytics = await self._factory.create_analytics_service()
-        tasks = await self._aenter(BackgroundTasks(drain_timeout=30.0))
+    async def wire(self) -> None:
+        analytics = await self.factory.create_analytics_service()
+        tasks = await self.aenter(BackgroundTasks(drain_timeout=30.0))
         tasks.register(analytics.process)   # the item type is inferred from the handler
-        self._include_endpoint(EventsEndpoint(tasks))
+        self.include_endpoint(EventsEndpoint(tasks))
 
 
 app = App()
@@ -100,7 +100,7 @@ There's no "wait forever," so shutdown can't hang.
 
 ## Ordering: enter the queue last
 
-Handlers run during the drain, and they use the services you built in `_wire` (a DB pool,
+Handlers run during the drain, and they use the services you built in `wire` (a DB pool,
 an HTTP client) — which are torn down at shutdown in reverse order. So **enter the queue
 after the resources its handlers use**, so the drain finishes before those resources
 close. This falls out naturally: `register` needs the handler, which needs its service,

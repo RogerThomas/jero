@@ -98,7 +98,20 @@ another exception becomes the generic 500 problem):
 ```python
 from msgspec import Struct
 
-from jero import ExceptionResponse
+from jero import BaseApp, Endpoint, ExceptionResponse
+
+
+class UpstreamError(Exception):
+    """A call to an upstream service failed."""
+
+    def __init__(self, *, retryable: bool, safe_to_expose: bool) -> None:
+        super().__init__("upstream call failed")
+        self.retryable = retryable
+        self.safe_to_expose = safe_to_expose
+
+
+class Status(Struct):
+    ok: bool
 
 
 class FailureBody(Struct):
@@ -122,10 +135,15 @@ class UpstreamHandler:
         )
 
 
+class StatusEndpoint(Endpoint, path="/status"):
+    async def get(self) -> Status:
+        raise UpstreamError(retryable=True, safe_to_expose=True)
+
+
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._add_exception_handler(UpstreamHandler())
-        self._include_endpoint(StatusEndpoint())
+    async def wire(self) -> None:
+        self.add_exception_handler(UpstreamHandler())
+        self.include_endpoint(StatusEndpoint())
 ```
 
 jero infers every type from the method signature at wiring. Registering two handlers

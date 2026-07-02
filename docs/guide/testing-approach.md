@@ -4,9 +4,13 @@ jero's test suite runs against **one shared application** — the
 [`demo_app/`](https://github.com/RogerThomas/jero/tree/main/demo_app) package — and that
 single app plays three roles at once:
 
-1. **Documentation.** It's the project-structured worked example the docs point to (see
-   the [complete example](complete-example.md)) — a real `config` / `models` / `services` /
-   `operations` / `factory` / `app` layout, not a throwaway snippet.
+1. **Documentation and reference.** It's the project-structured worked example the docs
+   point to (see the [complete example](complete-example.md)) — a real `config` / `models` /
+   `services` / `operations` / `factory` / `app` layout, not a throwaway snippet. If you're
+   sizing jero up, read `demo_app/` end to end: it's the clearest picture of how an API
+   built on jero actually fits together — where the framework boundary sits, how
+   dependencies get wired, and what idiomatic jero looks like at project scale rather than
+   in a single-file example.
 2. **The integration-test fixture.** Most of the suite drives `demo_app` through the
    `TestClient`, mocking only the I/O service layer via the public `factory=` seam. Tests
    that need esoteric wiring (streaming, response kinds, wiring errors) still build their

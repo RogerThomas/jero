@@ -2,7 +2,7 @@
 
 Most tests run against the shared ``demo_app`` with its I/O service layer mocked. The
 ``client`` fixture passes a ``create_autospec`` stand-in factory into ``DemoApp``
-through the public ``factory=`` seam, so ``_wire`` builds the widget resource against
+through the public ``factory=`` seam, so ``wire`` builds the widget resource against
 ``widgets_mock`` instead of the real upstream client. The in-memory ``AnalyticsService``
 is *not* mocked — a real one is injected (and exposed as the ``analytics`` fixture) so
 its handler keeps a real, type-annotated signature for background registration and tests

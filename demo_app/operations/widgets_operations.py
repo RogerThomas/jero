@@ -10,11 +10,33 @@ from dataclasses import dataclass
 
 from demo_app.models import Deleted, Page, Widget, WidgetEvent, WidgetIn, WidgetPatch, WidgetPath
 from demo_app.services.widgets_service import WidgetService
-from jero import BackgroundTasks, JSONResponse, Link, Location, Resource
+from jero import (
+    BackgroundTasks,
+    JSONResponse,
+    Link,
+    Location,
+    OperationMeta,
+    Resource,
+    ResourceMeta,
+    ResponseSpec,
+    Tag,
+)
 
 
 @dataclass
-class WidgetResource(Resource, path="/widgets", ref="widgets"):
+class WidgetResource(
+    Resource,
+    path="/widgets",
+    ref="widgets",
+    # every widget operation is tagged "widgets"; defining it here describes the group
+    meta=ResourceMeta(tags=[Tag("widgets", "Create, read, and manage widgets.")]),
+    # summary is explicit (docstrings aren't published); create can also fail with a
+    # conflict the framework can't infer — declare it here.
+    meta_create=OperationMeta(
+        summary="Create a widget.",
+        responses=[ResponseSpec(409, "A widget with that name already exists")],
+    ),
+):
     """CRUD over widgets, delegating to the injected service."""
 
     _service: WidgetService

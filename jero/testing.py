@@ -1,6 +1,6 @@
 """In-process test client for jero apps.
 
-Drives the ASGI app directly — no socket, no server. Runs the app's lifespan (so ``_wire`` registers
+Drives the ASGI app directly — no socket, no server. Runs the app's lifespan (so ``wire`` registers
 resources/endpoints and the dependency context stays open) on a dedicated background event loop, and
 exposes a synchronous, requests-style API:
 
@@ -680,7 +680,7 @@ class FactoryHarness[FactoryT: BaseFactory]:
     """Build a factory in isolation and exercise its ``create_*`` methods.
 
     The factory-level sibling of :class:`TestClient`. It owns the exit stacks the
-    factory writes to via ``_enter`` / ``_aenter`` and runs async ``create_*``
+    factory writes to via ``enter`` / ``aenter`` and runs async ``create_*``
     methods on a background loop, so services are built — and their resources
     opened and torn down — exactly as under a live app, but with no app, routes,
     or server. Use it to test the real factory wiring that an app's ``factory=``

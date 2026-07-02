@@ -1,10 +1,10 @@
 """Multipart form binding: part kinds, typed headers, and REST error codes."""
 
 from collections.abc import Generator
-from typing import Literal
+from typing import Annotated, Literal
 
 import pytest
-from msgspec import Struct
+from msgspec import Meta, Struct
 from msgspec.json import encode as json_encode
 
 from jero import BaseApp, Endpoint, FilePart, FormPart, Resource, TestClient
@@ -143,10 +143,10 @@ class HeadersEndpoint(Endpoint, path="/headers"):
 class UploadApp(BaseApp):
     """App wiring the form endpoints."""
 
-    async def _wire(self) -> None:
-        self._include_endpoint(UploadEndpoint())
-        self._include_endpoint(ParamsOnlyEndpoint())
-        self._include_endpoint(HeadersEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(UploadEndpoint())
+        self.include_endpoint(ParamsOnlyEndpoint())
+        self.include_endpoint(HeadersEndpoint())
 
 
 class BodyOnPostResource(Resource, path="/x"):
@@ -204,8 +204,8 @@ class ResourceApp(BaseApp):
         self._resource = resource
         super().__init__()
 
-    async def _wire(self) -> None:
-        self._include_resource(self._resource)
+    async def wire(self) -> None:
+        self.include_resource(self._resource)
 
 
 @pytest.fixture(name="client")
@@ -482,3 +482,37 @@ def test_unsupported_form_field_type_is_wiring_error() -> None:
     """A form field of an unsupported payload type fails wiring."""
     with pytest.raises(RuntimeError, match="form field 'values' has unsupported payload"):
         TestClient(ResourceApp(UnsupportedFormResource()))
+
+
+class ConstrainedForm(Camel):
+    """A form whose scalar field carries msgspec.Meta constraints."""
+
+    quantity: Annotated[int, Meta(ge=1, le=9)]
+
+
+class Counted(Camel):
+    """Echoes the bound quantity."""
+
+    quantity: int
+
+
+class ConstrainedFormEndpoint(Endpoint, path="/constrained-form"):
+    """Binds a Meta-constrained scalar form field."""
+
+    async def post(self, form: ConstrainedForm) -> Counted:
+        """Echo the quantity."""
+        return Counted(quantity=form.quantity)
+
+
+class ConstrainedFormApp(BaseApp):
+    """App wiring the Meta-constrained form."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(ConstrainedFormEndpoint())
+
+
+def test_meta_constrained_scalar_form_field_binds_and_is_enforced() -> None:
+    """An Annotated[..., Meta(...)] scalar form field wires, and its constraints run."""
+    with TestClient(ConstrainedFormApp()) as client:
+        assert client.post("/constrained-form", data={"quantity": "3"}).status_code == 200
+        assert client.post("/constrained-form", data={"quantity": "0"}).status_code == 422

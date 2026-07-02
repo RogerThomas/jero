@@ -2,7 +2,7 @@
 echo, and a cross-module ``from_ref`` link demo."""
 
 from demo_app.models import Health, RawForm, RawFormHeaders, User, Widget, WidgetPath
-from jero import Endpoint, JSONResponse, Link, RawHeaders
+from jero import Endpoint, EndpointMeta, JSONResponse, Link, RawHeaders, Tag
 
 
 class WhoAmIEndpoint(Endpoint, path="/me"):
@@ -13,7 +13,12 @@ class WhoAmIEndpoint(Endpoint, path="/me"):
         return user
 
 
-class HealthEndpoint(Endpoint, path="/healthz"):
+class HealthEndpoint(
+    Endpoint,
+    path="/healthz",
+    # defines the "system" group's description...
+    meta=EndpointMeta(tags=[Tag("system", "Health checks and diagnostics.")]),
+):
     """Unauthenticated health-check endpoint."""
 
     async def get(self) -> Health:
@@ -21,7 +26,11 @@ class HealthEndpoint(Endpoint, path="/healthz"):
         return Health(status="ok")
 
 
-class RawHealthEndpoint(Endpoint, path="/raw-healthz"):
+class RawHealthEndpoint(
+    Endpoint,
+    path="/raw-healthz",
+    meta=EndpointMeta(tags=["system"]),  # ...and this one just uses it by name (bare str)
+):
     """Unauthenticated health-check endpoint returning raw JSON."""
 
     async def get(self) -> bytes:

@@ -44,8 +44,8 @@ class MoviesEndpoint(Endpoint, path="/movies"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_endpoint(MoviesEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(MoviesEndpoint())
 
 
 app = App()
@@ -78,8 +78,8 @@ class EventsEndpoint(Endpoint, path="/events"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_endpoint(EventsEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(EventsEndpoint())
 
 
 app = App()
@@ -114,8 +114,8 @@ class CSVEndpoint(Endpoint, path="/export"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_endpoint(CSVEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(CSVEndpoint())
 
 
 app = App()
@@ -130,6 +130,7 @@ guarantees the teardown runs, even on client disconnect or a mid-stream error:
 
 ```python
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from typing import Self
 
 from msgspec import Struct
 
@@ -145,7 +146,7 @@ class Cursor:
     opened before use and closed afterwards. Implementing the async context manager
     protocol — `__aenter__` / `__aexit__` — is what lets `async with` drive it."""
 
-    async def __aenter__(self) -> Cursor:
+    async def __aenter__(self) -> Self:
         print("cursor opened")   # illustrative side effect: acquire the resource here
         return self
 
@@ -169,8 +170,8 @@ class ExportEndpoint(Endpoint, path="/movies/export"):
 
 
 class App(BaseApp):
-    async def _wire(self) -> None:
-        self._include_endpoint(ExportEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(ExportEndpoint())
 
 
 app = App()
@@ -187,8 +188,10 @@ don't need lifecycle, a one-yield generator if you do.
 
 jero watches the client connection while it streams. If the client disconnects, it
 stops pulling from your iterator and runs the lifecycle teardown — you don't write any
-of that bookkeeping. Errors raised inside the stream are swallowed after teardown so a
-broken stream can't crash the worker.
+of that bookkeeping. An error raised inside the stream (after the response has started)
+is logged with its traceback, then swallowed after teardown so a broken stream can't
+crash the worker — the client sees a truncated stream, and the `jero` logger has
+the cause.
 
 ## Status & headers
 

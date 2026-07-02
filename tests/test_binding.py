@@ -1,5 +1,8 @@
 """Source binding and REST error semantics: 400 / 404 / 422 / 500."""
 
+import logging
+
+import pytest
 from msgspec import Struct
 from msgspec.json import decode as json_decode
 
@@ -76,8 +79,8 @@ class IntResource(Resource, path="/things"):
 class IntApp(BaseApp):
     """App wiring IntResource at /things."""
 
-    async def _wire(self) -> None:
-        self._include_resource(IntResource())
+    async def wire(self) -> None:
+        self.include_resource(IntResource())
 
 
 def test_path_value_that_fails_conversion_is_404() -> None:
@@ -116,9 +119,9 @@ class UpstreamDecodeEndpoint(Endpoint, path="/upstream-decode"):
 class UpstreamDecodeApp(BaseApp):
     """App wiring the upstream-error endpoints."""
 
-    async def _wire(self) -> None:
-        self._include_endpoint(UpstreamValidationEndpoint())
-        self._include_endpoint(UpstreamDecodeEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(UpstreamValidationEndpoint())
+        self.include_endpoint(UpstreamDecodeEndpoint())
 
 
 def test_handler_side_validation_error_is_500() -> None:
@@ -138,6 +141,18 @@ def test_handler_side_decode_error_is_500() -> None:
     with TestClient(UpstreamDecodeApp()) as client:
         resp = client.get("/upstream-decode")
         assert resp.status_code == 500
+
+
+def test_unhandled_error_is_logged_with_traceback(caplog: pytest.LogCaptureFixture) -> None:
+    """The 500 is swallowed for the client, so the traceback must reach the log."""
+    with (
+        caplog.at_level(logging.ERROR, logger="jero"),
+        TestClient(UpstreamDecodeApp()) as client,
+    ):
+        resp = client.get("/upstream-validation")
+    assert resp.status_code == 500
+    assert "unhandled error handling GET /upstream-validation" in caplog.text
+    assert any(record.exc_info for record in caplog.records)
 
 
 # --- raw_headers: the opaque header bag, for forwarding / diagnostics ---
@@ -174,9 +189,9 @@ class BothHeadersEndpoint(Endpoint, path="/both"):
 class RawHeadersApp(BaseApp):
     """App wiring the raw_headers endpoints."""
 
-    async def _wire(self) -> None:
-        self._include_endpoint(RawHeadersEndpoint())
-        self._include_endpoint(BothHeadersEndpoint())
+    async def wire(self) -> None:
+        self.include_endpoint(RawHeadersEndpoint())
+        self.include_endpoint(BothHeadersEndpoint())
 
 
 def test_raw_headers_handler_sees_request_headers() -> None:
