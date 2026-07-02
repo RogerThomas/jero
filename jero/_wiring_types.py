@@ -31,6 +31,15 @@ type ReturnKind = Literal[
 type PayloadKind = Literal["bytes", "struct", "scalar"]
 
 
+class WiringError(TypeError):
+    """A router does not meet the framework contract. Raised at startup.
+
+    Lives here, on the shared wiring leaf, so both :mod:`jero.core` and the sender-free
+    :mod:`jero._exception_handlers` (which validates handlers at wiring time) can raise it
+    without importing each other.
+    """
+
+
 def is_struct_type(ann: object) -> bool:
     """True if ``ann`` is a ``msgspec.Struct`` subclass (i.e. a wire model)."""
     return isinstance(ann, type) and issubclass(ann, Struct)

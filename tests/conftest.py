@@ -20,6 +20,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from demo_app import AnalyticsService, DemoApp, Factory, WidgetService
+from demo_app.errors import UpstreamResponseErrorHandler
 from jero import TestClient
 
 
@@ -40,5 +41,6 @@ def _client(
     factory = mocker.create_autospec(Factory, spec_set=True, instance=True)
     factory.create_widget_service.return_value = widgets_mock
     factory.create_analytics_service.return_value = analytics_service
+    factory.create_upstream_response_error_handler.return_value = UpstreamResponseErrorHandler(30)
     with TestClient(DemoApp(factory=factory)) as client:
         yield client

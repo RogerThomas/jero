@@ -22,9 +22,9 @@ from jero._wiring_types import (
     is_struct_type,
     strip_list,
 )
+from jero.errors import Problem
 from jero.openapi import (
     BodySpec,
-    Error,
     FormFieldSpec,
     OperationInput,
     ParamSpec,
@@ -128,7 +128,9 @@ def _response_header_type(kind: ReturnKind, annotation: object) -> type[Struct] 
 
 
 def _error_responses(sources: Sources, *, authed: bool) -> list[ResponseEntry]:
-    """The error responses a handler can actually produce, derived from its sources."""
+    """The error responses a handler can actually produce, derived from its sources. Each
+    references the shared RFC 9457 ``Problem`` schema — the wire body every framework
+    ``HTTPError`` encodes to (``application/json``)."""
     has_body = sources.json_decoder is not None or sources.form is not None
     statuses: dict[int, str] = {}
     if has_body or sources.params is not None or sources.headers is not None:
@@ -140,10 +142,10 @@ def _error_responses(sources: Sources, *, authed: bool) -> list[ResponseEntry]:
     if sources.path is not None:
         statuses[404] = "Not found"
     if authed:
-        statuses[401] = "Authentication failed"
+        statuses[401] = "Authentication required"
     statuses[500] = "Internal server error"
     return [
-        ResponseEntry(status, detail, "application/json", model=Error)
+        ResponseEntry(status, detail, "application/json", model=Problem)
         for status, detail in statuses.items()
     ]
 
@@ -206,8 +208,8 @@ def _success_entry(status: int, sources: Sources) -> ResponseEntry:
 def operation_input(spec: OperationSpec) -> OperationInput:
     """Translate a captured operation into the builder's input record.
 
-    Un-underscored: it crosses the ``core`` / ``openapi`` boundary (``core`` imports it
-    lazily). Everything else in this module is a private helper to this function.
+    Un-underscored: it crosses the ``core`` / ``openapi`` boundary (``core`` imports it).
+    Everything else in this module is a private helper to this function.
     """
     op_meta = spec.op_meta
     # Summary/description are explicit (OperationMeta) — never inferred from the docstring.

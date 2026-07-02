@@ -121,12 +121,6 @@ class ResponseSpec(Struct):
     content_type: str | None = None
 
 
-class Error(Struct):
-    """jero's uniform error envelope — the shared schema derived error responses point at."""
-
-    error: str
-
-
 class ModelMeta(Struct):
     """OpenAPI metadata for a model (a wire ``Struct``), attached via the ``meta=`` class
     keyword of :class:`~jero.Struct`.
@@ -243,8 +237,10 @@ def _ref_name(ref_schema: dict[str, Any]) -> str:
 
 def _collect_types(operations: tuple[OperationInput, ...]) -> list[object]:
     """Every type referenced anywhere — param/body/response Structs and non-binary form
-    field payloads (which may be ``Annotated`` scalars) — de-duplicated in first-seen
-    order, plus the shared ``Error`` envelope. One list feeds the ``schema_components`` call."""
+    field payloads (which may be ``Annotated`` scalars) — de-duplicated in first-seen order.
+    One list feeds the ``schema_components`` call. The shared ``Problem`` error schema is
+    included automatically: ``core`` points every operation's derived error responses at it,
+    so it is collected here like any other response model."""
     seen: dict[object, None] = {}
     for op in operations:
         for param in op.params:
@@ -260,7 +256,6 @@ def _collect_types(operations: tuple[OperationInput, ...]) -> list[object]:
                 seen.setdefault(response.model, None)
             if response.headers is not None:
                 seen.setdefault(response.headers, None)
-    seen.setdefault(Error, None)
     return list(seen)
 
 

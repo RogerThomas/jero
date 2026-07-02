@@ -10,7 +10,7 @@ def authenticate(self, headers: THeaders) -> TUser: ...
 - `headers` is bound from the request into your declared `Struct` (the same
   header-name mapping as the [`headers` binding](binding.md#headers-headers-typed-and-raw_headers-opaque)).
 - The returned `Struct` is what handlers receive as `user`.
-- Raise `HTTPError(401, ...)` to reject. `authenticate` may be sync or async.
+- Raise an `HTTPError` subclass to reject. `authenticate` may be sync or async.
 
 ```python
 from dataclasses import dataclass
@@ -18,6 +18,14 @@ from dataclasses import dataclass
 from msgspec import Struct
 
 from jero import BaseApp, Endpoint, HTTPError
+
+
+class InvalidTokenError(
+    HTTPError,
+    type="invalid-token",
+    title="Invalid token",
+    status=401,
+): ...
 
 
 class Credentials(Struct):
@@ -37,7 +45,7 @@ class TokenAuth:
         token = headers.authorization.removeprefix("Bearer ").strip()
         user = self._users.get(token)
         if user is None:
-            raise HTTPError(401, "invalid token")
+            raise InvalidTokenError()
         return user
 ```
 
@@ -52,6 +60,14 @@ from dataclasses import dataclass
 from msgspec import Struct
 
 from jero import BaseApp, Endpoint, HTTPError
+
+
+class InvalidTokenError(
+    HTTPError,
+    type="invalid-token",
+    title="Invalid token",
+    status=401,
+): ...
 
 
 class Credentials(Struct):
@@ -71,7 +87,7 @@ class TokenAuth:
         token = headers.authorization.removeprefix("Bearer ").strip()
         user = self._users.get(token)
         if user is None:
-            raise HTTPError(401, "invalid token")
+            raise InvalidTokenError()
         return user
 
 

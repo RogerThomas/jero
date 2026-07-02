@@ -130,6 +130,7 @@ guarantees the teardown runs, even on client disconnect or a mid-stream error:
 
 ```python
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from typing import Self
 
 from msgspec import Struct
 
@@ -145,7 +146,7 @@ class Cursor:
     opened before use and closed afterwards. Implementing the async context manager
     protocol — `__aenter__` / `__aexit__` — is what lets `async with` drive it."""
 
-    async def __aenter__(self) -> Cursor:
+    async def __aenter__(self) -> Self:
         print("cursor opened")   # illustrative side effect: acquire the resource here
         return self
 

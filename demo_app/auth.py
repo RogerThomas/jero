@@ -7,8 +7,9 @@ replaces only the I/O services and leaves auth wiring intact.
 
 from dataclasses import dataclass
 
+from demo_app.errors import InvalidTokenError
 from demo_app.models import Credentials, User
-from jero import BearerAuth, HTTPError
+from jero import BearerAuth
 
 
 @dataclass
@@ -28,5 +29,5 @@ class TokenAuth(BearerAuth[Credentials, User]):
         token = headers.authorization.removeprefix("Bearer ").strip()
         user = self._users.get(token)
         if user is None:
-            raise HTTPError(401, "invalid token")
+            raise InvalidTokenError()
         return user

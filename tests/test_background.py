@@ -15,6 +15,7 @@ from msgspec import Struct
 from pytest_mock import MockerFixture
 
 from demo_app import AnalyticsService, DemoApp, Factory, WidgetService
+from demo_app.errors import UpstreamResponseErrorHandler
 from demo_app.models import Widget
 from jero import BackgroundTasks, TestClient, WiringError
 
@@ -201,6 +202,7 @@ def test_end_to_end_processes_through_the_app(mocker: MockerFixture) -> None:
     factory = mocker.create_autospec(Factory, spec_set=True, instance=True)
     factory.create_widget_service.return_value = widgets_mock
     factory.create_analytics_service.return_value = analytics_service
+    factory.create_upstream_response_error_handler.return_value = UpstreamResponseErrorHandler(30)
     with TestClient(DemoApp(factory=factory)) as client:
         resp = client.post(
             "/widgets",

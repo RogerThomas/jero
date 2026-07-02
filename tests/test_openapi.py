@@ -134,10 +134,13 @@ def test_msgspec_meta_constraints_appear_in_schema(client: TestClient) -> None:
 
 
 def test_shared_error_schema_is_present(client: TestClient) -> None:
-    """Derived error responses point at one shared Error component."""
+    """Derived error responses point at the shared RFC 9457 Problem component."""
     document = client.get("/openapi.json").json()
-    assert document["components"]["schemas"]["Error"]["properties"] == {"error": {"type": "string"}}
-    error_ref = {"$ref": "#/components/schemas/Error"}
+    problem = document["components"]["schemas"]["Problem"]["properties"]
+    assert problem["type"] == {"type": "string"}
+    assert problem["title"] == {"type": "string"}
+    assert problem["status"] == {"type": "integer"}
+    error_ref = {"$ref": "#/components/schemas/Problem"}
     create = document["paths"]["/widgets"]["post"]["responses"]
     assert create["422"]["content"]["application/json"]["schema"] == error_ref
 

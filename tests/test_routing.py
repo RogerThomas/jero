@@ -8,13 +8,20 @@ from jero import TestClient
 
 def test_unknown_path_is_404(client: TestClient) -> None:
     """GET to an unregistered path returns 404."""
-    assert client.get("/nope").status_code == 404
+    resp = client.get("/nope")
+    assert resp.status_code == 404
+    assert resp.json() == {"type": "not-found", "title": "Not found", "status": 404}
 
 
 def test_wrong_method_is_405_with_allow(client: TestClient) -> None:
     """An unsupported method returns 405 with an Allow header listing valid verbs."""
     resp = client.delete("/healthz")
     assert resp.status_code == 405
+    assert resp.json() == {
+        "type": "method-not-allowed",
+        "title": "Method not allowed",
+        "status": 405,
+    }
     assert resp.headers["allow"] == "GET, HEAD, OPTIONS"
 
 

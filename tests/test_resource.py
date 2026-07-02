@@ -2,6 +2,10 @@
 
 from unittest.mock import MagicMock
 
+from demo_app.errors import (
+    UpstreamResponseError,
+    WidgetNotFoundError,
+)
 from demo_app.models import Widget, WidgetIn, WidgetPatch
 from jero import TestClient
 
@@ -26,6 +30,62 @@ def test_read_one_binds_path_and_delegates(client: TestClient, widgets_mock: Mag
     assert resp.status_code == 200
     assert resp.json() == {"id": "widget-id", "name": "name", "priceCents": 1}
     widgets_mock.get_widget.assert_awaited_once_with("widget-id")
+
+
+def test_read_one_returns_parameterized_problem(
+    client: TestClient, widgets_mock: MagicMock
+) -> None:
+    """Application HTTP errors use their stable type and structured occurrence params."""
+    widgets_mock.get_widget.side_effect = WidgetNotFoundError(widget_id="widget-id")
+
+    resp = client.get("/widgets/widget-id", headers={"authorization": "Bearer token"})
+
+    assert resp.status_code == 404
+    assert resp.json() == {
+        "type": "widget-not-found",
+        "title": "Widget not found",
+        "status": 404,
+        "detail": "Widget widget-id not found",
+        "params": {"widgetId": "widget-id"},
+    }
+
+
+def test_read_one_uses_static_custom_exception_handler(
+    client: TestClient, widgets_mock: MagicMock
+) -> None:
+    """The demo app translates an empty upstream response into a static problem."""
+    widgets_mock.get_widget.side_effect = UpstreamResponseError(
+        retryable=False,
+    )
+
+    resp = client.get("/widgets/widget-id", headers={"authorization": "Bearer token"})
+
+    assert resp.status_code == 502
+    assert resp.json() == {
+        "type": "empty-upstream-response",
+        "title": "Empty upstream response",
+        "status": 502,
+    }
+
+
+def test_read_one_uses_parameterized_custom_exception_handler(
+    client: TestClient, widgets_mock: MagicMock
+) -> None:
+    """The 503 handler returns structured retry context and a typed header."""
+    widgets_mock.get_widget.side_effect = UpstreamResponseError(
+        retryable=True,
+    )
+
+    resp = client.get("/widgets/widget-id", headers={"authorization": "Bearer token"})
+
+    assert resp.status_code == 503
+    assert resp.json() == {
+        "type": "upstream-unavailable",
+        "title": "Upstream unavailable",
+        "status": 503,
+        "detail": "An upstream service is overloaded; please try again after 30 seconds",
+        "params": {"retryAfterSeconds": 30},
+    }
 
 
 def test_read_many_returns_a_list(client: TestClient, widgets_mock: MagicMock) -> None:

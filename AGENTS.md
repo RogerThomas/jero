@@ -137,6 +137,25 @@ These pull against each other constantly; keep all three in mind on every change
   `@dataclass` (like the streaming ones), generic over body `T` and headers `H` so
   both schemas survive to the OpenAPI spec — a bare `JSONResponse` (no `[T]`) is a
   pyright-strict error on purpose.
+- **Errors**: API errors use jero's typed Problem Details format. Its intentional RFC
+  9457 deviation is that `type` is a stable short machine code, not a URI. Define a
+  static error as an `HTTPError` subclass with class-level `type` / `title` / `status`
+  and optional `docs`; use `DataclassHTTPError[Params]` plus `detail_template` when an
+  occurrence has runtime values. Parameterized errors always emit both human-only
+  `detail` and machine-readable typed `params`; static errors emit neither. Uncaught
+  exceptions become the generic `internal-server-error` problem. Always raise an
+  exception instance (`raise WidgetNotFoundError()`), never the exception class.
+- **Custom exception handlers**: hand-wire a structurally typed object with
+  `handle_exception(exception: E) -> ErrorResponse1 | ErrorResponse2 | None` via
+  `add_exception_handler`; no base class or decorator. Returning `None` continues
+  default handling (`HTTPError` serializes itself, anything else becomes the generic
+  500); returning a declared `HTTPError` sends its Problem Details, while returning
+  `ExceptionResponse` sends its required per-occurrence `status_code`, typed JSON
+  Struct, and optional typed/raw headers and links. Signatures are compiled from every
+  concrete `HTTPError` / `ExceptionResponse[T, H]` return-union member
+  at wiring, nearest-MRO registration wins, and registering the same exception type
+  twice is a `WiringError`. Its status must be 400–599; a handler failure becomes the
+  generic 500 without recursively invoking handlers.
 - **A JSON body is always a Struct — never a raw `dict`.** The
   `@api.get(...) → return {"a": 1}` idiom is gone: a `dict`/blob return is a
   `WiringError` at startup. JSON in and out is a typed Struct, every time — that's
@@ -154,7 +173,8 @@ These pull against each other constantly; keep all three in mind on every change
   to "resolve." Per-request resources are an `async with` inside the handler.
   Do **not** add an injection/resolver system.
   - **Naming**: the extension surface is intentionally **public** (`wire`,
-    `include_resource`, `include_endpoint`, `enter`, `aenter`, `factory`). Technically
+    `include_resource`, `include_endpoint`, `include_openapi`, `add_exception_handler`,
+    `enter`, `aenter`, `factory`). Technically
     these are private (only called from inside a subclass), but a leading `_` reads as
     "keep out" for the API users are meant to use, so they're public. Underscore is
     reserved for genuine internals (`_include`, `_register`, `_make_factory`, the
@@ -194,6 +214,8 @@ These pull against each other constantly; keep all three in mind on every change
   types. `jero/background.py` — the in-process `BackgroundTasks` queue.
   `jero/links.py` — `Location` / `Link` and their reverse-routing targets (a leaf module
   `core` and `streaming` both import). `jero/headers.py` — the `RawHeaders` opaque bag.
+  `jero/errors.py` — typed Problem Details Structs, `HTTPError` foundations, and the
+  framework's fixed error types.
   `jero/codecs.py` — the
   shared reusable `msgspec_encoder` / `msgspec_decoder` (imported by `core`,
   `streaming`, `testing`; SSE wire-formatting lives in `streaming.py` as the
@@ -226,13 +248,15 @@ These pull against each other constantly; keep all three in mind on every change
   response kinds — generic `JSONResponse[T, H]` / `BytesResponse[H]` / streaming
   `[T, H]` with typed response headers, `raw_headers`, and `status_code` overrides
   — `BaseApp`/`BaseFactory` lifecycle, in-process `BackgroundTasks`, reverse-routed
-  `Location` / `Link` responses, `TestClient`, the test suite. **OpenAPI 3.1**:
+  `Location` / `Link` responses, typed Problem Details errors, structurally registered
+  custom exception handlers, `TestClient`, the test suite. **OpenAPI 3.1**:
   `include_openapi` serves `/openapi.json` + a Scalar `/docs` UI, derived from the
   wired types (sources, returns incl. generics, `msgspec.Meta`). **Docstrings are never
   published** — public prose is explicit: `OperationMeta` (summary/description), `ModelMeta`
   via `jero.Struct`'s `meta=` class keyword (model description, attached through a
   `msgspec.StructMeta` subclass), field `Meta`. `SecurityScheme` / `BearerAuth` /
-  `BasicAuth` for security; per-source error responses.
+  `BasicAuth` for security; derived per-source error responses reference the shared
+  `Problem` schema.
 - **Performance (validated natively)**: on the authed write path
   (`POST /movies` — bearer auth + JSON decode + encode + 201, C=200), jero ≈
   blacksheep (~43k req/s, a tie), ~2× litestar, ~3× robyn, ~6× idiomatic FastAPI.

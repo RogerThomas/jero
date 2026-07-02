@@ -154,9 +154,9 @@ the same component name is a startup `WiringError`.
 
 ### Error responses
 
-jero returns a uniform error envelope (`{"error": "..."}`) with consistent statuses, so
-the generator documents the errors an operation can *actually* produce — no false
-entries:
+jero returns errors as RFC 9457 Problem Details (`{"type", "title", "status", "docs?"}`,
+see [REST & error semantics](rest.md)) with consistent statuses, so the generator
+documents the errors an operation can *actually* produce — no false entries:
 
 | Status | Documented when the operation… |
 | ------ | ------------------------------ |
@@ -168,8 +168,8 @@ entries:
 | `500`  | always (an unhandled error) |
 
 A bodyless, unauthenticated `GET` therefore lists only its success response and `500` —
-not a `422` it could never return. All error responses point at one shared `Error`
-schema.
+not a `422` it could never return. All derived error responses point at one shared
+`Problem` schema (the Problem Details body every framework error encodes to).
 
 ## Overriding and extending
 

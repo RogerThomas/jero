@@ -19,8 +19,9 @@ The contract:
   msgspec ``rename`` is honored everywhere (e.g. ``Struct, rename="camel"`` for camelCase on the
   wire, snake_case in code) — define your own base Struct for the wire convention.
 - Auth is an object passed to ``include_resource`` implementing
-  ``authenticate(headers: SomeStruct) -> UserStruct``; raise ``HTTPError(401, ...)`` to reject. When
-  set, it runs for every method on the resource, before the body is decoded. Handlers that declare
+  ``authenticate(headers: SomeStruct) -> UserStruct``; raise an ``HTTPError`` subclass
+  to reject. When set, it runs for every method on the resource, before the body is decoded.
+  Handlers that declare
   ``user`` receive its result; the annotation is checked against the authenticator's return type at
   startup.
 - Dependencies are wired by hand in the overridden ``BaseApp.wire`` method (runs once at startup).
@@ -81,6 +82,12 @@ from msgspec import DecodeError, Struct, ValidationError, convert, to_builtins
 from msgspec.json import Decoder
 from msgspec.structs import fields as struct_fields
 
+from jero._exception_handlers import (
+    CompiledExceptionHandler,
+    ExceptionHandler,
+    ExceptionResponse,
+    invoke_exception_handler,
+)
 from jero._openapi_wiring import operation_input
 from jero._wiring_types import (
     EndpointMeta,
@@ -92,10 +99,21 @@ from jero._wiring_types import (
     ResourceMeta,
     ReturnKind,
     Sources,
+    WiringError,
     is_struct_type,
     strip_list,
 )
 from jero.codecs import msgspec_encoder
+from jero.errors import (
+    AuthenticationRequiredError,
+    HTTPError,
+    InternalServerError,
+    MalformedRequestError,
+    MethodNotAllowedError,
+    NotFoundError,
+    UnsupportedMediaTypeError,
+    ValidationFailedError,
+)
 from jero.forms import FilePart, FormPart
 from jero.headers import RawHeaders
 from jero.links import (
@@ -169,19 +187,6 @@ class _Verb:
     method: _HttpMethod
     success_status: int
     extends_path: bool  # may path fields beyond the template slots extend the URL?
-
-
-class WiringError(TypeError):
-    """A router does not meet the framework contract. Raised at startup."""
-
-
-class HTTPError(Exception):
-    """Raise from a handler to return a JSON error response."""
-
-    def __init__(self, status: int, detail: str) -> None:
-        super().__init__(detail)
-        self.status = status
-        self.detail = detail
 
 
 @dataclass(kw_only=True, slots=True)
@@ -413,7 +418,7 @@ class Endpoint(_Routable):
 
 
 class Auth[THeaders: Struct, TUser: Struct](Protocol):
-    """Implement ``authenticate``; raise ``HTTPError(401, ...)`` to reject.
+    """Implement ``authenticate``; raise an ``HTTPError`` subclass to reject.
 
     ``headers`` is bound from the request headers into your declared
     Struct (header names map ``x-trace-id`` -> ``x_trace_id``). The
@@ -421,7 +426,7 @@ class Auth[THeaders: Struct, TUser: Struct](Protocol):
     """
 
     def authenticate(self, headers: THeaders) -> TUser | Awaitable[TUser]:
-        """Validate ``headers`` and return the user Struct; raise ``HTTPError(401)`` to reject."""
+        """Validate ``headers`` and return the user Struct; raise ``HTTPError`` to reject."""
         ...  # pylint: disable=unnecessary-ellipsis  # Protocol stub; pyright needs the body
 
 
@@ -507,22 +512,23 @@ def _convert_source(
     raw: dict[str, str],
     struct_type: type[Struct],
     status: int,
-    detail: str | None = None,
 ) -> Struct:
     """Convert one request source to its Struct, mapping failure to an HTTP status."""
     try:
         return convert(raw, struct_type, strict=False)
-    except ValidationError as exc:
-        raise HTTPError(status, str(exc) if detail is None else detail) from None
+    except ValidationError:
+        if status == 404:
+            raise NotFoundError() from None
+        raise MalformedRequestError() from None
 
 
 def _decode_json_body(body: bytes, decoder: Decoder[Struct]) -> Struct:
     try:
         return decoder.decode(body)
-    except ValidationError as exc:
-        raise HTTPError(422, str(exc)) from None
-    except DecodeError as exc:
-        raise HTTPError(400, str(exc)) from None
+    except ValidationError:
+        raise ValidationFailedError() from None
+    except DecodeError:
+        raise MalformedRequestError() from None
 
 
 def _is_none_type(ann: object) -> bool:
@@ -681,13 +687,13 @@ def _part_content_type(headers: dict[str, str]) -> str | None:
 def _parse_form_parts(body: bytes, raw_headers: dict[str, str]) -> dict[str, list[_Part]]:
     parsed = _content_type_header(raw_headers)
     if parsed is None or parsed[0] != "multipart/form-data" or not parsed[1]:
-        raise HTTPError(415, "unsupported media type")
+        raise UnsupportedMediaTypeError()
 
     parts: dict[str, list[_Part]] = defaultdict(list)
     try:
         for raw_part in MultipartParser(BytesIO(body), parsed[1], strict=True):
             if raw_part.name is None:
-                raise HTTPError(400, "malformed multipart body")
+                raise MalformedRequestError()
             headers = _part_headers(raw_part.headerlist)
             parts[raw_part.name].append(
                 _Part(
@@ -699,8 +705,8 @@ def _parse_form_parts(body: bytes, raw_headers: dict[str, str]) -> dict[str, lis
                     body=raw_part.raw,
                 )
             )
-    except MultipartError as exc:
-        raise HTTPError(400, str(exc)) from None
+    except MultipartError:
+        raise MalformedRequestError() from None
     return parts
 
 
@@ -710,16 +716,16 @@ def _decode_form_payload(field: FormField, part: _Part) -> object:
     if field.decoder is not None:  # struct payload — reuse the prebuilt typed decoder
         try:
             return field.decoder.decode(part.body)
-        except ValidationError as exc:
-            raise HTTPError(422, str(exc)) from None
-        except DecodeError as exc:
-            raise HTTPError(400, str(exc)) from None
+        except ValidationError:
+            raise ValidationFailedError() from None
+        except DecodeError:
+            raise MalformedRequestError() from None
     try:
         return convert(part.body.decode(), field.payload_type, strict=False)
-    except UnicodeDecodeError as exc:
-        raise HTTPError(422, str(exc)) from None
-    except ValidationError as exc:
-        raise HTTPError(422, str(exc)) from None
+    except UnicodeDecodeError:
+        raise ValidationFailedError() from None
+    except ValidationError:
+        raise ValidationFailedError() from None
 
 
 def _decode_form_value(field: FormField, part: _Part) -> object:
@@ -733,7 +739,7 @@ def _decode_form_value(field: FormField, part: _Part) -> object:
     )
     if field.file:
         if part.filename is None:
-            raise HTTPError(422, f"form field {field.wire_name!r} requires a filename")
+            raise ValidationFailedError()
         return FilePart(
             data=cast("bytes", data),
             content_type=part.content_type,
@@ -759,14 +765,14 @@ def _decode_form_body(body: bytes, raw_headers: dict[str, str], spec: FormSpec) 
             continue
         if not matched:
             if field.required:
-                raise HTTPError(422, f"form field {field.wire_name!r} is required")
+                raise ValidationFailedError()
             values[field.wire_name] = None
             continue
         values[field.wire_name] = _decode_form_value(field, matched[-1])
     try:
         return convert(values, spec.struct_type, strict=False)
-    except ValidationError as exc:
-        raise HTTPError(422, str(exc)) from None
+    except ValidationError:
+        raise ValidationFailedError() from None
 
 
 def _struct_annotation(cls: type, method: str, name: str, ann: object) -> type[Struct]:
@@ -1021,8 +1027,8 @@ class _CompiledAuth:
     async def __call__(self, raw_headers: dict[str, str]) -> Struct:
         try:
             credentials = convert(raw_headers, self.headers_type, strict=False)
-        except ValidationError as exc:
-            raise HTTPError(401, str(exc)) from None
+        except ValidationError:
+            raise AuthenticationRequiredError() from None
         result = self._fn(credentials)
         return (await result) if self._is_async else result
 
@@ -1080,7 +1086,7 @@ class _Binder:
         if self._wants_content:
             return body
         if self._path_type is not None:
-            return _convert_source(path_values, self._path_type, 404, "not found")
+            return _convert_source(path_values, self._path_type, 404)
         if self._headers_type is not None:
             return _convert_source(raw_headers, self._headers_type, 400)
         if self._params_type is not None:
@@ -1113,7 +1119,7 @@ class _Binder:
         if self._wants_user:
             kwargs["user"] = user
         if self._path_type is not None:
-            kwargs["path"] = _convert_source(path_values, self._path_type, 404, "not found")
+            kwargs["path"] = _convert_source(path_values, self._path_type, 404)
         if self._headers_type is not None:
             kwargs["headers"] = _convert_source(raw_headers, self._headers_type, 400)
         if self._params_type is not None:
@@ -1465,6 +1471,143 @@ class _JSONSender:
         await send({"type": "http.response.body", "body": payload})
 
 
+class _ExceptionHandlers:
+    """App-local custom exception registry and response dispatcher."""
+
+    def __init__(self, reverser: _Reverser) -> None:
+        self._handlers: dict[type[Exception], CompiledExceptionHandler] = {}
+        self._resolved: dict[type[Exception], CompiledExceptionHandler | None] = {}
+        self._reverser = reverser
+
+    def _resolve(self, exception_type: type[Exception]) -> CompiledExceptionHandler | None:
+        if exception_type in self._resolved:
+            return self._resolved[exception_type]
+        handler = next(
+            (
+                self._handlers[ancestor]
+                for ancestor in exception_type.__mro__
+                if ancestor in self._handlers
+            ),
+            None,
+        )
+        self._resolved[exception_type] = handler
+        return handler
+
+    async def _send_response(
+        self,
+        scope: Scope,
+        send: Send,
+        response: ExceptionResponse[Struct, Struct | None],
+    ) -> None:
+        payload = msgspec_encoder.encode(response.json)
+        headers = _response_headers(
+            response.headers,
+            response.raw_headers,
+            b"application/json",
+            len(payload),
+        )
+        headers += _link_header_pairs(
+            self._reverser,
+            scope,
+            response.location,
+            response.links,
+        )
+        await _send_payload(send, response.status_code, payload, headers)
+
+    @staticmethod
+    def _log_unexpected(scope: Scope, exception: BaseException) -> None:
+        # An unexpected error is swallowed to a clean 500 (its internals never reach the
+        # client), so this is the only place operators can see it — log the traceback or
+        # it's lost. A deliberately raised HTTPError is expected control flow, never an
+        # operator concern, so it is skipped: this stays safe to call with any exception.
+        if isinstance(exception, HTTPError):
+            return
+        logger.error(
+            "unhandled error handling %s %s",
+            scope["method"],
+            scope["path"],
+            exc_info=exception,
+        )
+
+    async def _send_default(self, scope: Scope, send: Send, exception: Exception) -> None:
+        if isinstance(exception, HTTPError):
+            await _send_json(send, exception.status, msgspec_encoder.encode(exception.problem))
+            return
+        self._log_unexpected(scope, exception)
+        error = InternalServerError()
+        await _send_json(send, error.status, msgspec_encoder.encode(error.problem))
+
+    def register(self, handler: object) -> None:
+        """Register one compiled handler per exact exception type."""
+        compiled = CompiledExceptionHandler(handler)
+        existing = self._handlers.get(compiled.exception_type)
+        if existing is not None:
+            raise WiringError(
+                f"exception handler for {compiled.exception_type.__name__} is already "
+                f"registered by {existing.owner}; cannot also register {compiled.owner}",
+            )
+        self._handlers[compiled.exception_type] = compiled
+        self._resolved.clear()
+
+    async def send(self, scope: Scope, send: Send, exception: Exception) -> None:
+        """Run the nearest handler, then send its response or the default problem."""
+        handler = self._resolve(type(exception))
+        if handler is None:
+            await self._send_default(scope, send, exception)
+            return
+        # A user handler is an isolation boundary: its own ordinary failure must not
+        # escape the app or recursively dispatch through the registry. gather's
+        # return_exceptions mode contains that failure without another broad-except
+        # suppression; process-control BaseExceptions still propagate below.
+        (outcome,) = await asyncio.gather(
+            invoke_exception_handler(handler, exception),
+            return_exceptions=True,
+        )
+        if isinstance(outcome, Exception):
+            # The handler itself failed. Surface both faults — the handler's own crash (the
+            # immediate cause of this 500) and the original exception it was meant to
+            # translate — since neither reaches the client, then send a generic 500.
+            logger.error(
+                "exception handler %s raised handling %s %s",
+                handler.owner,
+                scope["method"],
+                scope["path"],
+                exc_info=outcome,
+            )
+            self._log_unexpected(scope, exception)
+            await self._send_default(scope, send, InternalServerError())
+            return
+        if isinstance(outcome, BaseException):
+            raise outcome
+        result = outcome.value
+        if result is None:
+            await self._send_default(scope, send, exception)
+            return
+        if isinstance(result, HTTPError):
+            await self._send_default(scope, send, result)
+            return
+        if not isinstance(result, ExceptionResponse):
+            # The handler returned a value outside its declared contract (its return is
+            # validated at wiring, so this is a runtime-only breach) — name the handler and
+            # the bad type, and surface the original exception it was meant to translate
+            # (whose 500 the client now sees), then send a generic 500.
+            logger.error(
+                "exception handler %s returned an invalid %s handling %s %s",
+                handler.owner,
+                type(result).__name__,
+                scope["method"],
+                scope["path"],
+            )
+            self._log_unexpected(scope, exception)
+            await self._send_default(scope, send, InternalServerError())
+            return
+        await self._send_response(
+            scope,
+            send,
+            cast("ExceptionResponse[Struct, Struct | None]", result),
+        )
+
+
 def _stream_headers(
     typed: Struct | None,
     raw: RawHeaders | Mapping[str, str] | None,
@@ -1564,6 +1707,7 @@ class _StreamSender:
     _status: int
     _content_type: bytes
     _reverser: _Reverser
+    _exceptions: _ExceptionHandlers
 
     def _chunk(self, item: object) -> bytes:
         if not isinstance(item, bytes):
@@ -1574,12 +1718,10 @@ class _StreamSender:
         await send({"type": "http.response.body", "body": chunk, "more_body": True})
 
     async def _send_setup_error(self, scope: Scope, send: Send, exc: Exception) -> None:
-        if isinstance(exc, HTTPError):
-            await _send_json(send, exc.status, msgspec_encoder.encode({"error": exc.detail}))
-            return
-        # Unexpected setup failure (before the 200): log it, then send a generic 500.
-        logger.error("error opening stream for %s %s", scope["method"], scope["path"], exc_info=exc)
-        await _send_json(send, 500, msgspec_encoder.encode({"error": "internal server error"}))
+        # Route through the exception registry: a custom handler or a raised HTTPError becomes
+        # its Problem response, and an unexpected setup failure is logged and mapped to a 500
+        # (the logging lives in _ExceptionHandlers, the single funnel for both paths).
+        await self._exceptions.send(scope, send, exc)
 
     async def __call__(
         self,
@@ -1737,7 +1879,12 @@ class _SSEStreamSender(_StreamSender):
         await send({"type": "http.response.body", "body": b"", "more_body": False})
 
 
-def _result_sender(kind: ReturnKind, status: int, reverser: _Reverser) -> _Sender:
+def _result_sender(
+    kind: ReturnKind,
+    status: int,
+    reverser: _Reverser,
+    exceptions: _ExceptionHandlers,
+) -> _Sender:
     if kind == "bytes":
         return _BytesSender(status)
     if kind == "bytes-response":
@@ -1745,31 +1892,34 @@ def _result_sender(kind: ReturnKind, status: int, reverser: _Reverser) -> _Sende
     if kind == "json-response":
         return _JSONResponseSender(status, reverser)
     if kind == "stream-bytes":
-        return _StreamSender(status, b"application/octet-stream", reverser)
+        return _StreamSender(status, b"application/octet-stream", reverser, exceptions)
     if kind == "stream-ndjson":
-        return _NDJSONStreamSender(status, b"application/x-ndjson", reverser)
+        return _NDJSONStreamSender(status, b"application/x-ndjson", reverser, exceptions)
     if kind == "stream-sse":
-        return _SSEStreamSender(status, b"text/event-stream", reverser)
+        return _SSEStreamSender(status, b"text/event-stream", reverser, exceptions)
     return _JSONSender(status)
 
 
 class _Route:
     """A compiled handler: bind sources, call the user fn, send the result."""
 
-    __slots__ = ("_arity", "_bind", "_fn", "_is_async", "_send_result")
+    __slots__ = ("_arity", "_bind", "_exceptions", "_fn", "_is_async", "_send_result")
 
     def __init__(
         self,
         fn: Callable[..., Any],
         status: int,
+        *,
         sources: Sources,
         auth: _CompiledAuth | None,
         reverser: _Reverser,
+        exceptions: _ExceptionHandlers,
     ) -> None:
         self._fn = fn
         self._is_async = inspect.iscoroutinefunction(fn)
         self._bind = _Binder(sources, auth)
-        self._send_result = _result_sender(sources.return_kind, status, reverser)
+        self._send_result = _result_sender(sources.return_kind, status, reverser, exceptions)
+        self._exceptions = exceptions
         self._arity = sources.arity
 
     async def __call__(
@@ -1785,14 +1935,8 @@ class _Route:
                 result = await self._fn(bound) if self._is_async else self._fn(bound)
             else:
                 result = await self._fn() if self._is_async else self._fn()
-        except HTTPError as exc:
-            await _send_json(send, exc.status, msgspec_encoder.encode({"error": exc.detail}))
-            return
-        except Exception:  # pylint: disable=broad-exception-caught
-            # Unexpected (not an HTTPError): jero swallows it to return a clean 500, so this
-            # is the only place it's seen — log the traceback or it's lost to operators.
-            logger.exception("unhandled error handling %s %s", scope["method"], scope["path"])
-            await _send_json(send, 500, msgspec_encoder.encode({"error": "internal server error"}))
+        except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+            await self._exceptions.send(scope, send, exc)
             return
         await self._send_result(scope, receive, send, result)
 
@@ -1969,6 +2113,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         self._openapi: _OpenAPIConfig | None = None  # set by include_openapi, built at _finalize
         base_url, trust_forwarded = _forwarded_config_from_env()
         self._reverser = _Reverser(base_url=base_url, trust_forwarded=trust_forwarded)
+        self._exceptions = _ExceptionHandlers(self._reverser)
         self._stack = ExitStack()
         self._astack = AsyncExitStack()
         self._factory: FactoryT = factory if factory is not None else self._make_factory()
@@ -2085,7 +2230,14 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
             segments = _route_segments(
                 cls, name, template, sources.path, extends_path=verb.extends_path
             )
-            handler = _Route(fn, verb.success_status, sources, compiled_auth, self._reverser)
+            handler = _Route(
+                fn,
+                verb.success_status,
+                sources=sources,
+                auth=compiled_auth,
+                reverser=self._reverser,
+                exceptions=self._exceptions,
+            )
             self._register(verb.method, segments, handler)
             self._reverser.register(
                 fn.__func__, cls.ref, name, _RouteRef(tuple(segments), sources.path)
@@ -2107,6 +2259,16 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
 
         if not registered:
             raise WiringError(f"{cls.__name__} defines none of: {', '.join(methods)}")
+
+    def add_exception_handler[
+        E: Exception,
+    ](self, handler: ExceptionHandler[E]) -> None:
+        """Register a structurally typed custom exception handler.
+
+        The exception, JSON body, and typed-header types are inferred from the concrete
+        ``handle_exception`` signature and validated once during wiring.
+        """
+        self._exceptions.register(handler)
 
     def include_resource[THeaders: Struct, TUser: Struct](
         self,
@@ -2314,12 +2476,20 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
             return
 
         allow = self._allow_for(path)
+        error: HTTPError
         if allow is None:
-            await _send_json(send, 404, b'{"error":"not found"}')
+            error = NotFoundError()
+            await _send_json(send, error.status, msgspec_encoder.encode(error.problem))
         elif method == "OPTIONS":
             await send(
                 {"type": "http.response.start", "status": 204, "headers": [(b"allow", allow)]}
             )
             await send({"type": "http.response.body", "body": b""})
         else:
-            await _send_json(send, 405, b'{"error":"method not allowed"}', [(b"allow", allow)])
+            error = MethodNotAllowedError()
+            await _send_json(
+                send,
+                error.status,
+                msgspec_encoder.encode(error.problem),
+                [(b"allow", allow)],
+            )

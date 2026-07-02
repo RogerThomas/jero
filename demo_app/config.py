@@ -36,6 +36,7 @@ class Settings(Struct):
     widget_api_key: str
     openai_api_key: str
     widget_base_url: str
+    widget_retry_after_seconds: int = 30
     openai_model: str = "gpt-5.4-nano"
 
 

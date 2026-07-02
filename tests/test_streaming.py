@@ -11,6 +11,7 @@ from msgspec import Struct
 from jero import (
     BaseApp,
     Endpoint,
+    ExceptionResponse,
     HTTPError,
     NDJSONStreamingResponse,
     ServerSentEvent,
@@ -18,6 +19,15 @@ from jero import (
     StreamingResponse,
     TestClient,
 )
+
+
+class SetupFailedError(
+    HTTPError,
+    type="stream-setup-failed",
+    title="Stream setup failed",
+    status=418,
+):
+    """The stream failed before response headers were sent."""
 
 
 class Item(Struct):
@@ -138,7 +148,7 @@ class SetupErrorEndpoint(Endpoint, path="/stream"):
         yield Item(name="never")
 
     async def _lifecycle(self) -> AsyncGenerator[AsyncIterable[Item]]:
-        raise HTTPError(418, "setup failed")
+        raise SetupFailedError()
         # Unreachable, but required to make this an async generator: setup raises
         # before any item is produced.
         yield self._items()  # pylint: disable=unreachable
@@ -299,7 +309,11 @@ def test_setup_error_is_normal_error_response() -> None:
     with TestClient(_EndpointApp(SetupErrorEndpoint())) as client:
         resp = client.get("/stream")
         assert resp.status_code == 418
-        assert resp.json() == {"error": "setup failed"}
+        assert resp.json() == {
+            "type": "stream-setup-failed",
+            "title": "Stream setup failed",
+            "status": 418,
+        }
 
 
 def test_mid_stream_error_is_logged(caplog: pytest.LogCaptureFixture) -> None:
@@ -319,16 +333,54 @@ def test_mid_stream_error_is_logged(caplog: pytest.LogCaptureFixture) -> None:
 
 
 def test_unexpected_setup_error_is_500_and_logged(caplog: pytest.LogCaptureFixture) -> None:
-    """A non-HTTP error during stream setup becomes a 500 and is logged (HTTPError isn't)."""
+    """A non-HTTP error during stream setup becomes a 500 Problem and is logged."""
     with (
         caplog.at_level(logging.ERROR, logger="jero"),
         TestClient(_EndpointApp(UnexpectedSetupErrorEndpoint())) as client,
     ):
         resp = client.get("/stream")
     assert resp.status_code == 500
-    assert resp.json() == {"error": "internal server error"}
-    assert "error opening stream for GET /stream" in caplog.text
+    assert resp.json() == {
+        "type": "internal-server-error",
+        "title": "Internal server error",
+        "status": 500,
+    }
+    assert "unhandled error handling GET /stream" in caplog.text
     assert "setup boom" in caplog.text
+
+
+class SetupErrorBody(Struct):
+    """Custom body a handler returns for an intercepted stream-setup failure."""
+
+    detail: str
+
+
+class SetupErrorHandler:
+    """Translate a stream-setup ``RuntimeError`` into a custom response."""
+
+    def handle_exception(self, exception: RuntimeError) -> ExceptionResponse[SetupErrorBody]:
+        """Return an occurrence-specific response for the setup failure."""
+        return ExceptionResponse(status_code=502, json=SetupErrorBody(detail=str(exception)))
+
+
+class _HandlerEndpointApp(BaseApp):
+    """An app that registers a custom exception handler before the endpoint."""
+
+    def __init__(self, endpoint: Endpoint) -> None:
+        self._endpoint = endpoint
+        super().__init__()
+
+    async def wire(self) -> None:
+        self.add_exception_handler(SetupErrorHandler())
+        self.include_endpoint(self._endpoint)
+
+
+def test_custom_handler_intercepts_stream_setup_error() -> None:
+    """A registered handler translates a pre-stream setup failure, like any other error."""
+    with TestClient(_HandlerEndpointApp(UnexpectedSetupErrorEndpoint())) as client:
+        resp = client.get("/stream")
+    assert resp.status_code == 502
+    assert resp.json() == {"detail": "setup boom"}
 
 
 def test_stream_teardown_error_is_logged(caplog: pytest.LogCaptureFixture) -> None:
