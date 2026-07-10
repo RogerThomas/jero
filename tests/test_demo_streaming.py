@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 
 from pytest_mock import MockerFixture
 
-from demo_app import AnalyticsService, DemoApp, Factory, QuestionsService, WidgetService
+from demo_app import AnalyticsService, DemoApp, Factory, QuestionService, WidgetService
 from demo_app.errors import UpstreamResponseErrorHandler
 from demo_app.models import AnswerChunk
 from jero import TestClient
@@ -19,19 +19,19 @@ async def _answer_chunks(*texts: str) -> AsyncIterator[AnswerChunk]:
 
 def test_questions_streams_ndjson_answer_chunks(mocker: MockerFixture) -> None:
     """POST /questions forwards the body to the service and streams its chunks as NDJSON."""
-    questions_service = mocker.create_autospec(QuestionsService, spec_set=True, instance=True)
-    questions_service.stream_answer.return_value = _answer_chunks("chunk-one", "chunk-two")
+    question_service = mocker.create_autospec(QuestionService, spec_set=True, instance=True)
+    question_service.stream_answer.return_value = _answer_chunks("chunk-one", "chunk-two")
     factory = mocker.create_autospec(Factory, spec_set=True, instance=True)
     factory.create_widget_service.return_value = mocker.create_autospec(
         WidgetService, spec_set=True, instance=True
     )
     factory.create_analytics_service.return_value = AnalyticsService(processed=[])
-    factory.create_questions_service.return_value = questions_service
+    factory.create_question_service.return_value = question_service
     factory.create_upstream_response_error_handler.return_value = UpstreamResponseErrorHandler(30)
     with TestClient(DemoApp(factory=factory)) as client:
         chunks = list(client.stream_post("/questions", json={"text": "question"}))
     assert chunks == [{"text": "chunk-one"}, {"text": "chunk-two"}]
-    questions_service.stream_answer.assert_called_once_with("question")
+    question_service.stream_answer.assert_called_once_with("question")
 
 
 def test_notifications_streams_sse_events(client: TestClient) -> None:

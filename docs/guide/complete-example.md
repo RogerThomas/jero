@@ -137,8 +137,8 @@ class WidgetResource(Resource, path="/widgets"):
 class App(BaseApp[Factory]):
     async def wire(self) -> None:
         auth = TokenAuth()
-        widgets = await self.factory.create_widget_service()
-        self.include_resource(WidgetResource(widgets), auth=auth)
+        widget_service = await self.factory.create_widget_service()
+        self.include_resource(WidgetResource(widget_service), auth=auth)
 
 
 app = App()

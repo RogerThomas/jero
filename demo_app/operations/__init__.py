@@ -8,7 +8,7 @@ from demo_app.operations.system_operations import (
     RawHealthEndpoint,
     WhoAmIEndpoint,
 )
-from demo_app.operations.widgets_operations import WidgetResource
+from demo_app.operations.widget_operations import WidgetResource
 
 __all__ = [
     "FeaturedWidgetEndpoint",

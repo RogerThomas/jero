@@ -10,12 +10,16 @@ from msgspec import Struct
 
 from jero import (
     BaseApp,
+    ConflictError,
     DataclassHTTPError,
     Endpoint,
     ExceptionResponse,
+    ForbiddenError,
+    GoneError,
     HTTPError,
     ParameterizedHTTPError,
     TestClient,
+    TooManyRequestsError,
     WiringError,
 )
 from jero.core import ExceptionHandler
@@ -224,6 +228,52 @@ class DuplicateHandlerApp(BaseApp):
         """Trigger duplicate-registration validation during startup."""
         self.add_exception_handler(ServiceErrorHandler())
         self.add_exception_handler(ServiceErrorHandler())
+
+
+class StockErrorsEndpoint(Endpoint, path="/stock-errors"):
+    """Raise a ready-made stock error selected by the query parameter."""
+
+    async def get(self, params: ErrorParams) -> Result:
+        """Raise the selected stock error, or return success for an unknown mode."""
+        if params.mode == "forbidden":
+            raise ForbiddenError()
+        if params.mode == "conflict":
+            raise ConflictError()
+        if params.mode == "gone":
+            raise GoneError()
+        if params.mode == "too-many-requests":
+            raise TooManyRequestsError()
+        return Result(ok=True)
+
+
+class StockErrorsApp(BaseApp):
+    """Wire only the stock-errors endpoint; no custom handlers involved."""
+
+    async def wire(self) -> None:
+        """Expose the endpoint raising ready-made errors."""
+        self.include_endpoint(StockErrorsEndpoint())
+
+
+@pytest.mark.parametrize(
+    ("mode", "status_code", "title"),
+    [
+        (
+            "forbidden",
+            403,
+            "The caller is authenticated but not allowed to perform this operation",
+        ),
+        ("conflict", 409, "The request conflicts with the current state of the resource"),
+        ("gone", 410, "The resource existed but has been permanently removed"),
+        ("too-many-requests", 429, "The caller has exceeded a rate limit"),
+    ],
+)
+def test_stock_errors_are_ready_to_raise(mode: str, status_code: int, title: str) -> None:
+    """The exported stock errors produce their typed problem bodies when raised."""
+    with TestClient(StockErrorsApp()) as client:
+        resp = client.get("/stock-errors", params={"mode": mode})
+
+    assert resp.status_code == status_code
+    assert resp.json() == {"type": mode, "title": title, "status": status_code}
 
 
 def test_parameterized_problem_details() -> None:

@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 from demo_app.models import AnswerChunk, Notification, Question
-from demo_app.services.questions_service import QuestionsService
+from demo_app.services.question_service import QuestionService
 from jero import Endpoint, NDJSONStreamingResponse, ServerSentEvent, SSEResponse
 
 
@@ -14,7 +14,7 @@ class QuestionsEndpoint(Endpoint, path="/questions"):
     """Streams an answer to a question as newline-delimited JSON, one chunk per line,
     proxied straight from the OpenAI streaming API."""
 
-    _service: QuestionsService
+    _service: QuestionService
 
     async def post(self, json: Question) -> NDJSONStreamingResponse[AnswerChunk]:
         """Stream the model's answer to the posted question."""
