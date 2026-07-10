@@ -240,6 +240,42 @@ class UnsupportedMediaTypeError(
     """The request body does not use the media type required by the operation."""
 
 
+class ForbiddenError(
+    HTTPError,
+    type="forbidden",
+    title="The caller is authenticated but not allowed to perform this operation",
+    status=403,
+):
+    """The caller is authenticated but not allowed to perform this operation."""
+
+
+class ConflictError(
+    HTTPError,
+    type="conflict",
+    title="The request conflicts with the current state of the resource",
+    status=409,
+):
+    """The request conflicts with the current state of the resource."""
+
+
+class GoneError(
+    HTTPError,
+    type="gone",
+    title="The resource existed but has been permanently removed",
+    status=410,
+):
+    """The resource existed but has been permanently removed."""
+
+
+class TooManyRequestsError(
+    HTTPError,
+    type="too-many-requests",
+    title="The caller has exceeded a rate limit",
+    status=429,
+):
+    """The caller has exceeded a rate limit."""
+
+
 class InternalServerError(
     HTTPError,
     type="internal-server-error",

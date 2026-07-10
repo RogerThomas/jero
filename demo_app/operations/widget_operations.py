@@ -9,7 +9,7 @@ this resource by string via ``Link.from_ref('widgets.read_one')``.
 from dataclasses import dataclass
 
 from demo_app.models import Deleted, Page, Widget, WidgetEvent, WidgetIn, WidgetPatch, WidgetPath
-from demo_app.services.widgets_service import WidgetService
+from demo_app.services.widget_service import WidgetService
 from jero import (
     BackgroundTasks,
     JSONResponse,

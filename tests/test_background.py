@@ -197,10 +197,12 @@ async def test_unknown_item_type_is_logged_not_fatal(caplog: pytest.LogCaptureFi
 def test_end_to_end_processes_through_the_app(mocker: MockerFixture) -> None:
     """Creating a widget records an analytics event, drained when the app context closes."""
     analytics_service = AnalyticsService(processed=[])
-    widgets_mock = mocker.create_autospec(WidgetService, spec_set=True, instance=True)
-    widgets_mock.create_widget.return_value = Widget(id="widget-id", name="name", price_cents=1)
+    widget_service_mock = mocker.create_autospec(WidgetService, spec_set=True, instance=True)
+    widget_service_mock.create_widget.return_value = Widget(
+        id="widget-id", name="name", price_cents=1
+    )
     factory = mocker.create_autospec(Factory, spec_set=True, instance=True)
-    factory.create_widget_service.return_value = widgets_mock
+    factory.create_widget_service.return_value = widget_service_mock
     factory.create_analytics_service.return_value = analytics_service
     factory.create_upstream_response_error_handler.return_value = UpstreamResponseErrorHandler(30)
     with TestClient(DemoApp(factory=factory)) as client:

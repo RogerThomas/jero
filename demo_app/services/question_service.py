@@ -15,7 +15,7 @@ from demo_app.models import AnswerChunk
 
 
 @dataclass
-class QuestionsService:
+class QuestionService:
     """Answers questions by streaming tokens from OpenAI."""
 
     _client: AsyncOpenAI

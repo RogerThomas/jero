@@ -18,6 +18,7 @@
 - [10. Almost never use globals](#10-almost-never-use-globals)
 - [11. Prefer operators over mutating method calls](#11-prefer-operators-over-mutating-method-calls)
 - [12. Almost never use nested functions or classes](#12-almost-never-use-nested-functions-or-classes)
+- [13. Derive names from the class name](#13-derive-names-from-the-class-name)
 
 <!-- mdformat-toc end -->
 
@@ -481,3 +482,32 @@ names.sort(key=lambda person: person.age)
 ```
 
 If the inner callable closes over state, is reused, is more than a line or two, or would benefit from a test, promote it. Note this rule is about `def`/`class`/`lambda` nesting — comprehensions and generator expressions are not "nested functions" and are unaffected.
+
+## 13. Derive names from the class name<a name="13-derive-names-from-the-class-name"></a>
+
+Service-like classes are named **singular** (`WidgetService`, not `WidgetsService`), and every other name is derived mechanically from the class name — there is nothing to decide, so there is nothing to debate in review:
+
+- **Attribute / variable**: the snake_case of the class — `WidgetService` → `_widget_service`. (`_service` alone is fine while a class holds exactly one.)
+- **Module**: a module that exists to hold one primary class mirrors it — `widget_service.py` holds `WidgetService`. A module that is genuinely an *area* — several peer classes, no primary — is named for the area (`errors.py`, `models.py`, `system_operations.py`); that is a "no single class to mirror" fact, not a naming choice.
+- **Test mock fixtures**: the attribute name plus `_mock` — `widget_service_mock`.
+
+Singular-by-derivation never breaks on mass nouns (`WeatherService` → `_weather_service`); a "plural" convention immediately produces a mixed style (`_widgets_service` next to `_weather_service`), and a mixed style is worse than either pure one. Plural belongs where a collection actually lives: REST paths (`/widgets`) and methods returning many (`list_widgets`).
+
+**Good**
+
+```Python
+# widget_service.py
+class WidgetService: ...
+
+# elsewhere
+_widget_service: WidgetService
+```
+
+**Bad**
+
+```Python
+# widgets_service.py — module doesn't mirror the class
+class WidgetsService: ...   # plural class
+
+_widgets: WidgetsService    # attribute derived from nothing
+```

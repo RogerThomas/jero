@@ -8,7 +8,7 @@ and the wired application is ``demo_app.app`` (re-exported here as ``app`` / ``D
 from demo_app.app import DemoApp, app
 from demo_app.factory import Factory
 from demo_app.services.analytics_service import AnalyticsService
-from demo_app.services.questions_service import QuestionsService
-from demo_app.services.widgets_service import WidgetService
+from demo_app.services.question_service import QuestionService
+from demo_app.services.widget_service import WidgetService
 
-__all__ = ["AnalyticsService", "DemoApp", "Factory", "QuestionsService", "WidgetService", "app"]
+__all__ = ["AnalyticsService", "DemoApp", "Factory", "QuestionService", "WidgetService", "app"]
