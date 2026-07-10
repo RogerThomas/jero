@@ -6,6 +6,7 @@ mismatch resolution.
 """
 
 import asyncio
+from typing import Any
 
 import pytest
 from msgspec import Struct
@@ -335,7 +336,7 @@ class _ChunkedReceive:
             ]
         )
 
-    async def __call__(self) -> dict:
+    async def __call__(self) -> dict[str, Any]:
         return next(self._chunks)
 
 
@@ -343,9 +344,9 @@ class _CollectSend:
     """ASGI send that records every message."""
 
     def __init__(self) -> None:
-        self.messages: list[dict] = []
+        self.messages: list[dict[str, Any]] = []
 
-    async def __call__(self, message: dict) -> None:
+    async def __call__(self, message: dict[str, Any]) -> None:
         self.messages.append(message)
 
 
@@ -353,8 +354,8 @@ class _CollectSend:
 async def test_multi_chunk_body() -> None:
     """A body arriving in multiple ASGI chunks is reassembled by the inlined reader."""
     app = EchoApp()
-    to_app: asyncio.Queue[dict] = asyncio.Queue()
-    from_app: asyncio.Queue[dict] = asyncio.Queue()
+    to_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    from_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
     lifespan_task = asyncio.create_task(app({"type": "lifespan"}, to_app.get, from_app.put))
     await to_app.put({"type": "lifespan.startup"})
