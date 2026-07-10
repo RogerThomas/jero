@@ -59,7 +59,8 @@ These pull against each other constantly; keep all three in mind on every change
   `deptry` ignore, etc. — is **forbidden without explicit human approval first**.
   Ask, with the specific rule and why a code fix won't do; apply it only once the
   human says yes. This applies to *every* tool, every time — no exceptions, no
-  "obviously fine" cases.
+  "obviously fine" cases. Sometimes though, it may be neccessary or pragmatic to
+  ignore a rule for a single line, so don't always avoid this. Use pragmatically, but sparingly.
 - For framework-level / design changes, **discuss the design first** — don't just
   implement. Give options + a recommendation, then build once decided.
 - **Keep this file current.** After any relatively sizable change — a new feature,

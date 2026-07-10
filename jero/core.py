@@ -76,7 +76,7 @@ from typing import (
     get_origin,
     get_type_hints,
 )
-from urllib.parse import parse_qsl, unquote
+from urllib.parse import unquote, unquote_plus
 
 from msgspec import DecodeError, Struct, ValidationError, convert, to_builtins
 from msgspec.json import Decoder
@@ -506,6 +506,25 @@ async def _send_json(
         headers += extra_headers
     await send({"type": "http.response.start", "status": status, "headers": headers})
     await send({"type": "http.response.body", "body": payload})
+
+
+def _parse_query(query_string: bytes) -> dict[str, str]:
+    """The query string as a last-wins dict, mirroring ``dict(parse_qsl(...))`` semantics
+    (pairs with a blank or missing value are skipped) but ~3x faster: ``parse_qsl`` is a
+    generic generator, and most query strings need no percent-decoding at all — only pay
+    ``unquote_plus`` when a pair actually contains ``%`` or ``+``."""
+    if not query_string:
+        return {}
+    values: dict[str, str] = {}
+    for pair in query_string.decode("latin-1").split("&"):
+        key, _, value = pair.partition("=")
+        if not value:
+            continue
+        if "%" in pair or "+" in pair:
+            key = unquote_plus(key)
+            value = unquote_plus(value)
+        values[key] = value
+    return values
 
 
 def _convert_source(
@@ -1049,6 +1068,8 @@ class _Binder:
         "_wants_content",
         "_wants_raw_headers",
         "_wants_user",
+        "awaits_only_body",
+        "is_sync",
     )
 
     def __init__(self, sources: Sources, auth: _CompiledAuth | None) -> None:
@@ -1069,6 +1090,11 @@ class _Binder:
         self._needs_body = (
             sources.json_decoder is not None or sources.form is not None or sources.content
         )
+        # With no auth to run and no body to read, binding never awaits: callers use
+        # bind_sync and skip a per-request coroutine. With no auth but a body, only the
+        # body read awaits: callers read it inline and use bind_with_body.
+        self.is_sync = auth is None and not self._needs_body
+        self.awaits_only_body = auth is None and self._needs_body
 
     def _one(
         self,
@@ -1090,26 +1116,19 @@ class _Binder:
         if self._headers_type is not None:
             return _convert_source(raw_headers, self._headers_type, 400)
         if self._params_type is not None:
-            raw_query = dict(parse_qsl(scope["query_string"].decode("latin-1")))
-            return _convert_source(raw_query, self._params_type, 400)
+            return _convert_source(_parse_query(scope["query_string"]), self._params_type, 400)
         if self._wants_raw_headers:
             return RawHeaders(_wire_header_pairs(scope))
         return user
 
-    async def __call__(  # noqa: C901  — flat per-source binding; inlined body read (perf)
-        self, scope: Scope, receive: Receive, path_values: dict[str, str]
+    def _finish(  # noqa: C901  — flat per-source binding
+        self,
+        scope: Scope,
+        raw_headers: dict[str, str],
+        path_values: dict[str, str],
+        user: Struct | None,
+        body: bytes,
     ) -> object:
-        raw_headers = _raw_headers(scope) if self._needs_raw else {}
-        user = await self._auth(raw_headers) if self._auth is not None else None
-        body = b""
-        if self._needs_body:
-            chunks: list[bytes] = []  # inlined body read (was _read_body) to save a coroutine hop
-            while True:
-                message = await receive()
-                chunks.append(message.get("body", b""))
-                if not message.get("more_body"):
-                    break
-            body = chunks[0] if len(chunks) == 1 else b"".join(chunks)
         # 0- or 1-source handlers skip the kwargs dict: call positionally (see _Route).
         if self._arity == 0:
             return None
@@ -1123,8 +1142,9 @@ class _Binder:
         if self._headers_type is not None:
             kwargs["headers"] = _convert_source(raw_headers, self._headers_type, 400)
         if self._params_type is not None:
-            raw_query = dict(parse_qsl(scope["query_string"].decode("latin-1")))
-            kwargs["params"] = _convert_source(raw_query, self._params_type, 400)
+            kwargs["params"] = _convert_source(
+                _parse_query(scope["query_string"]), self._params_type, 400
+            )
         if self._json_decoder is not None:
             kwargs["json"] = _decode_json_body(body, self._json_decoder)
         elif self._form_spec is not None:
@@ -1134,6 +1154,32 @@ class _Binder:
         if self._wants_raw_headers:
             kwargs["raw_headers"] = RawHeaders(_wire_header_pairs(scope))
         return kwargs
+
+    def bind_sync(self, scope: Scope, path_values: dict[str, str]) -> object:
+        """``__call__`` without the awaits, valid whenever ``is_sync`` (no auth to run,
+        no body to read) — the caller skips a per-request coroutine."""
+        raw_headers = _raw_headers(scope) if self._needs_raw else {}
+        return self._finish(scope, raw_headers, path_values, None, b"")
+
+    def bind_with_body(self, scope: Scope, path_values: dict[str, str], body: bytes) -> object:
+        """``__call__`` for a caller that read the body itself, valid whenever
+        ``awaits_only_body`` (no auth to run) — the caller skips a per-request coroutine."""
+        raw_headers = _raw_headers(scope) if self._needs_raw else {}
+        return self._finish(scope, raw_headers, path_values, None, body)
+
+    async def __call__(self, scope: Scope, receive: Receive, path_values: dict[str, str]) -> object:
+        raw_headers = _raw_headers(scope) if self._needs_raw else {}
+        user = await self._auth(raw_headers) if self._auth is not None else None
+        body = b""
+        if self._needs_body:
+            chunks: list[bytes] = []  # inlined body read (was _read_body) to save a coroutine hop
+            while True:
+                message = await receive()
+                chunks.append(message.get("body", b""))
+                if not message.get("more_body"):
+                    break
+            body = chunks[0] if len(chunks) == 1 else b"".join(chunks)
+        return self._finish(scope, raw_headers, path_values, user, body)
 
 
 type _Sender = Callable[[Scope, Receive, Send, Any], Awaitable[None]]
@@ -1903,7 +1949,17 @@ def _result_sender(
 class _Route:
     """A compiled handler: bind sources, call the user fn, send the result."""
 
-    __slots__ = ("_arity", "_bind", "_exceptions", "_fn", "_is_async", "_send_result")
+    __slots__ = (
+        "_arity",
+        "_bind",
+        "_bind_awaits_only_body",
+        "_bind_is_sync",
+        "_exceptions",
+        "_fn",
+        "_is_async",
+        "_json_status",
+        "_send_result",
+    )
 
     def __init__(
         self,
@@ -1918,6 +1974,11 @@ class _Route:
         self._fn = fn
         self._is_async = inspect.iscoroutinefunction(fn)
         self._bind = _Binder(sources, auth)
+        self._bind_is_sync = self._bind.is_sync
+        self._bind_awaits_only_body = self._bind.awaits_only_body
+        # Plain-JSON results (the overwhelmingly common kind) are sent inline in
+        # __call__ rather than through _send_result, to save a coroutine hop.
+        self._json_status = status if sources.return_kind == "json" else None
         self._send_result = _result_sender(sources.return_kind, status, reverser, exceptions)
         self._exceptions = exceptions
         self._arity = sources.arity
@@ -1926,7 +1987,26 @@ class _Route:
         self, scope: Scope, receive: Receive, send: Send, path_values: dict[str, str]
     ) -> None:
         try:
-            bound = await self._bind(scope, receive, path_values)
+            if self._bind_is_sync:
+                # Zero-source handlers have nothing to bind at all.
+                bound = None if self._arity == 0 else self._bind.bind_sync(scope, path_values)
+            elif self._bind_awaits_only_body:
+                # Inlined body read (mirrors _Binder.__call__) to skip the binder
+                # coroutine on unauthenticated body routes; one chunk is the near-
+                # universal case, so the joining list is only built on a second chunk.
+                message = await receive()
+                body = message.get("body", b"")
+                if message.get("more_body"):
+                    chunks = [body]
+                    while True:
+                        message = await receive()
+                        chunks.append(message.get("body", b""))
+                        if not message.get("more_body"):
+                            break
+                    body = b"".join(chunks)
+                bound = self._bind.bind_with_body(scope, path_values, body)
+            else:
+                bound = await self._bind(scope, receive, path_values)
             # 0/1-source handlers are called positionally (no kwargs dict); see _Binder.
             if self._arity >= 2:
                 kwargs = cast("dict[str, object]", bound)
@@ -1937,6 +2017,22 @@ class _Route:
                 result = await self._fn() if self._is_async else self._fn()
         except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             await self._exceptions.send(scope, send, exc)
+            return
+        if self._json_status is not None:
+            # Inlines _JSONSender (kept for _result_sender completeness) to save a
+            # coroutine hop on the hot plain-JSON path.
+            payload = msgspec_encoder.encode(result)
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": self._json_status,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"content-length", b"%d" % len(payload)),
+                    ],
+                }
+            )
+            await send({"type": "http.response.body", "body": payload})
             return
         await self._send_result(scope, receive, send, result)
 
@@ -2368,17 +2464,22 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
             ) from exc
         return msgspec_encoder.encode(document)
 
-    def _resolve(self, method: str, path: str) -> tuple[_Handler, dict[str, str]] | None:
-        # Static hit is the hot path: look it up directly, before narrowing the verb
-        # (a non-route method simply misses). The cast is paid only on the dynamic path.
-        handler = self._static.get((method, path))
-        if handler is not None:
-            return handler, {}
+    def _resolve_dynamic(self, method: str, path: str) -> tuple[_Handler, dict[str, str]] | None:
+        # Static routes never reach here: __call__ resolves them with an inlined dict
+        # lookup. The cast is paid only on this, the dynamic path.
         segments = path.split("/")
         verb = cast("_HttpMethod", method)
         for pattern in self._dynamic.get((verb, len(segments)), ()):
-            if pattern.matches(segments):
-                values = {name: unquote(segments[i]) for i, name in pattern.params}
+            # Inlines pattern.matches (kept for the cold Allow path): a genexpr per
+            # candidate is measurable here. unquote only when a segment is escaped.
+            for i, value in pattern.statics:
+                if segments[i] != value:
+                    break
+            else:
+                values: dict[str, str] = {}
+                for i, name in pattern.params:
+                    segment = segments[i]
+                    values[name] = unquote(segment) if "%" in segment else segment
                 return pattern.handler, values
         return None
 
@@ -2467,9 +2568,16 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         # HTTP is the hot path; inlined here (was _handle_http) to save a coroutine hop.
         method: str = scope["method"]
         path: str = scope["path"]
-        resolved = self._resolve("GET" if method == "HEAD" else method, path)
-        if resolved is not None:
-            handler, path_values = resolved
+        verb = "GET" if method == "HEAD" else method
+        # A static hit is the hottest path of all: one dict lookup, inlined here to skip
+        # the resolver call (a non-route verb simply misses).
+        handler = self._static.get((verb, path))
+        path_values: dict[str, str] = {}
+        if handler is None:
+            resolved = self._resolve_dynamic(verb, path)
+            if resolved is not None:
+                handler, path_values = resolved
+        if handler is not None:
             await handler(
                 scope, receive, _SuppressBody(send) if method == "HEAD" else send, path_values
             )

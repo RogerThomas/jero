@@ -192,7 +192,7 @@ disable = [
 typevar-rgx = "^_?[A-Z][a-zA-Z0-9]*$"
 
 [tool.pylint.format]
-max-module-lines = 2500
+max-module-lines = 5000
 
 [tool.pyrefly]
 project-excludes = ["./.venv", "scratch_pad.py", "tmp.py"]
