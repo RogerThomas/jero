@@ -12,6 +12,7 @@ from msgspec.json import encode as json_encode
 
 from demo_app.errors import UpstreamResponseError, WidgetNotFoundError
 from demo_app.models import Widget, WidgetIn, WidgetPatch
+from jero import ConflictError
 
 
 def _body(resp: niquests.Response) -> bytes:
@@ -56,8 +57,10 @@ class WidgetService:
         return json_decode(_body(resp), type=Widget)
 
     async def create_widget(self, data: WidgetIn) -> Widget:
-        """Create a widget upstream and return the stored record."""
+        """Create a widget upstream, raising 409 when the name is already taken."""
         resp = await self._request("POST", "/widgets", json_encode(data))
+        if resp.status_code == 409:
+            raise ConflictError()
         return json_decode(_body(resp), type=Widget)
 
     async def replace_widget(self, widget_id: str, data: WidgetIn) -> Widget:

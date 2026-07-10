@@ -50,9 +50,9 @@ class Factory(BaseFactory):
 
 class App(BaseApp[Factory]):
     async def wire(self) -> None:
-        analytics = await self.factory.create_analytics_service()
+        analytics_service = await self.factory.create_analytics_service()
         tasks = await self.aenter(BackgroundTasks(drain_timeout=30.0))
-        tasks.register(analytics.process)   # the item type is inferred from the handler
+        tasks.register(analytics_service.process)   # the item type is inferred from the handler
         self.include_endpoint(EventsEndpoint(tasks))
 
 

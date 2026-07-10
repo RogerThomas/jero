@@ -3,7 +3,7 @@
 Most tests run against the shared ``demo_app`` with its I/O service layer mocked. The
 ``client`` fixture passes a ``create_autospec`` stand-in factory into ``DemoApp``
 through the public ``factory=`` seam, so ``wire`` builds the widget resource against
-``widgets_mock`` instead of the real upstream client. The in-memory ``AnalyticsService``
+``widget_service_mock`` instead of the real upstream client. The in-memory ``AnalyticsService``
 is *not* mocked — a real one is injected (and exposed as the ``analytics`` fixture) so
 its handler keeps a real, type-annotated signature for background registration and tests
 can inspect what it processed. Tests configure the mock's return values and assert how
@@ -24,8 +24,8 @@ from demo_app.errors import UpstreamResponseErrorHandler
 from jero import TestClient
 
 
-@pytest.fixture(name="widgets_mock")
-def _widgets_mock(mocker: MockerFixture) -> MagicMock:
+@pytest.fixture(name="widget_service_mock")
+def _widget_service_mock(mocker: MockerFixture) -> MagicMock:
     return mocker.create_autospec(WidgetService, spec_set=True, instance=True)
 
 
@@ -36,10 +36,10 @@ def _analytics_service() -> AnalyticsService:
 
 @pytest.fixture(name="client")
 def _client(
-    mocker: MockerFixture, widgets_mock: MagicMock, analytics_service: AnalyticsService
+    mocker: MockerFixture, widget_service_mock: MagicMock, analytics_service: AnalyticsService
 ) -> Generator[TestClient]:
     factory = mocker.create_autospec(Factory, spec_set=True, instance=True)
-    factory.create_widget_service.return_value = widgets_mock
+    factory.create_widget_service.return_value = widget_service_mock
     factory.create_analytics_service.return_value = analytics_service
     factory.create_upstream_response_error_handler.return_value = UpstreamResponseErrorHandler(30)
     with TestClient(DemoApp(factory=factory)) as client:

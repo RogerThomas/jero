@@ -17,7 +17,7 @@ from demo_app.operations.system_operations import (
     RawHealthEndpoint,
     WhoAmIEndpoint,
 )
-from demo_app.operations.widgets_operations import WidgetResource
+from demo_app.operations.widget_operations import WidgetResource
 from jero import BackgroundTasks, BaseApp
 
 
@@ -26,9 +26,9 @@ class DemoApp(BaseApp[Factory]):
 
     async def wire(self) -> None:
         """Build services from the factory, open the background queue, and wire the routes."""
-        widgets_service = await self.factory.create_widget_service()
+        widget_service = await self.factory.create_widget_service()
         analytics_service = await self.factory.create_analytics_service()
-        questions_service = await self.factory.create_questions_service()
+        question_service = await self.factory.create_question_service()
         upstream_response_error_handler = self.factory.create_upstream_response_error_handler()
         # The queue is opened after the analytics service it dispatches to, so it drains
         # before that service would be torn down.
@@ -36,13 +36,13 @@ class DemoApp(BaseApp[Factory]):
         background_tasks.register(analytics_service.process)
         auth = TokenAuth({"token": User(id="user-id", name="user-name")})
         self.add_exception_handler(upstream_response_error_handler)
-        self.include_resource(WidgetResource(widgets_service, background_tasks), auth=auth)
+        self.include_resource(WidgetResource(widget_service, background_tasks), auth=auth)
         self.include_endpoint(WhoAmIEndpoint(), auth=auth)
         self.include_endpoint(HealthEndpoint())
         self.include_endpoint(RawHealthEndpoint())
         self.include_endpoint(RawFormEndpoint())
         self.include_endpoint(FeaturedWidgetEndpoint())
-        self.include_endpoint(QuestionsEndpoint(questions_service))
+        self.include_endpoint(QuestionsEndpoint(question_service))
         self.include_endpoint(NotificationsEndpoint())
         # Serve the auto-generated OpenAPI 3.1 spec at /openapi.json and a Scalar UI at /docs.
         # Tag descriptions are defined on the resources/endpoints themselves (see their meta);

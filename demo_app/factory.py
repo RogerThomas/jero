@@ -14,8 +14,8 @@ from openai import AsyncOpenAI
 from demo_app.config import Settings, get_settings
 from demo_app.errors import UpstreamResponseErrorHandler
 from demo_app.services.analytics_service import AnalyticsService
-from demo_app.services.questions_service import QuestionsService
-from demo_app.services.widgets_service import WidgetService
+from demo_app.services.question_service import QuestionService
+from demo_app.services.widget_service import WidgetService
 from jero import BaseFactory
 
 
@@ -41,7 +41,7 @@ class Factory(BaseFactory):
         """Build the in-memory analytics recorder."""
         return AnalyticsService(processed=[])
 
-    async def create_questions_service(self) -> QuestionsService:
-        """Build a QuestionsService with an OpenAI client opened on the app's stack."""
+    async def create_question_service(self) -> QuestionService:
+        """Build a QuestionService with an OpenAI client opened on the app's stack."""
         client = await self.aenter(AsyncOpenAI(api_key=self._settings.openai_api_key))
-        return QuestionsService(client, self._settings.openai_model)
+        return QuestionService(client, self._settings.openai_model)

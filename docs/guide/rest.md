@@ -29,26 +29,48 @@ Every framework and application `HTTPError` uses a typed Problem Details body. j
 intentional deviation from RFC 9457 is that `type` is a stable machine-readable code,
 not a URI. Clients use `type`, never `title` or `detail`, for programmatic decisions.
 
-Define a static error by subclassing `HTTPError`:
+For common statuses, jero ships errors ready to raise — one line, same typed problem
+body the framework itself sends:
+
+```python
+from jero import ConflictError, ForbiddenError, GoneError, NotFoundError, TooManyRequestsError
+
+
+raise NotFoundError()        # 404 {"type": "not-found", ...}
+raise ForbiddenError()       # 403 {"type": "forbidden", ...}
+raise ConflictError()        # 409 {"type": "conflict", ...}
+raise GoneError()            # 410 {"type": "gone", ...}
+raise TooManyRequestsError() # 429 {"type": "too-many-requests", ...}
+```
+
+(`AuthenticationRequiredError`, `ValidationFailedError`, and the other statuses the
+framework raises itself are exported too.) These carry the status semantics and nothing
+more — the moment an error means something domain-specific, define your own static
+error by subclassing `HTTPError`:
 
 ```python
 from jero import HTTPError
 
 
-class AuthenticationRequiredError(
+class SubscriptionExpiredError(
     HTTPError,
-    type="authentication-required",
-    title="Authentication required",
-    status=401,
+    type="subscription-expired",
+    title="The subscription has expired",
+    status=402,
 ): ...
 
 
-raise AuthenticationRequiredError()
+raise SubscriptionExpiredError()
 ```
 
 ```json
-{"type": "authentication-required", "title": "Authentication required", "status": 401}
+{"type": "subscription-expired", "title": "The subscription has expired", "status": 402}
 ```
+
+There is deliberately no `raise HTTPError(409, detail="widget already exists")` form:
+an ad-hoc detail string becomes a contract clients regex against, and a response
+without a stable `type` leaves them dispatching on status alone. The class is four
+lines, once, and every raise site stays consistent.
 
 When the human-readable detail contains runtime values, pair it with typed params:
 

@@ -64,8 +64,8 @@ class Factory(BaseFactory):
 
 class App(BaseApp[Factory]):
     async def wire(self) -> None:
-        widgets = await self.factory.create_widget_service()
-        self.include_resource(WidgetResource(widgets))
+        widget_service = await self.factory.create_widget_service()
+        self.include_resource(WidgetResource(widget_service))
 ```
 
 The factory's `create_*` methods use the same `enter` / `aenter` helpers — anything
