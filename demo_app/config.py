@@ -54,10 +54,8 @@ class ProdSettings(Settings):
 
 def get_settings() -> Settings:
     """Select the environment's settings class and fill secrets from the environment."""
-    # pydantic-settings populates these fields from the environment, but the checkers see
-    # the synthesized __init__ as requiring them. The ignore must be bare: the five
-    # checkers disagree on error-code names, so only an un-coded `type: ignore` suppresses
-    # all of them (hence the PGH003 noqa, which would otherwise demand a specific code).
+    # pydantic-settings populates these from the environment; mypy/pyright/zuban still see
+    # the synthesized __init__ as requiring them, so the blanket suppress stays.
     env_vars = ENVVars()  # type: ignore  # noqa: PGH003
     settings_cls = {"dev": DevSettings, "prod": ProdSettings}[env_vars.env]
     return settings_cls(

@@ -159,6 +159,11 @@ root = "tests"
 extraPaths = ["."]
 reportUnusedFunction = "none"
 
+[tool.ty.rules]
+# mypy/pyright/zuban still need blanket `type: ignore` on lines where pydantic-settings
+# populates fields from the environment; ty no longer does, so silence its complaint.
+unused-type-ignore-comment = "ignore"
+
 [tool.deptry]
 # The demo app is dev/docs-only example code (not shipped) and uses dev dependencies
 # like niquests, so it isn't scanned for the package's dependency contract.
