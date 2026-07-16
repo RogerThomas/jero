@@ -18,7 +18,7 @@ from demo_app.operations.system_operations import (
     WhoAmIEndpoint,
 )
 from demo_app.operations.widget_operations import WidgetResource
-from jero import BackgroundTasks, BaseApp
+from jero import BaseApp
 
 
 class DemoApp(BaseApp[Factory]):
@@ -32,7 +32,7 @@ class DemoApp(BaseApp[Factory]):
         upstream_response_error_handler = self.factory.create_upstream_response_error_handler()
         # The queue is opened after the analytics service it dispatches to, so it drains
         # before that service would be torn down.
-        background_tasks = await self.aenter(BackgroundTasks(drain_timeout=1.0))
+        background_tasks = await self.create_background_tasks(drain_timeout=1.0)
         background_tasks.register(analytics_service.process)
         auth = TokenAuth({"token": User(id="user-id", name="user-name")})
         self.add_exception_handler(upstream_response_error_handler)

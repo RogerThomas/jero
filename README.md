@@ -192,26 +192,28 @@ app = App()
 
 ## Performance
 
-In a side-by-side benchmark against seven other frameworks — Python (Litestar, FastAPI,
-Blacksheep, Robyn, Flask), Go (Gin), and Bun (Elysia) — **jero is the fastest Python
-framework in every scenario tested.** On the pure framework hot path (a typed JSON
-`GET`) it tops the table outright, ahead of both the Go and the Bun service:
+In a side-by-side benchmark against six other frameworks — Python (Litestar, FastAPI,
+Blacksheep, Flask), Go (Gin), and Bun (Elysia) — **jero is the fastest Python framework
+in every scenario tested.** On the pure framework hot path (a typed JSON `GET`):
 
 | Framework      | `GET /info` req/s | Relative to jero |
 | :------------- | :---------------- | :--------------- |
-| **jero**       | **43.4k**         | **1.00×**        |
-| blacksheep     | 39.7k             | 0.91×            |
-| gin *(Go)*     | 39.2k             | 0.90×            |
-| elysia *(Bun)* | 38.6k             | 0.89×            |
-| litestar       | 33.8k             | 0.78×            |
-| fastapi        | 25.7k             | 0.59×            |
+| gin *(Go)*     | 96.5k             | 1.42×            |
+| elysia *(Bun)* | 88.1k             | 1.30×            |
+| **jero**       | **67.7k**         | **1.00×**        |
+| blacksheep     | 54.6k             | 0.81×            |
+| litestar       | 37.1k             | 0.55×            |
+| fastapi        | 26.9k             | 0.40×            |
+| flask          | 16.5k             | 0.24×            |
 
-On I/O-bound paths — proxying an upstream, reading from a database — Go pulls well clear,
-because there the bottleneck is the HTTP-client and database-driver ecosystem, not the
-framework. jero stays the fastest Python option, but it isn't as fast as Go in general,
-and we're not claiming it is.
+Go and Bun top the raw table (both finished with CPU headroom; the Python frameworks
+ran at their genuine single-core ceilings). On the upstream-proxy scenario — with every
+Python framework on the same Rust HTTP client — jero relays within ~10% of Go at an
+equal p99. On the database scenario Go pulls well clear, because there the bottleneck
+is the database driver, not the framework. jero stays the fastest Python option, but it
+isn't as fast as Go in general, and we're not claiming it is.
 
-These are favourable, constrained conditions — single worker, single core, localhost,
+These are favourable, constrained conditions — single worker, one dedicated core,
 best-of-N — and a microbenchmark is not your application. See the full methodology and
 all four scenarios in the **[Performance docs](https://RogerThomas.github.io/jero/performance/)**.
 

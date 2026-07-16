@@ -136,7 +136,7 @@ jero's public API is fully supported and type-checks cleanly under it.
 ## Class-based resources
 
 The method *names* carry the REST semantics directly: `create` is POST on the collection,
-`read_many` is GET on the collection, and `read_one`, `update`, `partial_update`, and
+`read_many` is GET on the collection, and `read_one`, `update_full`, `update_partial`, and
 `delete` are the item operations. The set is small enough to learn quickly and strict
 enough for the framework to enforce at startup.
 

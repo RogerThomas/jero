@@ -80,8 +80,8 @@ These pull against each other constantly; keep all three in mind on every change
 ## The contract (how apps are built)
 
 - **The operation set is closed and fixed** — this is load-bearing. A `Resource`'s
-  operations are *exactly* `create` / `read_one` / `read_many` / `update` /
-  `partial_update` / `delete`; an `Endpoint`'s are *exactly* `get` / `post` / `put` /
+  operations are *exactly* `create` / `read_one` / `read_many` / `update_full` /
+  `update_partial` / `delete`; an `Endpoint`'s are *exactly* `get` / `post` / `put` /
   `patch` / `delete`. The **method name *is* the operation** (a deterministic, total
   mapping defined by `Resource.METHODS` / `Endpoint.METHODS`) — you cannot rename them,
   add others, or define arbitrary route methods. A method whose name isn't in the set is
@@ -258,11 +258,12 @@ These pull against each other constantly; keep all three in mind on every change
   `msgspec.StructMeta` subclass), field `Meta`. `SecurityScheme` / `BearerAuth` /
   `BasicAuth` for security; derived per-source error responses reference the shared
   `Problem` schema.
-- **Performance (validated natively)**: on the authed write path
-  (`POST /movies` — bearer auth + JSON decode + encode + 201, C=200), jero ≈
-  blacksheep (~43k req/s, a tie), ~2× litestar, ~3× robyn, ~6× idiomatic FastAPI.
-  Tight unimodal latency — trustworthy. (The benchmark harness lives in a
-  separate repo; run natively rather than under emulation for real figures.)
+- **Performance (validated, 2026-07-16 run)**: fastest Python framework on all four
+  scenarios (VUS=128, 1 dedicated core, granian+uvloop); Python order is jero →
+  blacksheep → litestar → fastapi → flask everywhere. Authed write path
+  (`POST /movies`): jero 31.5k req/s ≈ 1.5× blacksheep, ~2.4× litestar, ~3.4× FastAPI.
+  Proxy path (all Python frameworks on pyreqwest): within ~10% of Go/gin at equal p99.
+  (The benchmark harness lives in a separate repo.)
 - **Unbuilt**: cookies (first-class `Set-Cookie` / `Cookie` — fully designed, all
   decisions locked in `plans/cookies.md`); absolute (vs relative) reverse-routed URLs are
   a deliberate follow-up. Minor polish:
