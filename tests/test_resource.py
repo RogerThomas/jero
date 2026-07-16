@@ -135,7 +135,7 @@ def test_read_many_binds_pagination_query_params(
     widget_service_mock.list_widgets.assert_awaited_once_with(5, 2)
 
 
-def test_update_replaces_via_put(client: TestClient, widget_service_mock: MagicMock) -> None:
+def test_update_full_replaces_via_put(client: TestClient, widget_service_mock: MagicMock) -> None:
     """PUT binds the id and body and delegates to replace_widget."""
     widget_service_mock.replace_widget.return_value = Widget(
         id="widget-id", name="name", price_cents=2
@@ -151,7 +151,7 @@ def test_update_replaces_via_put(client: TestClient, widget_service_mock: MagicM
     )
 
 
-def test_partial_update_via_patch(client: TestClient, widget_service_mock: MagicMock) -> None:
+def test_update_partial_via_patch(client: TestClient, widget_service_mock: MagicMock) -> None:
     """PATCH binds a partial body and delegates to patch_widget."""
     widget_service_mock.patch_widget.return_value = Widget(
         id="widget-id", name="name", price_cents=2

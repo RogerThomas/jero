@@ -511,3 +511,9 @@ class WidgetsService: ...   # plural class
 
 _widgets: WidgetsService    # attribute derived from nothing
 ```
+
+The root of the class name follows one rule — **name the class for what it abstracts**:
+
+- A **`Resource`** abstracts an entity type, so it is the singular entity: `WidgetResource` (even though it mounts at the plural path `/widgets`). This keeps the whole domain vertical under one greppable prefix: `Widget`, `WidgetIn`, `WidgetPath`, `WidgetService`, `WidgetResource`, `WidgetNotFoundError`, `widget_service.py`, `widget_operations.py`.
+- An **`Endpoint`** abstracts a path, so it is named for the path, spelled as the path spells it: `NotificationsEndpoint` at `/notifications`, `HealthEndpoint` at `/healthz`, `WhoAmIEndpoint` at `/me`. Forcing singular here would produce `NotificationEndpoint` serving `/notifications` — wrong twice.
+- A **service** abstracts behavior over a domain, so it is the singular domain noun: `WidgetService`, `WeatherService`.

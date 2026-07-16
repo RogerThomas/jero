@@ -43,7 +43,7 @@ class Page(Struct):
 
 class WidgetResource(Resource, path="/widgets"):
     # PUT /widgets/{widget_id}?limit=...&offset=...
-    async def update(self, path: WidgetPath, params: Page, json: WidgetIn) -> Widget:
+    async def update_full(self, path: WidgetPath, params: Page, json: WidgetIn) -> Widget:
         return Widget(id=path.widget_id, name=json.name)
 
 

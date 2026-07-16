@@ -68,11 +68,11 @@ class WidgetResource(
         """List widgets honouring the pagination params."""
         return await self._service.list_widgets(params.limit, params.offset)
 
-    async def update(self, path: WidgetPath, json: WidgetIn) -> Widget:
+    async def update_full(self, path: WidgetPath, json: WidgetIn) -> Widget:
         """Replace a widget by path id."""
         return await self._service.replace_widget(path.widget_id, json)
 
-    async def partial_update(self, path: WidgetPath, json: WidgetPatch) -> Widget:
+    async def update_partial(self, path: WidgetPath, json: WidgetPatch) -> Widget:
         """Partially update a widget by path id."""
         return await self._service.patch_widget(path.widget_id, json)
 

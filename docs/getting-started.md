@@ -96,7 +96,7 @@ startup error.
 ## The mental model
 
 - A **`Resource`** is a class with any of the CRUD methods `create` / `read_one` /
-  `read_many` / `update` / `partial_update` / `delete`, mapped to POST / GET (item) /
+  `read_many` / `update_full` / `update_partial` / `delete`, mapped to POST / GET (item) /
   GET (collection) / PUT / PATCH / DELETE. See [Resources & Endpoints](guide/resources.md).
 - An **`Endpoint`** is a class with bare verb methods (`get`/`post`/…) for non-resource
   routes — health checks, webhooks, actions.

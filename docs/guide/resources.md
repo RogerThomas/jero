@@ -14,8 +14,8 @@ WidgetResource(path="/widgets")
 create          POST    /widgets
 read_many       GET     /widgets
 read_one        GET     /widgets/{widget_id}
-update          PUT     /widgets/{widget_id}
-partial_update  PATCH   /widgets/{widget_id}
+update_full     PUT     /widgets/{widget_id}
+update_partial  PATCH   /widgets/{widget_id}
 delete          DELETE  /widgets/{widget_id}
 ```
 
@@ -24,8 +24,8 @@ delete          DELETE  /widgets/{widget_id}
 | `create`          | POST            | 201            | the mount path      |
 | `read_one`        | GET (item)      | 200            | mount + item id     |
 | `read_many`       | GET (collection)| 200            | the mount path      |
-| `update`          | PUT             | 200            | mount + item id     |
-| `partial_update`  | PATCH           | 200            | mount + item id     |
+| `update_full`     | PUT             | 200            | mount + item id     |
+| `update_partial`  | PATCH           | 200            | mount + item id     |
 | `delete`          | DELETE          | 200            | mount + item id     |
 
 ```python
@@ -152,7 +152,7 @@ Rules, all checked at startup with a precise `WiringError`:
 
 - Every `{slot}` in the mount path must be a field on the `path` Struct.
 - Path Struct fields **cannot have defaults** — a URL segment is always present.
-- For item routes (`read_one`, `update`, …) any `path` field *beyond* the template
+- For item routes (`read_one`, `update_full`, …) any `path` field *beyond* the template
   slots **extends** the URL as a trailing segment (the item id). For `read_many` and
   endpoints the path is exact — extra fields are an error.
 

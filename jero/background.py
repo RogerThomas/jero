@@ -18,7 +18,7 @@ from typing import Any, Self, get_type_hints
 
 from msgspec import Struct
 
-from jero.core import WiringError
+from jero._wiring_types import WiringError
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +50,12 @@ class BackgroundTasks:
 
     Register one handler per ``Struct`` type (inferred from the handler's parameter);
     endpoints call :meth:`add` to enqueue an item, and a single serial worker dispatches
-    each to its handler. Open it with ``self.aenter`` inside ``wire`` so the worker
+    each to its handler. Build it with ``self.create_background_tasks(...)`` inside
+    ``wire`` (sugar for ``await self.aenter(BackgroundTasks(...))``) so the worker
     starts at startup and drains/stops at shutdown.
 
-    Enter it *after* the resources its handlers use, so reverse-order shutdown drains the
-    queue before those resources are torn down.
+    Create it *after* the resources its handlers use, so reverse-order shutdown drains
+    the queue before those resources are torn down.
     """
 
     def __init__(

@@ -80,8 +80,8 @@ These pull against each other constantly; keep all three in mind on every change
 ## The contract (how apps are built)
 
 - **The operation set is closed and fixed** — this is load-bearing. A `Resource`'s
-  operations are *exactly* `create` / `read_one` / `read_many` / `update` /
-  `partial_update` / `delete`; an `Endpoint`'s are *exactly* `get` / `post` / `put` /
+  operations are *exactly* `create` / `read_one` / `read_many` / `update_full` /
+  `update_partial` / `delete`; an `Endpoint`'s are *exactly* `get` / `post` / `put` /
   `patch` / `delete`. The **method name *is* the operation** (a deterministic, total
   mapping defined by `Resource.METHODS` / `Endpoint.METHODS`) — you cannot rename them,
   add others, or define arbitrary route methods. A method whose name isn't in the set is

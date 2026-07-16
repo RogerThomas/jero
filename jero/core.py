@@ -3,7 +3,7 @@
 The contract:
 
 - Resources are plain classes with any of the CRUD methods ``create`` / ``read_one`` /
-  ``read_many`` / ``update`` / ``partial_update`` / ``delete``, mapped to POST / GET (item) /
+  ``read_many`` / ``update_full`` / ``update_partial`` / ``delete``, mapped to POST / GET (item) /
   GET (collection) / PUT / PATCH / DELETE on the path given to ``include_resource``. ``read_many``
   serves the mount path itself and cannot extend it with trailing segments — items belong to
   ``read_one``.
@@ -103,6 +103,7 @@ from jero._wiring_types import (
     is_struct_type,
     strip_list,
 )
+from jero.background import BackgroundTasks
 from jero.codecs import msgspec_encoder
 from jero.errors import (
     AuthenticationRequiredError,
@@ -304,8 +305,8 @@ class Resource(_Routable):
         "create": _Verb("POST", 201, extends_path=True),
         "read_one": _Verb("GET", 200, extends_path=True),
         "read_many": _Verb("GET", 200, extends_path=False),
-        "update": _Verb("PUT", 200, extends_path=True),
-        "partial_update": _Verb("PATCH", 200, extends_path=True),
+        "update_full": _Verb("PUT", 200, extends_path=True),
+        "update_partial": _Verb("PATCH", 200, extends_path=True),
         "delete": _Verb("DELETE", 200, extends_path=True),
     }
 
@@ -313,8 +314,8 @@ class Resource(_Routable):
     meta_create: ClassVar[OperationMeta | None] = None
     meta_read_one: ClassVar[OperationMeta | None] = None
     meta_read_many: ClassVar[OperationMeta | None] = None
-    meta_update: ClassVar[OperationMeta | None] = None
-    meta_partial_update: ClassVar[OperationMeta | None] = None
+    meta_update_full: ClassVar[OperationMeta | None] = None
+    meta_update_partial: ClassVar[OperationMeta | None] = None
     meta_delete: ClassVar[OperationMeta | None] = None
 
     def __init_subclass__(
@@ -326,8 +327,8 @@ class Resource(_Routable):
         meta_create: OperationMeta | None = None,
         meta_read_one: OperationMeta | None = None,
         meta_read_many: OperationMeta | None = None,
-        meta_update: OperationMeta | None = None,
-        meta_partial_update: OperationMeta | None = None,
+        meta_update_full: OperationMeta | None = None,
+        meta_update_partial: OperationMeta | None = None,
         meta_delete: OperationMeta | None = None,
         **kwargs: object,
     ) -> None:
@@ -341,8 +342,8 @@ class Resource(_Routable):
                 "meta_create": meta_create,
                 "meta_read_one": meta_read_one,
                 "meta_read_many": meta_read_many,
-                "meta_update": meta_update,
-                "meta_partial_update": meta_partial_update,
+                "meta_update_full": meta_update_full,
+                "meta_update_partial": meta_update_partial,
                 "meta_delete": meta_delete,
             },
         )
@@ -350,8 +351,8 @@ class Resource(_Routable):
         cls.meta_create = meta_create
         cls.meta_read_one = meta_read_one
         cls.meta_read_many = meta_read_many
-        cls.meta_update = meta_update
-        cls.meta_partial_update = meta_partial_update
+        cls.meta_update_full = meta_update_full
+        cls.meta_update_partial = meta_update_partial
         cls.meta_delete = meta_delete
 
 
@@ -2223,7 +2224,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         """The reusable typed JSON decoder for ``struct_type``, built once per app.
 
         Decoders are keyed by type, so models shared across handlers (a ``WidgetIn``
-        used by both ``create`` and ``update``) share one decoder. Populated only at
+        used by both ``create`` and ``update_full``) share one decoder. Populated only at
         wiring time; the binder holds the resolved decoder, so the request path does
         no lookup.
         """
@@ -2427,6 +2428,28 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         if docs_path is not None:
             html = docs_html if docs_html is not None else _scalar_html(title, openapi_path)
             self._register("GET", _parse_template(docs_path), _docs_handler(html.encode()))
+
+    async def create_background_tasks(
+        self,
+        *,
+        maxsize: int = 1024,
+        drain_timeout: float | None = 30.0,
+        allow_one_to_many: bool = False,
+    ) -> BackgroundTasks:
+        """Build a :class:`BackgroundTasks` queue bound to the app's lifecycle.
+
+        Sugar for ``await self.aenter(BackgroundTasks(...))``: the worker starts at
+        startup and drains/stops at shutdown. Call inside ``wire`` *after* the services
+        its handlers use, so reverse-order shutdown drains the queue before those
+        services are torn down.
+        """
+        return await self.aenter(
+            BackgroundTasks(
+                maxsize=maxsize,
+                drain_timeout=drain_timeout,
+                allow_one_to_many=allow_one_to_many,
+            )
+        )
 
     def _build_openapi_document(self, config: _OpenAPIConfig) -> bytes:
         """Translate the captured operations into the OpenAPI document, encoded as JSON."""
