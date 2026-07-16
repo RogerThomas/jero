@@ -3,14 +3,15 @@
 jero is built for speed, but the only honest way to talk about speed is with numbers
 and a clear account of how they were produced. This page is that account.
 
-**The short version:** across four workloads benchmarked side by side against seven
-other frameworks — Python (Litestar, FastAPI, Blacksheep, Robyn, Flask), Go (Gin), and
-Bun (Elysia) — jero led the Python frameworks tested in every scenario. On the pure
-framework hot path (a typed JSON `GET`) it topped this benchmark table by overall
-score, ahead of both the Go and the Bun service. On the I/O-bound scenarios (an
-upstream proxy, a database read) Go pulled well clear — there the bottleneck is the
-HTTP-client and database-driver ecosystem, not the framework, and that's a fight Python
-doesn't win today.
+**The short version:** across four workloads benchmarked side by side against six
+other frameworks — Python (Litestar, FastAPI, Blacksheep, Flask), Go (Gin), and Bun
+(Elysia) — jero led the Python frameworks tested in every scenario, and the Python
+order was identical everywhere: jero → blacksheep → litestar → fastapi → flask. Go and
+Bun topped the raw table. On the upstream-proxy scenario — with every Python framework
+issuing its outbound call through the same Rust HTTP client — jero relayed responses
+within ~10% of the Go service, at an equal p99. On the database scenario Go pulled well
+clear: there the bottleneck is the database driver, not the framework, and that's a
+fight Python doesn't win today.
 
 Read the caveats. These are favourable, constrained conditions, and a microbenchmark is
 not your application.
@@ -36,30 +37,36 @@ contention and shared-state effects, so each number reflects that framework alon
 - **Best-of-N:** every `(framework, scenario)` pair is run *N* times and the best run
   is kept. Repeating and taking the best beats down the ~3–4% run-to-run noise floor so
   the comparison reflects each framework's ceiling, not a noisy sample.
-- **Single worker, single core:** every framework runs with one worker process; Go is
-  pinned to `GOMAXPROCS=1`. This is a like-for-like, single-core comparison — not a
-  test of how well each scales across cores.
+- **Single worker, one dedicated core:** every framework runs with one worker process,
+  pinned to its own CPU core (cpuset affinity); Go is pinned to `GOMAXPROCS=1`. This is
+  a like-for-like, single-core comparison — not a test of how well each scales across
+  cores.
 - **Identical scenarios** — the same request scripts, the same selection logic, and the
   same scoring table for every framework.
+- **Identical outbound HTTP client** — every Python framework makes its upstream call
+  (the proxy scenario) through the same Rust HTTP client,
+  [pyreqwest](https://pypi.org/project/pyreqwest/), so that scenario compares
+  frameworks rather than client libraries. (Flask, being sync, uses its `SyncClient`.)
 
 ### Run configuration
 
-| Setting       | Value                           |
-| :------------ | :------------------------------ |
-| Machine       | Apple M3 Max, 36 GB             |
-| Concurrency   | 100 VUs                         |
-| Duration      | 30s per run                     |
-| Best-of-N     | 3 runs                          |
-| Workers       | 1 (Go pinned to `GOMAXPROCS=1`) |
-| Python server | Granian, single worker          |
+| Setting         | Value                                            |
+| :-------------- | :----------------------------------------------- |
+| Machine         | Apple M3 Max, 36 GB (Docker Desktop Linux VM)    |
+| Concurrency     | 128 VUs                                          |
+| Duration        | 30s per run                                      |
+| Best-of-N       | 3 runs                                           |
+| CPU             | 1 dedicated core per framework (cpuset affinity) |
+| Workers         | 1 (Go pinned to `GOMAXPROCS=1`)                  |
+| Python server   | Granian + uvloop, single worker                  |
+| Outbound client | pyreqwest (Rust) for every Python framework      |
 
 ## Results
 
 `req/s` is throughput (higher is better); `mean` and `p99` are request latency (lower is
-better). `vs all` is an aggregate score across all three — a single "overall standing"
-number, normalised so jero = `1.00×` in every scenario. Every framework returned 100%
-successful responses in every run, so that column is omitted. Frameworks are ordered by
-`vs all` within each scenario.
+better). `vs jero` is throughput relative to jero. Every framework returned 100%
+successful responses in every run, so that column is omitted. Frameworks are ordered
+fastest → slowest within each scenario.
 
 ### 1 — `GET /info` — the pure framework path
 
@@ -67,91 +74,97 @@ Route → build a typed JSON response with a typed response header → encode. N
 isolates routing and serialization, and is the closest thing to a measure of the
 framework's own per-request overhead.
 
-| Framework      | req/s     | mean       | p99        | vs all    |
+| Framework      | req/s     | mean       | p99        | vs jero   |
 | :------------- | :-------- | :--------- | :--------- | :-------- |
-| **jero**       | **44.5k** | **2.22ms** | **3.73ms** | **1.00×** |
-| blacksheep     | 40.3k     | 2.45ms     | 3.36ms     | 0.97×     |
-| elysia *(Bun)* | 38.7k     | 2.55ms     | 3.52ms     | 0.93×     |
-| gin *(Go)*     | 38.4k     | 2.57ms     | 3.79ms     | 0.90×     |
-| litestar       | 35.6k     | 2.78ms     | 3.99ms     | 0.84×     |
-| fastapi        | 24.5k     | 4.06ms     | 4.81ms     | 0.62×     |
-| robyn          | 20.6k     | 4.83ms     | 10.46ms    | 0.42×     |
-| flask          | 17.9k     | 5.56ms     | 19.29ms    | 0.31×     |
+| gin *(Go)*     | 96.5k     | 1.24ms     | 6.44ms     | 1.42×     |
+| elysia *(Bun)* | 88.1k     | 1.30ms     | 6.73ms     | 1.30×     |
+| **jero**       | **67.7k** | **1.85ms** | **7.08ms** | **1.00×** |
+| blacksheep     | 54.6k     | 2.31ms     | 7.83ms     | 0.81×     |
+| litestar       | 37.1k     | 3.42ms     | 9.29ms     | 0.55×     |
+| fastapi        | 26.9k     | 4.74ms     | 10.50ms    | 0.40×     |
+| flask          | 16.5k     | 7.74ms     | 14.10ms    | 0.24×     |
+
+jero is the fastest Python framework on the pure framework path — 1.2× blacksheep,
+1.8× litestar, 2.5× FastAPI — running at ~100% CPU, its genuine single-core ceiling.
+Go and Bun lead outright, and both finished with CPU headroom to spare (~87% and ~72%
+average), so the table understates them: read that gap as *at least* what it shows.
 
 ### 2 — `POST /movies` — the authed write path (JWT)
 
 Bearer/JWT auth → msgspec decode of the request body → handler → encode → `201`. The
 realistic write path for a typed JSON API.
 
-| Framework      | req/s     | mean       | p99        | vs all    |
-| :------------- | :-------- | :--------- | :--------- | :-------- |
-| gin *(Go)*     | 28.6k     | 3.46ms     | 6.39ms     | 1.06×     |
-| **jero**       | **27.4k** | **3.62ms** | **6.93ms** | **1.00×** |
-| elysia *(Bun)* | 24.0k     | 4.12ms     | 8.20ms     | 0.87×     |
-| blacksheep     | 16.4k     | 6.05ms     | 14.58ms    | 0.55×     |
-| robyn          | 15.7k     | 6.21ms     | 18.04ms    | 0.50×     |
-| litestar       | 12.0k     | 8.25ms     | 22.52ms    | 0.39×     |
-| flask          | 10.5k     | 9.46ms     | 48.39ms    | 0.28×     |
-| fastapi        | 5.2k      | 18.97ms    | 55.64ms    | 0.17×     |
+| Framework      | req/s     | mean       | p99         | vs jero   |
+| :------------- | :-------- | :--------- | :---------- | :-------- |
+| gin *(Go)*     | 60.2k     | 1.97ms     | 8.48ms      | 1.91×     |
+| elysia *(Bun)* | 46.7k     | 2.65ms     | 9.74ms      | 1.49×     |
+| **jero**       | **31.5k** | **4.04ms** | **10.38ms** | **1.00×** |
+| blacksheep     | 20.5k     | 6.20ms     | 14.12ms     | 0.65×     |
+| litestar       | 13.4k     | 9.54ms     | 19.99ms     | 0.43×     |
+| fastapi        | 9.3k      | 13.73ms    | 25.93ms     | 0.30×     |
+| flask          | 9.1k      | 14.09ms    | 22.65ms     | 0.29×     |
 
-jero lands within ~5% of a hand-written Go service here, and led the Python frameworks
-tested by a wide margin.
+This is jero's widest Python margin of the four scenarios: more than 1.5× the next
+Python framework's throughput, and over 3× FastAPI's.
 
-### 3 — `GET` proxy — bound by the HTTP client
+### 3 — `GET` proxy — the outbound hop
 
 The service makes an outbound HTTP call to the Rust upstream and relays the response.
-The bottleneck is the HTTP client library, not the framework — which is why the whole
-Python field clusters together and Go runs away.
+Every Python framework issues that call through the same Rust HTTP client (pyreqwest),
+so this scenario measures the framework around the client, not the client itself.
 
-| Framework      | req/s    | mean        | p99         | vs all    |
-| :------------- | :------- | :---------- | :---------- | :-------- |
-| gin *(Go)*     | 15.1k    | 6.58ms      | 15.34ms     | 5.35×     |
-| elysia *(Bun)* | 11.2k    | 8.77ms      | 21.11ms     | 3.96×     |
-| **jero**       | **3.2k** | **31.56ms** | **102.24ms**| **1.00×** |
-| litestar       | 2.8k     | 35.17ms     | 127.50ms    | 0.86×     |
-| blacksheep     | 2.9k     | 33.85ms     | 158.69ms    | 0.82×     |
-| fastapi        | 2.4k     | 42.21ms     | 102.92ms    | 0.82×     |
-| robyn          | 2.5k     | 40.37ms     | 167.62ms    | 0.72×     |
-| flask          | 2.4k     | 41.94ms     | 166.82ms    | 0.70×     |
+| Framework      | req/s     | mean       | p99         | vs jero   |
+| :------------- | :-------- | :--------- | :---------- | :-------- |
+| elysia *(Bun)* | 47.6k     | 2.62ms     | 9.13ms      | 1.56×     |
+| gin *(Go)*     | 33.8k     | 3.74ms     | 10.03ms     | 1.11×     |
+| **jero**       | **30.5k** | **4.17ms** | **10.34ms** | **1.00×** |
+| blacksheep     | 25.1k     | 5.08ms     | 11.56ms     | 0.82×     |
+| litestar       | 18.5k     | 6.90ms     | 15.59ms     | 0.61×     |
+| fastapi        | 14.7k     | 8.66ms     | 19.38ms     | 0.48×     |
+| flask          | 6.0k      | 21.39ms    | 28.54ms     | 0.20×     |
 
-jero led the Python frameworks tested, but Go's mature native HTTP stack is in a
-different class. This gap is the ecosystem, not jero.
+jero proxies within ~10% of the Go service, at an equal ~10ms p99 — with the client
+held constant, what remains of that gap is the framework, and there's ~10% of it.
+elysia is the fastest proxy overall.
 
 ### 4 — `GET /users/me` — bound by the database driver
 
-Reads a row from Postgres. The bottleneck is the database driver, so again the field
-compresses and Go's native driver leads.
+Reads a row from Postgres. Every request pays the database driver's cost, which
+compresses the Python field and plays to Go's cheap native driver.
 
-| Framework      | req/s    | mean        | p99         | vs all    |
-| :------------- | :------- | :---------- | :---------- | :-------- |
-| gin *(Go)*     | 16.2k    | 6.13ms      | 8.72ms      | 2.44×     |
-| elysia *(Bun)* | 6.0k     | 16.45ms     | 16.77ms     | 1.02×     |
-| **jero**       | **8.4k** | **11.84ms** | **33.98ms** | **1.00×** |
-| blacksheep     | 7.8k     | 12.84ms     | 89.58ms     | 0.69×     |
-| litestar       | 6.3k     | 15.77ms     | 141.70ms    | 0.51×     |
-| robyn          | 4.6k     | 21.87ms     | 172.95ms    | 0.39×     |
-| fastapi        | 3.4k     | 29.26ms     | 104.84ms    | 0.38×     |
-| flask          | 1.3k     | 78.03ms     | 210.18ms    | 0.15×     |
+| Framework      | req/s     | mean       | p99         | vs jero   |
+| :------------- | :-------- | :--------- | :---------- | :-------- |
+| gin *(Go)*     | 36.3k     | 3.46ms     | 9.92ms      | 2.63×     |
+| elysia *(Bun)* | 28.4k     | 4.46ms     | 11.19ms     | 2.06×     |
+| **jero**       | **13.8k** | **9.23ms** | **16.03ms** | **1.00×** |
+| blacksheep     | 12.0k     | 10.63ms    | 18.02ms     | 0.87×     |
+| litestar       | 9.3k      | 13.76ms    | 23.80ms     | 0.67×     |
+| fastapi        | 7.4k      | 17.16ms    | 29.84ms     | 0.54×     |
+| flask          | 2.9k      | 44.49ms    | 72.30ms     | 0.21×     |
 
-jero led the Python frameworks tested again. Go was well ahead; Bun's lower p99 edged
-jero on aggregate score despite lower throughput and higher mean latency.
+jero stays the fastest Python framework, but the margin narrows to 1.15× blacksheep —
+when the driver dominates the request, the framework matters less. That is the honest
+ceiling on what a framework can do for a database-bound service.
 
 ## How to read this
 
 - **jero leads the Python frameworks tested in all four scenarios.** That is the
-  durable claim.
-- **On the pure framework path it beats even Go and Bun.** That result is real but
-  narrow: an in-memory JSON path plays directly to Python + msgspec's strengths and to
-  the Rust HTTP layer underneath. It is *not* evidence that Python is faster than Go in
-  general — and we are not making that claim.
-- **On I/O-bound paths, Go is well ahead.** When the work is an outbound HTTP call or a
-  database query, the framework is barely in the picture; the HTTP client and database
-  driver decide it, and Go's native libraries dominate. jero stays ahead of the Python
-  frameworks tested, which is the most it can do there.
-- **A benchmark is not your app.** Single worker, single core, localhost, fixed
-  payloads, best-of-N. Real workloads have more moving parts. Treat these as directional
-  evidence that jero's per-request overhead is low — not as a promise about your
-  production numbers.
+  durable claim — and the Python order is identical everywhere: jero → blacksheep →
+  litestar → fastapi → flask.
+- **Go and Bun top the raw table.** On the pure framework path they even finished with
+  CPU headroom to spare (the load generator, not the CPU, was their limit), while every
+  Python framework ran at its genuine single-core ceiling. Python is not faster than Go
+  — and we are not claiming it is.
+- **The proxy result is the framework, not the client.** With the same Rust HTTP client
+  under every Python framework, jero relays upstream responses within ~10% of Go at an
+  equal p99. Pick a pure-Python client instead and the client's ceiling swallows the
+  whole Python field — the client library matters more than the framework on that path.
+- **On the database path, the driver decides it.** Go's native driver is well ahead;
+  jero stays ahead of the Python frameworks tested, which is the most it can do there.
+- **A benchmark is not your app.** Single worker, one core, a Docker Desktop Linux VM
+  (CPU pinning near-exact, not exact), fixed payloads, best-of-N. Real workloads have
+  more moving parts. Treat these as directional evidence that jero's per-request
+  overhead is low — not as a promise about your production numbers.
 
 Where jero's design earns these numbers: all type introspection happens **once, at
 startup**. The request path is dict lookup → msgspec decode → handler call → encode, and
@@ -165,7 +178,7 @@ a single self-contained script that drives each framework **in-process as a bare
 callable** — no server, no sockets — so it isolates pure framework overhead (routing,
 binding/validation, serialization) on your own machine in under a minute.
 
-It benchmarks jero, Starlette, BlackSheep, and FastAPI against a hand-rolled raw ASGI
+It benchmarks jero, Litestar, BlackSheep, and FastAPI against a hand-rolled raw ASGI
 app serving the same three-endpoint API. The raw app uses no framework but is kept
 honest: it routes by hand, extracts the path and query values, does a typed validating
 msgspec decode of the POST body, and a typed msgspec encode of every response. It
@@ -184,12 +197,12 @@ uv run - <<'EOF'
 #     "blacksheep",
 #     "fastapi",
 #     "jero",
+#     "litestar",
 #     "msgspec",
 #     "rich",
-#     "starlette",
 # ]
 # ///
-"""In-process ASGI micro-benchmark: jero vs Starlette vs BlackSheep vs FastAPI vs a
+"""In-process ASGI micro-benchmark: jero vs Litestar vs BlackSheep vs FastAPI vs a
 hand-rolled raw ASGI app, all serving the same three-endpoint API.
 
 Every app is driven directly as an ASGI callable — no server, no sockets — so what you
@@ -207,7 +220,6 @@ Fairness notes:
     body, and a typed encode of every response. It skips everything a framework gives
     you (404/405 semantics, HEAD/OPTIONS, content-type checks, error envelopes).
   - Each framework app is written the way its own documentation recommends.
-  - Starlette has no built-in validation, so its POST does strictly less work.
   - BlackSheep uses its documented msgspec JSON hook (its fastest configuration).
   - Tweak freely: pin versions in the dependencies block above, change N_MEASURE,
     add a framework, add a scenario.
@@ -408,38 +420,38 @@ def build_jero():
     return App()
 
 
-# ------------------------------------------------------------------- starlette
-def build_starlette():
-    from starlette.applications import Starlette
-    from starlette.responses import JSONResponse
-    from starlette.routing import Route
+# -------------------------------------------------------------------- litestar
+def build_litestar():
+    from dataclasses import dataclass
 
-    async def ping(request):
-        return JSONResponse({"ok": True})
+    from litestar import Litestar, get, post
 
-    async def get_item(request):
-        item_id = request.path_params["item_id"]
-        limit = int(request.query_params.get("limit", "20"))
-        return JSONResponse({"id": item_id, "name": "gizmo", "priceCents": limit, "tags": ["a"]})
+    @dataclass
+    class ItemIn:
+        name: str
+        price_cents: int
+        tags: list[str]
 
-    async def create_item(request):
-        data = await request.json()  # no validation: Starlette has none built in
-        return JSONResponse(
-            {
-                "id": "new",
-                "name": data["name"],
-                "priceCents": data["priceCents"],
-                "tags": data["tags"],
-            }
-        )
+    @dataclass
+    class Item:
+        id: str
+        name: str
+        price_cents: int
+        tags: list[str]
 
-    return Starlette(
-        routes=[
-            Route("/ping", ping),
-            Route("/items/{item_id}", get_item),
-            Route("/items", create_item, methods=["POST"]),
-        ]
-    )
+    @get("/ping")
+    async def ping() -> dict:
+        return {"ok": True}
+
+    @get("/items/{item_id:str}")
+    async def get_item(item_id: str, limit: int = 20) -> Item:
+        return Item(id=item_id, name="gizmo", price_cents=limit, tags=["a"])
+
+    @post("/items")
+    async def create_item(data: ItemIn) -> Item:
+        return Item(id="new", name=data.name, price_cents=data.price_cents, tags=data.tags)
+
+    return Litestar(route_handlers=[ping, get_item, create_item])
 
 
 # ------------------------------------------------------------------ blacksheep
@@ -526,7 +538,7 @@ async def main() -> None:
     candidates = [
         ("raw (msgspec)", build_raw, False, POST_BODY_CAMEL),
         ("jero", build_jero, True, POST_BODY_CAMEL),
-        ("Starlette", build_starlette, True, POST_BODY_CAMEL),
+        ("Litestar", build_litestar, True, POST_BODY_SNAKE),
         ("BlackSheep", build_blacksheep, True, POST_BODY_SNAKE),
         ("FastAPI", build_fastapi, True, POST_BODY_SNAKE),
     ]
@@ -553,13 +565,14 @@ async def main() -> None:
     def compact(rps: float) -> str:
         return f"{rps / 1e6:.2f}M" if rps >= 1e6 else f"{rps / 1e3:.0f}k"
 
-    # Multipliers are per-request cost relative to jero (or, if jero was removed from
-    # the run, relative to the first app benchmarked).
+    # Multipliers are throughput relative to jero (or, if jero was removed from
+    # the run, relative to the first app benchmarked) — jero = 1.00×, like the
+    # `vs jero` column in the tables above.
     base = results.get("jero") or next(iter(results.values()))
     table = Table(
         title="Framework overhead per request",
         caption=(
-            f"req/s · µs per request · cost relative to jero (lower is cheaper)\n"
+            f"req/s · µs per request · throughput vs jero (higher is faster)\n"
             f"{N_MEASURE:,} requests per cell, best of {BEST_OF}, "
             f"in-process — no server, no sockets"
         ),
@@ -572,13 +585,18 @@ async def main() -> None:
     table.add_column("framework", style="cyan", no_wrap=True)
     for scenario, _, _ in SCENARIOS:
         table.add_column(scenario, justify="right", no_wrap=True)
-    for name, cells in results.items():
+    # Rows ordered by req/s, fastest → slowest, like the tables above.
+    for name, cells in sorted(
+        results.items(),
+        key=lambda item: sum(N_MEASURE / elapsed for elapsed in item[1].values()),
+        reverse=True,
+    ):
         row = ["[bold white]jero[/]" if name == "jero" else name]
         for scenario, _, _ in SCENARIOS:
             elapsed = cells[scenario]
             us = elapsed / N_MEASURE * 1e6
-            mult = elapsed / base[scenario]
-            figures = f"{compact(N_MEASURE / elapsed):>5}  {us:>5.1f}µs  {mult:>5.1f}×"
+            mult = base[scenario] / elapsed
+            figures = f"{compact(N_MEASURE / elapsed):>5}  {us:>5.1f}µs  {mult:>5.2f}×"
             row.append(f"[bold]{figures}[/]" if name == "jero" else figures)
         table.add_row(*row)
     # A fixed width keeps the table identical in any terminal (or piped to a file).

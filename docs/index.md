@@ -17,8 +17,9 @@ uv add jero
 
 jero is an AI-powered ([a note on AI usage](note-on-ai-usage.md)), [msgspec](https://msgspec.dev/)-first [ASGI](https://asgi.readthedocs.io/en/latest/) framework where your type hints are the API contract.
 Routing, binding, validation, serialization, auth checks, and [OpenAPI
-generation](guide/openapi.md) all derive from statically declared types, while the
-request path stays close to raw msgspec performance: route lookup → decode → call → encode.
+generation](guide/openapi.md) all derive from statically declared types — introspected
+once, at startup — so the request path stays minimal: dict lookup → msgspec decode →
+handler call → encode.
 
 There are no route decorators and no dependency-injection container. Routes are plain
 classes (`Resource` for REST collections, `Endpoint` for one-off routes); the method
