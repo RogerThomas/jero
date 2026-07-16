@@ -448,8 +448,9 @@ def _define_httperror(**options: object) -> str:
             {"type": "x", "title": "t", "status": 400, "extra": 1},
             "unexpected HTTPError class option",
         ),
-        ({"type": 1, "title": "t", "status": 400}, "kebab-case"),
-        ({"type": "Not-Kebab", "title": "t", "status": 400}, "kebab-case"),
+        ({"type": 1, "title": "t", "status": 400}, "type must be a non-blank string"),
+        ({"type": "", "title": "t", "status": 400}, "type must be a non-blank string"),
+        ({"type": " \n ", "title": "t", "status": 400}, "type must be a non-blank string"),
         ({"type": "x", "title": "", "status": 400}, "title must be a non-empty"),
         ({"type": "x", "title": "t", "status": 200}, "from 400 through 599"),
         ({"type": "x", "title": "t", "status": True}, "from 400 through 599"),
@@ -460,6 +461,12 @@ def test_httperror_subclass_validation(options: dict[str, object], match: str) -
     """Each malformed set of class options fails at subclass definition."""
     with pytest.raises(TypeError, match=match):
         _define_httperror(**options)
+
+
+@pytest.mark.parametrize("error_type", ["PascalCase", "https://example.com/errors/thing"])
+def test_httperror_type_format_is_unconstrained(error_type: str) -> None:
+    """``type`` accepts any non-empty string — jero's kebab-case is a convention, not a rule."""
+    assert _define_httperror(type=error_type, title="t", status=400) == "Bad"
 
 
 def _instantiate(factory: Callable[..., object], *args: object) -> str:

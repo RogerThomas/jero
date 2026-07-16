@@ -1,11 +1,12 @@
 """Typed Problem Details errors.
 
-jero intentionally uses a short machine-readable code for ``type`` rather than the
-RFC 9457 URI.  Static error metadata lives on the exception class; parameterized
-errors additionally carry a typed Struct whose values render the human-only detail.
+jero's built-in errors use a short kebab-case code for ``type`` rather than the
+RFC 9457 URI — a convention, not a rule: your own errors may use any non-empty
+string (a code in your house style, or a full URI). Static error metadata lives on
+the exception class; parameterized errors additionally carry a typed Struct whose
+values render the human-only detail.
 """
 
-import re
 from abc import ABC, abstractmethod
 from string import Formatter
 from types import get_original_bases
@@ -82,10 +83,8 @@ class HTTPError(Exception):
         if options:
             names = ", ".join(sorted(options))
             raise TypeError(f"unexpected HTTPError class option(s): {names}")
-        if not isinstance(error_type, str):
-            raise TypeError("HTTPError type must be a non-empty lowercase kebab-case string")
-        if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", error_type) is None:
-            raise TypeError("HTTPError type must be a non-empty lowercase kebab-case string")
+        if not isinstance(error_type, str) or not error_type.strip():
+            raise TypeError("HTTPError type must be a non-blank string")
         if not isinstance(title, str) or not title:
             raise TypeError("HTTPError title must be a non-empty string")
         if not isinstance(status, int) or isinstance(status, bool) or not 400 <= status <= 599:

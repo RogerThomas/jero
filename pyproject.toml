@@ -21,6 +21,10 @@ classifiers = [
 ]
 dependencies = ["msgspec>=0.21.1", "multipart>=1.0"]
 
+[project.optional-dependencies]
+# `uv add "jero[granian]"` — jero plus the recommended ASGI server in one step.
+granian = ["granian>=2.7"]
+
 [project.urls]
 Homepage = "https://RogerThomas.github.io/jero/"
 Repository = "https://github.com/RogerThomas/jero"
@@ -168,6 +172,10 @@ unused-type-ignore-comment = "ignore"
 # The demo app is dev/docs-only example code (not shipped) and uses dev dependencies
 # like niquests, so it isn't scanned for the package's dependency contract.
 extend_exclude = ['scratch_pad\.py', 'tmp\.py', 'demo_app/']
+
+[tool.deptry.per_rule_ignores]
+# granian is the server extra (`jero[granian]`): a CLI users run, never an import.
+DEP002 = ["granian"]
 
 [tool.pylint.main]
 # Throwaway sketches kept for reuse; don't lint them.

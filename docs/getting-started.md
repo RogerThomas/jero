@@ -9,10 +9,10 @@ uv add jero
 ```
 
 You'll also want an ASGI server to run it. [granian](https://github.com/emmett-framework/granian)
-is a good default:
+is a good default, and the `granian` extra installs both in one step:
 
 ```bash
-uv add granian
+uv add "jero[granian]"
 ```
 
 ## Python version
