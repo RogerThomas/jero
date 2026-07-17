@@ -145,7 +145,7 @@ class Echo(Struct):
     cookie_count: int
 
 
-class HeadersEndpoint(Endpoint, path="/echo"):
+class EchoEndpoint(Endpoint, path="/echo"):
     async def get(self, raw_headers: RawHeaders) -> Echo:    # GET /echo
         trace_id = raw_headers["X-Trace-Id"]         # case-insensitive lookup
         cookies = raw_headers.getlist("Cookie")      # repeats preserved
@@ -154,7 +154,7 @@ class HeadersEndpoint(Endpoint, path="/echo"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_endpoint(HeadersEndpoint())
+        self.include_endpoint(EchoEndpoint())
 
 
 app = App()

@@ -42,14 +42,14 @@ class WidgetPath(Struct):
     widget_id: str
 
 
-class Widgets(Resource, path="/widgets"):
+class WidgetResource(Resource, path="/widgets"):
     async def read_one(self, path: WidgetPath) -> Widget:  # GET /widgets/{widget_id}
         return Widget(id=path.widget_id, name="gizmo")
 
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_resource(Widgets())
+        self.include_resource(WidgetResource())
 
 
 app = App()

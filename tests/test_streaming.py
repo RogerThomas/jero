@@ -56,6 +56,30 @@ class NDJSONEndpoint(Endpoint, path="/stream"):
         return NDJSONStreamingResponse(stream=self._items())
 
 
+class TextChunk(Struct, tag=True):
+    """A streamed text piece (one member of the mixed-stream union)."""
+
+    text: str
+
+
+class FooterChunk(Struct, tag=True):
+    """A stream's trailing summary (the other member of the mixed-stream union)."""
+
+    total: int
+
+
+class MixedNDJSONEndpoint(Endpoint, path="/stream"):
+    """Endpoint streaming a tagged union of item types as NDJSON."""
+
+    async def _chunks(self) -> AsyncIterator[TextChunk | FooterChunk]:
+        yield TextChunk(text="text")
+        yield FooterChunk(total=1)
+
+    async def get(self) -> NDJSONStreamingResponse[TextChunk | FooterChunk]:
+        """Return an NDJSON stream of mixed chunk types."""
+        return NDJSONStreamingResponse(stream=self._chunks())
+
+
 class BytesEndpoint(Endpoint, path="/stream"):
     """Endpoint streaming raw byte chunks with a custom content type."""
 
@@ -254,6 +278,15 @@ def test_finite_ndjson_stream() -> None:
     """A finite NDJSON stream yields each item as a decoded object."""
     with TestClient(_EndpointApp(NDJSONEndpoint())) as client:
         assert list(client.stream_get("/stream")) == [{"name": "one"}, {"name": "two"}]
+
+
+def test_union_ndjson_stream() -> None:
+    """A tagged-union NDJSON stream yields each member with its discriminator tag."""
+    with TestClient(_EndpointApp(MixedNDJSONEndpoint())) as client:
+        assert list(client.stream_get("/stream")) == [
+            {"type": "TextChunk", "text": "text"},
+            {"type": "FooterChunk", "total": 1},
+        ]
 
 
 def test_bytes_stream() -> None:
