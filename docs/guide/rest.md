@@ -110,6 +110,197 @@ An optional `docs="https://..."` class option adds documentation for either erro
 Any other uncaught exception becomes the static `internal-server-error` problem; server
 internals never leak to the client.
 
+## Bring your own error body
+
+Problem Details is the blessed default, not a requirement: starting an API from
+scratch, use the [`HTTPError` family](#problem-details-errors) above. `StructHTTPError`
+is the channel for backporting jero onto an **existing** error standard — when your
+wire format is already decided, subclass it with your own body Struct. The class options
+declare how **every** field of the body gets its value — pinned constants, templates
+rendered from raise-time params, the class's status — and whatever is left over is a
+raise-time parameter. Decorate with `@dataclass` and declare those params as fields:
+the generated `__init__` gives you a statically-typed raise site.
+
+```python
+from dataclasses import dataclass
+
+from msgspec import Struct
+
+from jero import BaseApp, Endpoint, StructHTTPError
+
+
+class HouseBody(Struct, rename="camel"):
+    error_code: str
+    error_message: str
+    status_code: int
+
+
+@dataclass
+class DocumentTooLargeError(
+    StructHTTPError[HouseBody],
+    status=413,
+    description="Document too large",              # the OpenAPI response description
+    consts={"error_code": "abcd"},                 # pinned: wire value + schema const
+    templates={"error_message": "Document is {size} bytes; the limit is 50MB"},
+    status_field="status_code",                    # fed the class's status
+):
+    size: int                                      # the raise-time param, typed
+
+
+class Accepted(Struct):
+    size: int
+
+
+class DocumentsEndpoint(Endpoint, path="/documents"):
+    async def post(self, content: bytes) -> Accepted:
+        if len(content) > 50_000_000:
+            raise DocumentTooLargeError(size=len(content))
+        return Accepted(size=len(content))
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        self.include_endpoint(DocumentsEndpoint())
+
+
+app = App()
+```
+
+```json
+{"errorCode": "abcd", "errorMessage": "Document is 50000001 bytes; the limit is 50MB", "statusCode": 413}
+```
+
+Total coverage is enforced loud at class definition: every body field must be fed by
+exactly one source (a const, a template, the status, or a same-named param) — an
+unknown field name, a field fed twice, a template on a non-`str` field, or a status
+field that isn't an `int` all fail before the app can start. The wire representation is
+composed fresh at encode time from a model built once at class creation; nothing you
+pass is ever mutated, and the pinned values appear in the OpenAPI schema as enum
+consts, so the spec documents exactly which code (and status) each error carries.
+
+One more source covers richer house formats: **`params_field=`** — a Struct-typed
+body field the raise-time params nest into, so the response carries the rendered text
+*and* the raw values. (And a template that should ship literal braces just escapes
+them: `"{{thing}}"` — ordinary `str.format` rules.) Rendered templates plus nested
+params express the common "code + message + description + extensions" format:
+
+```python
+from dataclasses import dataclass
+
+from msgspec import Struct
+
+from jero import BaseApp, Endpoint, StructHTTPError
+
+
+class ThingExtensions(Struct, rename="camel"):
+    thing: str
+
+
+class CompanyBody(Struct, rename="camel"):
+    error_code: str
+    error_message: str
+    error_description: str
+    extensions: ThingExtensions
+
+
+@dataclass
+class ThingFailedError(
+    StructHTTPError[CompanyBody],
+    status=422,
+    description="Thing failed",
+    consts={"error_code": "abc", "error_message": "This has failed"},
+    templates={"error_description": "This {thing} has failed"},
+    params_field="extensions",
+):
+    thing: str
+
+
+class Ok(Struct):
+    ok: bool
+
+
+class ThingsEndpoint(Endpoint, path="/things"):
+    async def post(self, content: bytes) -> Ok:
+        _ = content
+        raise ThingFailedError(thing="my-thing")
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        self.include_endpoint(ThingsEndpoint())
+
+
+app = App()
+```
+
+```json
+{"errorCode": "abc", "errorMessage": "This has failed",
+ "errorDescription": "This my-thing has failed", "extensions": {"thing": "my-thing"}}
+```
+
+The description renders server-side from the params, and the same params ship raw in
+`extensions` for clients that want the structured values. For a shared shape across
+errors, make the base generic over its varying part
+(`class CompanyBody[E: Struct](Struct): ... extensions: E`) and pin `E` per error body.
+
+Catch scope: `except HTTPError` catches only the Problem family; `except BaseHTTPError`
+means "any jero error", both families.
+
+## House-wide error format
+
+`StructHTTPError` covers errors *you* raise. The framework's own errors — 404 route
+misses, 422 validation failures, the unexpected-exception 500 — are Problem-family. To
+render those in your house shape too, register an `ErrorBodyAdapter`: the app-wide
+renderer for the Problem family.
+
+```python
+from msgspec import Struct
+
+from jero import BaseApp, Endpoint, ErrorBodyAdapter, HTTPError
+
+
+class HouseBody(Struct, rename="camel"):
+    error_code: str
+    error_message: str
+
+
+class HouseErrorAdapter(ErrorBodyAdapter[HouseBody]):
+    status_field = "status_code"
+
+    def compose(self, error: HTTPError) -> HouseBody:
+        return HouseBody(error_code=error.type, error_message=str(error))
+
+
+class Health(Struct):
+    status: str
+
+
+class HealthEndpoint(Endpoint, path="/healthz"):
+    async def get(self) -> Health:
+        return Health(status="ok")
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        self.include_error_adapter(HouseErrorAdapter())
+        self.include_endpoint(HealthEndpoint())
+
+
+app = App()
+```
+
+Now `GET /nope` returns
+`{"errorCode": "not-found", "errorMessage": "Not found", "statusCode": 404}` — and the
+same for every Problem-family error, including ones your
+[exception handlers](#custom-exception-handlers) translate into. `str(error)` is the
+uniform human message (the `title`, or the rendered `detail` for parameterized errors);
+`error.type` is the stable machine code to map into your own vocabulary.
+`StructHTTPError`s render themselves, so each error has exactly one renderer. Keep
+`compose` pure — it receives only the error; request-correlated data belongs in
+exception handlers. An adapter failure is contained: logged, with the Problem body sent
+instead. At most one adapter per app, and the derived OpenAPI error responses
+[follow it](openapi.md#documenting-errors).
+
 ## Custom exception handlers
 
 An exception handler is any hand-wired object with one typed `handle_exception` method.

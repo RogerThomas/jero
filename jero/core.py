@@ -110,6 +110,8 @@ from jero.background import BackgroundTasks
 from jero.codecs import msgspec_encoder
 from jero.errors import (
     AuthenticationRequiredError,
+    BaseHTTPError,
+    ErrorBodyAdapter,
     HTTPError,
     InternalServerError,
     MalformedRequestError,
@@ -1528,6 +1530,26 @@ class _ExceptionHandlers:
         self._handlers: dict[type[Exception], CompiledExceptionHandler] = {}
         self._resolved: dict[type[Exception], CompiledExceptionHandler | None] = {}
         self._reverser = reverser
+        # The app-wide renderer for the Problem family (see include_error_adapter);
+        # None means the family renders its own Problem body.
+        self.adapter: ErrorBodyAdapter[Any] | None = None
+
+    def encode_error(self, error: BaseHTTPError) -> bytes:
+        """Encode an error's wire body: the adapter's composition for the Problem family
+        when one is registered, else the error's own ``response_body``. An adapter failure
+        is contained — logged, with the Problem body sent instead — so a rendering bug
+        can't take down error handling itself."""
+        if self.adapter is not None and isinstance(error, HTTPError):
+            try:
+                return msgspec_encoder.encode(self.adapter.compose_wire(error))
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.error(
+                    "error body adapter %s failed composing %s; sending the Problem body",
+                    type(self.adapter).__name__,
+                    type(error).__name__,
+                    exc_info=True,
+                )
+        return msgspec_encoder.encode(error.response_body)
 
     def _resolve(self, exception_type: type[Exception]) -> CompiledExceptionHandler | None:
         if exception_type in self._resolved:
@@ -1568,9 +1590,9 @@ class _ExceptionHandlers:
     def _log_unexpected(scope: Scope, exception: BaseException) -> None:
         # An unexpected error is swallowed to a clean 500 (its internals never reach the
         # client), so this is the only place operators can see it — log the traceback or
-        # it's lost. A deliberately raised HTTPError is expected control flow, never an
+        # it's lost. A deliberately raised jero error is expected control flow, never an
         # operator concern, so it is skipped: this stays safe to call with any exception.
-        if isinstance(exception, HTTPError):
+        if isinstance(exception, BaseHTTPError):
             return
         logger.error(
             "unhandled error handling %s %s",
@@ -1580,12 +1602,12 @@ class _ExceptionHandlers:
         )
 
     async def _send_default(self, scope: Scope, send: Send, exception: Exception) -> None:
-        if isinstance(exception, HTTPError):
-            await _send_json(send, exception.status, msgspec_encoder.encode(exception.problem))
+        if isinstance(exception, BaseHTTPError):
+            await _send_json(send, exception.status, self.encode_error(exception))
             return
         self._log_unexpected(scope, exception)
         error = InternalServerError()
-        await _send_json(send, error.status, msgspec_encoder.encode(error.problem))
+        await _send_json(send, error.status, self.encode_error(error))
 
     def register(self, handler: object) -> None:
         """Register one compiled handler per exact exception type."""
@@ -1633,7 +1655,7 @@ class _ExceptionHandlers:
         if result is None:
             await self._send_default(scope, send, exception)
             return
-        if isinstance(result, HTTPError):
+        if isinstance(result, BaseHTTPError):
             await self._send_default(scope, send, result)
             return
         if not isinstance(result, ExceptionResponse):
@@ -2388,6 +2410,28 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         """
         self._exceptions.register(handler)
 
+    def include_error_adapter(self, adapter: ErrorBodyAdapter[Any]) -> None:
+        """Replace the Problem family's wire body app-wide with ``adapter``'s composition.
+
+        Call inside ``wire``, at most once. Every Problem-family error — the framework's
+        built-ins (404/405/422/500, …) and your own ``HTTPError`` subclasses, including
+        those returned by exception handlers — is rendered through ``adapter.compose``
+        instead of RFC 9457 Problem Details, and the derived OpenAPI error responses
+        document the adapter's body. ``StructHTTPError``\\ s render themselves.
+        """
+        # The isinstance guards untyped callers; cast first so it isn't statically vacuous.
+        if not isinstance(cast("object", adapter), ErrorBodyAdapter):
+            raise WiringError(
+                "include_error_adapter requires an ErrorBodyAdapter instance, "
+                f"got {type(adapter).__name__}",
+            )
+        if self._exceptions.adapter is not None:
+            existing = type(self._exceptions.adapter).__name__
+            raise WiringError(
+                f"an error body adapter ({existing}) is already registered; an app has at most one",
+            )
+        self._exceptions.adapter = adapter
+
     def include_resource[THeaders: Struct, TUser: Struct](
         self,
         resource: Resource,
@@ -2474,7 +2518,9 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
 
     def _build_openapi_document(self, config: _OpenAPIConfig) -> bytes:
         """Translate the captured operations into the OpenAPI document, encoded as JSON."""
-        operations = tuple(operation_input(spec) for spec in self._operations)
+        operations = tuple(
+            operation_input(spec, self._exceptions.adapter) for spec in self._operations
+        )
         schemes: dict[str, SecurityScheme] = {}
         for spec in self._operations:
             scheme = spec.security_scheme
@@ -2631,7 +2677,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         error: HTTPError
         if allow is None:
             error = NotFoundError()
-            await _send_json(send, error.status, msgspec_encoder.encode(error.problem))
+            await _send_json(send, error.status, self._exceptions.encode_error(error))
         elif method == "OPTIONS":
             await send(
                 {"type": "http.response.start", "status": 204, "headers": [(b"allow", allow)]}
@@ -2642,6 +2688,6 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
             await _send_json(
                 send,
                 error.status,
-                msgspec_encoder.encode(error.problem),
+                self._exceptions.encode_error(error),
                 [(b"allow", allow)],
             )

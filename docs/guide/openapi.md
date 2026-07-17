@@ -221,6 +221,60 @@ app = App()
 Responses cascade by status: derived → class-level `meta.responses` → per-operation
 `meta_<op>.responses`, with the most specific winning.
 
+### Documenting errors
+
+A `ResponseSpec` is a hand-written entry. For errors you already have *classes* for,
+declare the classes instead — `exceptions` derives the whole response entry from the
+error itself, so nothing is duplicated as strings:
+
+```python
+from msgspec import Struct
+
+from jero import BaseApp, Endpoint, HTTPError, OperationMeta
+
+
+class Widget(Struct):
+    id: str
+
+
+class WidgetGoneError(HTTPError, type="widget-gone", title="Widget gone", status=410): ...
+
+
+class WidgetsEndpoint(
+    Endpoint,
+    path="/widgets",
+    meta_get=OperationMeta(exceptions=[WidgetGoneError]),
+):
+    async def get(self) -> list[Widget]:
+        return [Widget(id="widget-id")]
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        self.include_endpoint(WidgetsEndpoint())
+        self.include_openapi(title="Widgets API", version="1.0.0")
+
+
+app = App()
+```
+
+Everything derives from the class: the **status** (410), the **description** (the
+Problem family's `title`; a `StructHTTPError`'s `description`), and the **body schema**
+— the real per-class problem shape with `type` and `status` as consts, so the spec
+finally says *which* codes an operation emits (clients dispatch on `type`), plus the
+`params` schema for parameterized errors. A `StructHTTPError` documents its composed
+wire model — its `consts` and status appear as enum consts —
+and with an [error body adapter](rest.md#house-wide-error-format) registered, the
+Problem family — derived responses included — documents the adapter's body instead.
+
+`exceptions` also lives on `EndpointMeta` / `ResourceMeta`; the class-level entries
+*extend* the operation's (both remain raiseable), unlike `responses` where the specific
+level overrides. Several declared errors sharing a status merge into one entry with a
+`oneOf` of their bodies. Precedence per status: derived responses < declared
+`exceptions` < explicit `responses` — a `ResponseSpec` always has the last word.
+Entries are validated at wiring: anything that isn't a concrete jero error class is a
+startup `WiringError`.
+
 **Tags** are the groups an operation belongs to. A `meta` tag entry is either a bare
 `str` (the tag name — this is the OpenAPI operation-tag shape) or a `Tag` to define that
 name *with a description* inline. They cascade by *container type*: a class-level `meta`

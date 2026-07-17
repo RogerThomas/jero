@@ -15,6 +15,7 @@ from typing import Literal, get_args, get_origin
 from msgspec import Struct
 from msgspec.json import Decoder
 
+from jero.errors import BaseHTTPError
 from jero.openapi import ResponseSpec, SecurityScheme, Tag
 
 # How a handler's return value is encoded onto the wire; see _return_kind / _result_sender.
@@ -63,11 +64,14 @@ class EndpointMeta(Struct):
     that name, else stands alone) or a ``Tag`` to define the name *with* a description
     inline (hoisted to the document's tag list). ``responses`` declares extra/override
     responses applied to every operation (a blanket ``401``, say); a per-operation
-    ``OperationMeta`` overrides it.
+    ``OperationMeta`` overrides it. ``exceptions`` declares jero error classes every
+    operation can raise — their status, body schema, and description derive from the
+    class; a per-operation ``OperationMeta`` *extends* it (both remain raiseable).
     """
 
     tags: Sequence[str | Tag] = ()
     responses: Sequence[ResponseSpec] = ()
+    exceptions: Sequence[type[BaseHTTPError]] = ()
 
 
 class ResourceMeta(Struct):
@@ -76,11 +80,14 @@ class ResourceMeta(Struct):
     ``tags`` are the groups every operation belongs to — a bare ``str`` name or a ``Tag``
     that defines it with a description (see :class:`EndpointMeta`). ``responses`` declares
     extra/override responses applied to every operation (a blanket ``401``, say); a
-    per-operation ``OperationMeta`` overrides it.
+    per-operation ``OperationMeta`` overrides it. ``exceptions`` declares jero error
+    classes every operation can raise — derived entirely from the class; a
+    per-operation ``OperationMeta`` *extends* it (both remain raiseable).
     """
 
     tags: Sequence[str | Tag] = ()
     responses: Sequence[ResponseSpec] = ()
+    exceptions: Sequence[type[BaseHTTPError]] = ()
 
 
 class OperationMeta(Struct):
@@ -90,6 +97,10 @@ class OperationMeta(Struct):
     be unique, so they can't sensibly cascade to every operation. ``summary`` /
     ``description`` are the operation's prose (explicit — docstrings are never published).
     ``responses`` declares extra responses or overrides a derived one by reusing its status.
+    ``exceptions`` declares jero error classes this operation can raise — status, body
+    schema, and description all derive from the class; entries *extend* the class-level
+    ``meta``'s (both remain raiseable), several sharing a status document as a ``oneOf``,
+    and an explicit ``responses`` entry for the same status wins.
 
     ``tags`` (bare ``str`` names or describing ``Tag``\\ s) cascade from the class-level
     ``meta`` by the *container type*: a ``list`` extends the class tags
@@ -103,6 +114,7 @@ class OperationMeta(Struct):
     summary: str | None = None
     description: str | None = None
     responses: Sequence[ResponseSpec] = ()
+    exceptions: Sequence[type[BaseHTTPError]] = ()
 
 
 class FormField(Struct, frozen=True):

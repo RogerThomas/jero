@@ -145,9 +145,27 @@ These pull against each other constantly; keep all three in mind on every change
   `@dataclass` (like the streaming ones), generic over body `T` and headers `H` so
   both schemas survive to the OpenAPI spec — a bare `JSONResponse` (no `[T]`) is a
   pyright-strict error on purpose.
-- **Errors**: API errors use jero's typed Problem Details format. The built-ins use a
-  short kebab-case machine code for `type` rather than the RFC 9457 URI — a convention,
-  not a rule: any non-blank string is accepted (a URI works too). Define a
+- **Errors**: `BaseHTTPError` is the abstract root — the HTTP contract (class-level
+  `status`, validated 400–599 at class creation) without a wire body; `except
+  BaseHTTPError` means "any jero error". Two families sit on it. The **Problem family**
+  (`HTTPError` and friends) renders typed RFC 9457 Problem Details and is the blessed
+  default. The built-ins use a short kebab-case machine code for `type` rather than the
+  RFC 9457 URI — a convention, not a rule: any non-blank string is accepted (a URI
+  works too). The **Struct family** (`StructHTTPError[B]`) is a generic engine over a
+  user body Struct: class options declare how *every* field of `B` is fed — `consts=`
+  (pinned; wire value + schema enum const), `templates=` (rendered at raise time from
+  the params; `{{brace}}` escaping ships literal braces), `status_field=` (an existing
+  int field fed the class status), `params_field=` (a Struct field the params nest
+  into) — and
+  leftovers are same-named raise-time params. Total coverage validated loud at class
+  creation; the wire model (consts narrowed to `Literal`s) is composed once there.
+  Raise sites: kwargs (runtime-checked) or the blessed `@dataclass` tier whose declared
+  fields ARE the params (generated, statically-typed `__init__`; validated on first
+  raise). Nothing user-passed is ever mutated. An
+  **`ErrorBodyAdapter[B]`** (`include_error_adapter`, at most one) replaces the Problem
+  family's rendering app-wide (house error formats) — framework built-ins and
+  handler-translated errors included; `StructHTTPError`s render themselves; an adapter
+  crash is contained (logged, Problem body sent). Define a
   static error as an `HTTPError` subclass with class-level `type` / `title` / `status`
   and optional `docs`; use `DataclassHTTPError[Params]` plus `detail_template` when an
   occurrence has runtime values. Parameterized errors always emit both human-only
@@ -268,7 +286,14 @@ These pull against each other constantly; keep all three in mind on every change
   via `jero.Struct`'s `meta=` class keyword (model description, attached through a
   `msgspec.StructMeta` subclass), field `Meta`. `SecurityScheme` / `BearerAuth` /
   `BasicAuth` for security; derived per-source error responses reference the shared
-  `Problem` schema.
+  `Problem` schema (or, with an `ErrorBodyAdapter` registered, the adapter's per-status
+  body). **Declared exceptions**: `exceptions=[ErrorClass, ...]` on
+  `OperationMeta`/`EndpointMeta`/`ResourceMeta` derives error responses entirely from
+  the error class — status, description (`title` / `description`), and body schema
+  (per-class Problem model with `type`/`status` consts + params; the Struct family's
+  wire model). Class-level entries extend the operation's; same-status entries merge as
+  a `oneOf`; precedence per status is derived < declared exceptions < explicit
+  `ResponseSpec`; non-error entries are a wiring failure.
 - **Performance (validated, 2026-07-16 run)**: fastest Python framework on all four
   scenarios (VUS=128, 1 dedicated core, granian+uvloop); Python order is jero →
   blacksheep → litestar → fastapi → flask everywhere. Authed write path

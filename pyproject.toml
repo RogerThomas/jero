@@ -170,8 +170,9 @@ unused-type-ignore-comment = "ignore"
 
 [tool.deptry]
 # The demo app is dev/docs-only example code (not shipped) and uses dev dependencies
-# like niquests, so it isn't scanned for the package's dependency contract.
-extend_exclude = ['scratch_pad\.py', 'tmp\.py', 'demo_app/']
+# like niquests, so it isn't scanned for the package's dependency contract; error.py is
+# the throwaway error-design playground (rich, self-imports jero).
+extend_exclude = ['scratch_pad\.py', 'tmp\.py', 'demo_app/', 'error\.py']
 
 [tool.deptry.per_rule_ignores]
 # granian is the server extra (`jero[granian]`): a CLI users run, never an import.

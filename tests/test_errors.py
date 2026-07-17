@@ -3,6 +3,7 @@
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from types import new_class
 from typing import cast
 
 import pytest
@@ -10,14 +11,17 @@ from msgspec import Struct
 
 from jero import (
     BaseApp,
+    BaseHTTPError,
     ConflictError,
     DataclassHTTPError,
     Endpoint,
+    ErrorBodyAdapter,
     ExceptionResponse,
     ForbiddenError,
     GoneError,
     HTTPError,
     ParameterizedHTTPError,
+    StructHTTPError,
     TestClient,
     TooManyRequestsError,
     WiringError,
@@ -618,3 +622,376 @@ def test_exception_handler_wiring_validation(handler: object, match: str) -> Non
     app = _BareApp()
     with pytest.raises(WiringError, match=match):
         app.add_exception_handler(cast(ExceptionHandler[Exception], handler))
+
+
+# --- StructHTTPError (the bring-your-own-body engine) ---
+
+
+class HouseBody(Struct, rename="camel"):
+    """A house-style error body without a status field."""
+
+    error_code: str
+    error_message: str
+
+
+class StatusHouseBody(Struct, rename="camel"):
+    """A house-style error body carrying the status."""
+
+    error_code: str
+    error_message: str
+    status_code: int
+
+
+@dataclass
+class TooBigError(
+    StructHTTPError[StatusHouseBody],
+    status=413,
+    description="Too big",
+    consts={"error_code": "too-big"},
+    templates={"error_message": "Document is {size} bytes"},
+    status_field="status_code",
+):
+    """The typed tier: the declared dataclass fields are the params."""
+
+    size: int
+
+
+class PlainHouseError(StructHTTPError[HouseBody], status=422, description="Plain"):
+    """The kwargs tier: no declarations, every body field is a raise-time param."""
+
+
+class NestedExtensions(Struct, rename="camel"):
+    """Params nested into the body's extensions field."""
+
+    thing: str
+
+
+class CompanyBody(Struct, rename="camel"):
+    """A company shape: const code, rendered description, nested extensions."""
+
+    error_code: str
+    error_description: str
+    extensions: NestedExtensions
+
+
+@dataclass
+class ThingFailedError(
+    StructHTTPError[CompanyBody],
+    status=422,
+    description="Thing failed",
+    consts={"error_code": "thing-failed"},
+    templates={"error_description": "This {thing} has failed"},
+    params_field="extensions",
+):
+    """Rendered description; the raw params also nest into extensions."""
+
+    thing: str
+
+
+@dataclass
+class DriftedError(
+    StructHTTPError[HouseBody],
+    status=422,
+    description="Drifted",
+    consts={"error_code": "drifted"},
+):
+    """Its dataclass fields drifted from its params (error_message is required)."""
+
+    wrong_name: str
+
+
+class StructRaisingEndpoint(Endpoint, path="/struct-error"):
+    """Raises one of the Struct-family errors, selected by query param."""
+
+    async def get(self, params: ErrorParams) -> Result:
+        """Raise the selected Struct-family error."""
+        if params.mode == "with-status":
+            raise TooBigError(size=51)
+        if params.mode == "company":
+            raise ThingFailedError(thing="my-thing")
+        raise PlainHouseError(error_code="error-code", error_message="error-message")
+
+
+class StructErrorsApp(BaseApp):
+    """App raising Struct-family errors."""
+
+    async def wire(self) -> None:
+        """Expose the raising endpoint."""
+        self.include_endpoint(StructRaisingEndpoint())
+
+
+def _define_struct_httperror(**options: object) -> str:
+    """Define a StructHTTPError subclass dynamically (over StatusHouseBody); its option
+    validation may raise. ``types.new_class`` rather than ``type()``: the parameterized
+    base is a generic alias, which only the former resolves through ``__mro_entries__``."""
+    return new_class("Bad", (StructHTTPError[StatusHouseBody],), dict(options)).__name__
+
+
+@pytest.mark.parametrize(
+    ("options", "match"),
+    [
+        ({"description": "d"}, "missing required class option 'status'"),
+        ({"status": 413}, "missing required class option 'description'"),
+        ({"status": 413, "description": ""}, "description must be a non-blank string"),
+        ({"status": 200, "description": "d"}, "from 400 through 599"),
+        ({"status": True, "description": "d"}, "from 400 through 599"),
+        ({"status": 413, "description": "d", "extra": 1}, "unexpected StructHTTPError"),
+        (
+            {"status": 413, "description": "d", "consts": {"nope": "x"}},
+            "not a field of StatusHouseBody",
+        ),
+        (
+            {
+                "status": 413,
+                "description": "d",
+                "consts": {"error_code": "x"},
+                "templates": {"error_code": "{y}"},
+            },
+            "fed by both consts and templates",
+        ),
+        (
+            {"status": 413, "description": "d", "templates": {"status_code": "{y}"}},
+            "carry text",
+        ),
+        (
+            {"status": 413, "description": "d", "templates": {"error_message": "fixed"}},
+            "references no placeholders",
+        ),
+        (
+            {"status": 413, "description": "d", "status_field": "error_code"},
+            "must be an int field",
+        ),
+        (
+            {"status": 413, "description": "d", "params_field": "error_code"},
+            "must be a Struct-typed field",
+        ),
+    ],
+)
+def test_struct_httperror_subclass_validation(options: dict[str, object], match: str) -> None:
+    """Each malformed set of class options fails at class definition."""
+    with pytest.raises(TypeError, match=match):
+        _define_struct_httperror(**options)
+
+
+def test_struct_httperror_requires_a_body_struct() -> None:
+    """Subclassing without a concrete body Struct fails at class definition."""
+    with pytest.raises(TypeError, match="requires a concrete body Struct"):
+        new_class("Bad", (StructHTTPError,), {"status": 413, "description": "d"})
+
+
+def test_struct_httperror_composes_consts_templates_and_status() -> None:
+    """The typed tier renders templates and pins consts and the status in the body."""
+    with TestClient(StructErrorsApp()) as client:
+        resp = client.get("/struct-error", params={"mode": "with-status"})
+    assert resp.status_code == 413
+    assert resp.json() == {
+        "errorCode": "too-big",
+        "errorMessage": "Document is 51 bytes",
+        "statusCode": 413,
+    }
+
+
+def test_struct_httperror_kwargs_tier_wire_body() -> None:
+    """With no declarations, every body field is a same-named raise-time param."""
+    with TestClient(StructErrorsApp()) as client:
+        resp = client.get("/struct-error", params={"mode": "plain"})
+    assert resp.status_code == 422
+    assert resp.json() == {"errorCode": "error-code", "errorMessage": "error-message"}
+
+
+def test_struct_httperror_renders_description_and_nests_params() -> None:
+    """The description renders from the params, which also nest into extensions."""
+    with TestClient(StructErrorsApp()) as client:
+        resp = client.get("/struct-error", params={"mode": "company"})
+    assert resp.status_code == 422
+    assert resp.json() == {
+        "errorCode": "thing-failed",
+        "errorDescription": "This my-thing has failed",
+        "extensions": {"thing": "my-thing"},
+    }
+
+
+def test_struct_httperror_rejects_bad_raise_time_params() -> None:
+    """The kwargs tier validates the flat param namespace at raise time."""
+    with pytest.raises(TypeError, match="missing: error_message"):
+        _instantiate(lambda: PlainHouseError(error_code="error-code"))
+    with pytest.raises(TypeError, match="unexpected: nope"):
+        _instantiate(lambda: PlainHouseError(error_code="c", error_message="m", nope="x"))
+
+
+def test_struct_httperror_dataclass_fields_must_match_params() -> None:
+    """A typed-tier subclass whose fields drifted from its params fails on first raise."""
+    with pytest.raises(TypeError, match="dataclass fields must match"):
+        _instantiate(DriftedError, "x")
+
+
+def test_struct_httperror_body_is_the_typed_struct() -> None:
+    """``.body`` composes the occurrence as the declared body type, fully populated."""
+    error = TooBigError(size=51)
+    assert error.body == StatusHouseBody(
+        error_code="too-big", error_message="Document is 51 bytes", status_code=413
+    )
+
+
+def test_base_httperror_catches_both_families() -> None:
+    """BaseHTTPError means "any jero error"; HTTPError only the Problem family."""
+    struct_error = PlainHouseError(error_code="c", error_message="m")
+    assert isinstance(struct_error, BaseHTTPError)
+    assert not isinstance(struct_error, HTTPError)
+    assert isinstance(GoneError(), BaseHTTPError)
+
+
+# --- ErrorBodyAdapter (app-wide house rendering of the Problem family) ---
+
+
+class HouseAdapter(ErrorBodyAdapter[HouseBody]):
+    """Renders any Problem-family error in the house shape, status in body."""
+
+    status_field = "status_code"
+
+    def compose(self, error: HTTPError) -> HouseBody:
+        return HouseBody(error_code=error.type, error_message=str(error))
+
+
+class CrashingAdapter(ErrorBodyAdapter[HouseBody]):
+    """An adapter whose compose always fails, to exercise the containment path."""
+
+    def compose(self, error: HTTPError) -> HouseBody:
+        raise RuntimeError("adapter boom")
+
+
+class UpstreamUnavailableError(
+    HTTPError,
+    type="upstream-unavailable",
+    title="Upstream unavailable",
+    status=502,
+):
+    """The Problem-family error a domain handler translates into."""
+
+
+class DomainBoomError(Exception):
+    """A domain exception translated by a handler into an HTTPError."""
+
+
+class DomainErrorHandler:
+    """Translate the domain exception into the Problem family (then adapter-rendered)."""
+
+    def handle_exception(self, exception: DomainBoomError) -> UpstreamUnavailableError:
+        """Return the translated error."""
+        _ = exception
+        return UpstreamUnavailableError()
+
+
+class AdapterProbeEndpoint(Endpoint, path="/errors"):
+    """Raise a Problem-family error, a translated domain error, or an unexpected one."""
+
+    async def get(self, params: ErrorParams) -> Result:
+        """Raise the selected error, or return success for an unknown mode."""
+        if params.mode == "conflict":
+            raise ConflictError()
+        if params.mode == "translated":
+            raise DomainBoomError()
+        if params.mode == "unexpected":
+            raise RuntimeError("unexpected boom")
+        return Result(ok=True)
+
+
+class AdaptedApp(BaseApp):
+    """App with an adapter, raising endpoints, and a domain-exception handler."""
+
+    def __init__(self, adapter: ErrorBodyAdapter[HouseBody]) -> None:
+        self._adapter = adapter
+        super().__init__()
+
+    async def wire(self) -> None:
+        """Register the adapter, both raising endpoints, and the handler."""
+        self.include_error_adapter(self._adapter)
+        self.include_endpoint(AdapterProbeEndpoint())
+        self.include_endpoint(StructRaisingEndpoint())
+        self.add_exception_handler(DomainErrorHandler())
+
+
+def test_adapter_renders_framework_errors_house_shaped() -> None:
+    """Route misses and method misses render through the adapter."""
+    with TestClient(AdaptedApp(HouseAdapter())) as client:
+        missing = client.get("/nope")
+        assert missing.status_code == 404
+        assert missing.json() == {
+            "errorCode": "not-found",
+            "errorMessage": "Not found",
+            "statusCode": 404,
+        }
+        wrong_method = client.post("/struct-error")
+        assert wrong_method.status_code == 405
+        assert wrong_method.json()["errorCode"] == "method-not-allowed"
+
+
+def test_adapter_renders_raised_and_translated_errors(caplog: pytest.LogCaptureFixture) -> None:
+    """Raised HTTPErrors, handler-translated errors, and the unexpected-500 fallback all
+    render house-shaped; StructHTTPErrors keep rendering themselves."""
+    with TestClient(AdaptedApp(HouseAdapter())) as client:
+        raised = client.get("/errors", params={"mode": "conflict"})
+        assert raised.status_code == 409
+        assert raised.json()["errorCode"] == "conflict"
+
+        translated = client.get("/errors", params={"mode": "translated"})
+        assert translated.status_code == 502
+        assert translated.json()["errorCode"] == "upstream-unavailable"
+
+        with caplog.at_level(logging.ERROR):
+            crashed = client.get("/errors", params={"mode": "unexpected"})
+        assert crashed.status_code == 500
+        assert crashed.json()["errorCode"] == "internal-server-error"
+
+        own = client.get("/struct-error", params={"mode": "with-status"})
+        assert own.json() == {
+            "errorCode": "too-big",
+            "errorMessage": "Document is 51 bytes",
+            "statusCode": 413,
+        }
+
+
+def test_adapter_crash_falls_back_to_problem(caplog: pytest.LogCaptureFixture) -> None:
+    """An adapter failure is contained: logged, with the Problem body sent instead."""
+    with TestClient(AdaptedApp(CrashingAdapter())) as client, caplog.at_level(logging.ERROR):
+        resp = client.get("/nope")
+    assert resp.status_code == 404
+    assert resp.json() == {"type": "not-found", "title": "Not found", "status": 404}
+    assert any("CrashingAdapter" in record.message for record in caplog.records)
+
+
+def test_adapter_subclass_validation() -> None:
+    """Adapter declarations fail loud at class definition."""
+    with pytest.raises(TypeError, match="requires a concrete body Struct"):
+        new_class("Bad", (ErrorBodyAdapter,))
+    with pytest.raises(TypeError, match="collides with a field on HouseBody"):
+        new_class(
+            "Bad",
+            (ErrorBodyAdapter[HouseBody],),
+            exec_body=lambda ns: ns.update(status_field="error_code"),
+        )
+
+
+class TwoAdaptersApp(BaseApp):
+    """Invalid app registering a second adapter."""
+
+    async def wire(self) -> None:
+        """Register the adapter twice to trigger the duplicate check."""
+        self.include_error_adapter(HouseAdapter())
+        self.include_error_adapter(HouseAdapter())
+
+
+class NotAnAdapterApp(BaseApp):
+    """Invalid app registering something that isn't an adapter."""
+
+    async def wire(self) -> None:
+        """Register a non-adapter to trigger the type check."""
+        self.include_error_adapter(cast("ErrorBodyAdapter[HouseBody]", object()))
+
+
+def test_include_error_adapter_rejects_duplicates_and_non_adapters() -> None:
+    """Registering twice, or registering a non-adapter, is a startup failure."""
+    with pytest.raises(RuntimeError, match="already registered"):
+        TestClient(TwoAdaptersApp())
+    with pytest.raises(RuntimeError, match="requires an ErrorBodyAdapter instance"):
+        TestClient(NotAnAdapterApp())
