@@ -14,7 +14,8 @@ no extra work here.
 """
 
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from types import UnionType
+from typing import Any, Literal, cast, get_args
 
 from msgspec import Struct
 from msgspec.json import schema_components
@@ -197,13 +198,15 @@ class BodySpec:
 
 @dataclass(slots=True)
 class ResponseEntry:
-    """One documented response: a ``model`` ($ref), a ``list`` of it, a verbatim
-    ``schema``, or no content. ``headers`` expands a Struct into response headers."""
+    """One documented response: a ``model`` ($ref — or, for a union of Structs, msgspec's
+    ``anyOf`` with a ``discriminator`` when the members are tagged), a ``list`` of it, a
+    verbatim ``schema``, or no content. ``headers`` expands a Struct into response
+    headers."""
 
     status: int
     description: str
     content_type: str | None = None
-    model: type[Struct] | None = None
+    model: type[Struct] | UnionType | None = None
     is_list: bool = False
     schema: dict[str, Any] | None = None
     headers: type[Struct] | None = None
@@ -235,6 +238,17 @@ def _ref_name(ref_schema: dict[str, Any]) -> str:
     return ref_schema["$ref"].rsplit("/", 1)[-1]
 
 
+def _response_payload_types(response: ResponseEntry) -> tuple[object, ...]:
+    """The types a response contributes to the schema pass: its model, plus — when the
+    model is a union — each member. ModelMeta renames/descriptions are discovered per
+    collected type, so a member reached only through a union must be collected itself."""
+    if response.model is None:
+        return ()
+    if isinstance(response.model, UnionType):
+        return (response.model, *get_args(response.model))
+    return (response.model,)
+
+
 def _collect_types(operations: tuple[OperationInput, ...]) -> list[object]:
     """Every type referenced anywhere — param/body/response Structs and non-binary form
     field payloads (which may be ``Annotated`` scalars) — de-duplicated in first-seen order.
@@ -252,8 +266,8 @@ def _collect_types(operations: tuple[OperationInput, ...]) -> list[object]:
                 if not field.binary:
                     seen.setdefault(field.payload, None)
         for response in op.responses:
-            if response.model is not None:
-                seen.setdefault(response.model, None)
+            for payload in _response_payload_types(response):
+                seen.setdefault(payload, None)
             if response.headers is not None:
                 seen.setdefault(response.headers, None)
     return list(seen)
@@ -309,8 +323,24 @@ def _model_examples(properties: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _rewrite_discriminator(schema: dict[str, Any], renames: dict[str, str]) -> None:
+    """Rewrite a tagged-union schema's ``discriminator.mapping`` targets — they point at
+    components as bare ``#/components/schemas/…`` strings, not ``$ref`` entries."""
+    discriminator = schema.get("discriminator")
+    if not isinstance(discriminator, dict):
+        return
+    tag_map = cast("dict[str, Any]", discriminator).get("mapping")
+    if not isinstance(tag_map, dict):
+        return
+    for tag, target in cast("dict[str, str]", tag_map).items():
+        name = target.rsplit("/", 1)[-1]
+        if name in renames:
+            tag_map[tag] = f"#/components/schemas/{renames[name]}"
+
+
 def _rewrite_refs(node: object, renames: dict[str, str]) -> None:
-    """Rewrite, in place, every ``$ref`` under ``node`` whose component was renamed."""
+    """Rewrite, in place, every ``$ref`` under ``node`` whose component was renamed
+    (including the ``discriminator.mapping`` targets of a tagged-union schema)."""
     if isinstance(node, dict):
         mapping = cast("dict[str, Any]", node)
         ref = mapping.get("$ref")
@@ -318,6 +348,7 @@ def _rewrite_refs(node: object, renames: dict[str, str]) -> None:
             name = ref.rsplit("/", 1)[-1]
             if name in renames:
                 mapping["$ref"] = f"#/components/schemas/{renames[name]}"
+        _rewrite_discriminator(mapping, renames)
         for value in mapping.values():
             _rewrite_refs(value, renames)
     elif isinstance(node, list):
@@ -471,6 +502,9 @@ def _response(entry: ResponseEntry, schemas: _Schemas) -> dict[str, Any]:
         examples = None
         if entry.schema is not None:
             schema = entry.schema
+        elif isinstance(entry.model, UnionType):
+            # a union of Structs: msgspec's anyOf (+ discriminator when the members are tagged)
+            schema = schemas.schema_for(entry.model)
         elif entry.model is not None:
             schema = _array(schemas.ref(entry.model)) if entry.is_list else schemas.ref(entry.model)
             composed = schemas.model_examples(entry.model)

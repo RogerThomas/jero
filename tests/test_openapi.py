@@ -22,6 +22,7 @@ from jero import (
     FormPart,
     JSONResponse,
     ModelMeta,
+    NDJSONStreamingResponse,
     OperationMeta,
     Resource,
     ResourceMeta,
@@ -1339,3 +1340,170 @@ def test_bytes_stream_documents_octet_stream_and_headers() -> None:
         ok = client.get("/openapi.json").json()["paths"]["/bytes-stream"]["get"]["responses"]["200"]
         assert "application/octet-stream" in ok["content"]
         assert "x-rate-limit" in ok["headers"]
+
+
+# --- Union item payloads (mixed streams / union response bodies) ---
+
+
+class TextChunk(Struct, tag=True):
+    """A streamed text piece (one member of the union)."""
+
+    text: str
+
+
+class FooterChunk(Struct, tag=True):
+    """The stream's trailing summary (the other member of the union)."""
+
+    total: int
+
+
+class MixedStreamEndpoint(Endpoint, path="/mixed-stream"):
+    """NDJSON stream whose item type is a tagged union."""
+
+    async def _chunks(self) -> AsyncIterator[TextChunk | FooterChunk]:
+        yield TextChunk(text="text")
+        yield FooterChunk(total=1)
+
+    async def get(self) -> NDJSONStreamingResponse[TextChunk | FooterChunk]:
+        """Stream mixed chunks."""
+        return NDJSONStreamingResponse(stream=self._chunks())
+
+
+class MixedSSEEndpoint(Endpoint, path="/mixed-sse"):
+    """SSE stream whose data type is a tagged union."""
+
+    async def _events(self) -> AsyncIterator[TextChunk | FooterChunk]:
+        yield TextChunk(text="text")
+
+    async def get(self) -> SSEResponse[TextChunk | FooterChunk]:
+        """Stream mixed events."""
+        return SSEResponse(stream=self._events())
+
+
+class MixedJSONEndpoint(Endpoint, path="/mixed-json"):
+    """JSONResponse whose body type is a union."""
+
+    async def get(self) -> JSONResponse[TextChunk | FooterChunk]:
+        """Get one of the chunk shapes."""
+        chunk: TextChunk | FooterChunk = TextChunk(text="text")
+        return JSONResponse(json=chunk)
+
+
+class UnionPayloadApp(BaseApp):
+    """Exercises union item types across NDJSON, SSE, and JSONResponse."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(MixedStreamEndpoint())
+        self.include_endpoint(MixedSSEEndpoint())
+        self.include_endpoint(MixedJSONEndpoint())
+        self.include_openapi(title="union", version="1")
+
+
+def test_union_items_document_anyof_with_discriminator() -> None:
+    """A tagged-union item type emits anyOf of the member $refs plus a discriminator, both
+    members land in components, and the document stays valid OpenAPI 3.1."""
+    with TestClient(UnionPayloadApp()) as client:
+        document = client.get("/openapi.json").json()
+        validate(document)
+        schema = document["paths"]["/mixed-stream"]["get"]["responses"]["200"]["content"][
+            "application/x-ndjson"
+        ]["schema"]
+        assert schema["anyOf"] == [
+            {"$ref": "#/components/schemas/TextChunk"},
+            {"$ref": "#/components/schemas/FooterChunk"},
+        ]
+        assert schema["discriminator"]["propertyName"] == "type"
+        schemas = document["components"]["schemas"]
+        assert "TextChunk" in schemas
+        assert "FooterChunk" in schemas
+
+
+def test_union_payload_covers_sse_and_json_response() -> None:
+    """SSE and JSONResponse union payloads document the same anyOf schema."""
+    with TestClient(UnionPayloadApp()) as client:
+        paths = client.get("/openapi.json").json()["paths"]
+        for path, content_type in [
+            ("/mixed-sse", "text/event-stream"),
+            ("/mixed-json", "application/json"),
+        ]:
+            schema = paths[path]["get"]["responses"]["200"]["content"][content_type]["schema"]
+            assert schema["anyOf"] == [
+                {"$ref": "#/components/schemas/TextChunk"},
+                {"$ref": "#/components/schemas/FooterChunk"},
+            ]
+
+
+class RenamedChunk(JeroStruct, tag=True, meta=ModelMeta(name="PublicChunk")):
+    """A union member whose component is renamed via ModelMeta."""
+
+    text: str
+
+
+class OtherChunk(Struct, tag=True):
+    """The second member of the renamed union."""
+
+    total: int
+
+
+class RenamedUnionEndpoint(Endpoint, path="/renamed-union"):
+    """NDJSON stream whose union member carries a ModelMeta rename."""
+
+    async def _chunks(self) -> AsyncIterator[RenamedChunk | OtherChunk]:
+        yield RenamedChunk(text="text")
+
+    async def get(self) -> NDJSONStreamingResponse[RenamedChunk | OtherChunk]:
+        """Stream renamed chunks."""
+        return NDJSONStreamingResponse(stream=self._chunks())
+
+
+class RenamedUnionApp(BaseApp):
+    """App exercising a ModelMeta rename inside a union payload."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(RenamedUnionEndpoint())
+        self.include_openapi(title="renamed", version="1")
+
+
+def test_union_member_rename_rewrites_refs_and_discriminator() -> None:
+    """A ModelMeta(name=...) on a union member renames its $ref and its discriminator
+    mapping target (the mapping key stays the wire tag)."""
+    with TestClient(RenamedUnionApp()) as client:
+        document = client.get("/openapi.json").json()
+        schema = document["paths"]["/renamed-union"]["get"]["responses"]["200"]["content"][
+            "application/x-ndjson"
+        ]["schema"]
+        assert {"$ref": "#/components/schemas/PublicChunk"} in schema["anyOf"]
+        assert schema["discriminator"]["mapping"]["RenamedChunk"] == (
+            "#/components/schemas/PublicChunk"
+        )
+        schemas = document["components"]["schemas"]
+        assert "PublicChunk" in schemas
+        assert "RenamedChunk" not in schemas
+
+
+class DegradedStreamEndpoint(Endpoint, path="/degraded"):
+    """Endpoint whose return annotation is degraded at runtime by the fail-loud test."""
+
+    async def _chunks(self) -> AsyncIterator[TextChunk]:
+        yield TextChunk(text="text")
+
+    async def get(self) -> NDJSONStreamingResponse[TextChunk]:
+        """Stream chunks (the annotation is replaced before wiring)."""
+        return NDJSONStreamingResponse(stream=self._chunks())
+
+
+class DegradedApp(BaseApp):
+    """App wiring the degraded endpoint with OpenAPI enabled."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(DegradedStreamEndpoint())
+        self.include_openapi(title="degraded", version="1")
+
+
+def test_unsupported_item_type_fails_loud() -> None:
+    """An item type outside the contract is a startup failure, never a silent {} schema."""
+    # The static bound (T: Struct) makes this unwritable in source; degrade the stored
+    # annotation the way an untyped caller could, then wire.
+    DegradedStreamEndpoint.get.__annotations__["return"] = "NDJSONStreamingResponse[int]"
+    with pytest.raises(RuntimeError, match="item type must be a Struct or a union of Structs"):
+        TestClient(DegradedApp())

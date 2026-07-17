@@ -47,6 +47,7 @@ import sys
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import (
+    AsyncGenerator,
     AsyncIterable,
     AsyncIterator,
     Awaitable,
@@ -59,6 +60,7 @@ from contextlib import (
     AbstractContextManager,
     AsyncExitStack,
     ExitStack,
+    asynccontextmanager,
 )
 from dataclasses import dataclass
 from enum import Enum
@@ -70,6 +72,7 @@ from typing import (
     ClassVar,
     Literal,
     Protocol,
+    Self,
     Union,
     cast,
     get_args,
@@ -144,7 +147,7 @@ from jero.streaming import (
 )
 
 # annotationlib is 3.14+. On 3.14 inspect.signature evaluates annotations by default
-# (PEP 649), so instantiate_factory asks for the FORWARDREF format instead. Pre-3.14
+# (PEP 649), so _instantiate_factory asks for the FORWARDREF format instead. Pre-3.14
 # signature never evaluates annotations, so the format argument isn't needed there.
 if sys.version_info >= (3, 14):
     from annotationlib import Format
@@ -2153,22 +2156,40 @@ class BaseFactory(_StackScope):
     """Base for an app's factory. Subclass and add ``create_*`` methods that
     build services with ``self.enter`` / ``self.aenter``.
 
-    The app injects its exit stacks (``es`` / ``aes``); anything opened via the
-    helpers is closed when the app shuts down.
+    Under an app, the app injects its exit stacks (``es`` / ``aes``); anything
+    opened via the helpers is closed when the app shuts down. Standalone —
+    scripts, cron jobs, notebooks — enter :meth:`open` instead and the factory
+    owns the same lifecycle itself.
     """
 
     def __init__(self, es: ExitStack, aes: AsyncExitStack) -> None:
         self._stack = es
         self._astack = aes
 
+    @classmethod
+    @asynccontextmanager
+    async def open(cls) -> AsyncGenerator[Self]:
+        """Use the factory's service graph standalone, with real lifecycle::
 
-def instantiate_factory[F](factory_cls: type[F], stack: ExitStack, astack: AsyncExitStack) -> F:
+            async with Factory.open() as factory:
+                service = await factory.create_widget_service()
+
+        Creates a fresh exit-stack pair, builds the factory on them exactly as an
+        app does at startup, and unwinds on exit — async resources first, each
+        stack in reverse order, even if the block raises. (``FactoryHarness`` is
+        this, bridged onto a background loop for synchronous tests.)
+        """
+        with ExitStack() as stack:
+            async with AsyncExitStack() as astack:
+                yield _instantiate_factory(cls, stack, astack)
+
+
+def _instantiate_factory[F](factory_cls: type[F], stack: ExitStack, astack: AsyncExitStack) -> F:
     """Build a factory, injecting whichever of ``es`` / ``aes`` its __init__ names.
 
-    Shared by ``BaseApp`` (live wiring) and the test ``FactoryHarness`` so a
-    factory is constructed identically in both — given the stacks it opens
-    resources on. Package-internal (not exported) but un-underscored: it
-    deliberately crosses the core/testing module boundary.
+    Shared by ``BaseApp`` (live wiring) and ``BaseFactory.open`` (standalone use,
+    which ``FactoryHarness`` bridges for sync tests) so a factory is constructed
+    identically everywhere — given the stacks it opens resources on.
     """
     stacks = {"es": stack, "aes": astack}
     # We only need parameter names, so don't evaluate the __init__ annotations (they may
@@ -2245,7 +2266,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         factory_type = self._resolve_factory_type()
         if factory_type is None:
             return cast("FactoryT", None)
-        return cast("FactoryT", instantiate_factory(factory_type, self._stack, self._astack))
+        return cast("FactoryT", _instantiate_factory(factory_type, self._stack, self._astack))
 
     @abstractmethod
     async def wire(self) -> None:

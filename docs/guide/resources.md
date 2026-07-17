@@ -100,7 +100,52 @@ class App(BaseApp):
 app = App()
 ```
 
-Use endpoints for health checks, webhooks, and actions that aren't a resource.
+Use endpoints for health checks, webhooks, and legacy paths you must serve verbatim.
+
+## Actions on a resource
+
+An "action" (*converse* on a conversation, *submit* on an order) usually doesn't need
+an `Endpoint` — and reaching for one duplicates the resource's path template in a
+second class. Model the action's **result as a sub-resource** instead, and the action
+becomes an ordinary `create`:
+
+```python
+from msgspec import Struct
+
+from jero import BaseApp, Resource
+
+
+class MessageIn(Struct):
+    text: str
+
+
+class Message(MessageIn):
+    id: str
+
+
+class ConversationPath(Struct):
+    conversation_id: str
+
+
+# "converse" is a create on the conversation's messages
+class MessageResource(Resource, path="/conversations/{conversation_id}/messages"):
+    async def create(self, path: ConversationPath, json: MessageIn) -> Message:
+        return Message(id="message-id", text=json.text)
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        self.include_resource(MessageResource())
+
+
+app = App()
+```
+
+The noun does more than satisfy REST taste: the result gets an id and a `GET` for
+free later, the 201/`Location` semantics fit, and the OpenAPI groups it under the
+parent resource. State-transition actions (*cancel*, *archive*) often fit even more
+simply as an `update_partial` flipping a status field. Fall back to an `Endpoint`
+only when no noun works — a webhook receiver, a health probe, a legacy path.
 
 ## Declaring the path
 

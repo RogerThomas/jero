@@ -16,7 +16,7 @@ class JobConfig(Struct):
     dpi: int
 
 
-class CreateJob(Struct):
+class JobIn(Struct):
     job_type: Literal["export-text", "export-images"]   # a scalar part
     count: int                                          # a scalar part
     config: JobConfig                                   # a JSON part -> Struct
@@ -30,8 +30,8 @@ class JobAccepted(Struct):
     size: int
 
 
-class UploadEndpoint(Endpoint, path="/jobs"):
-    async def post(self, form: CreateJob) -> JobAccepted:
+class JobsEndpoint(Endpoint, path="/jobs"):
+    async def post(self, form: JobIn) -> JobAccepted:
         dpi = form.config.dpi
         upload = form.document            # a FilePart
         return JobAccepted(filename=upload.filename, size=len(upload.data))
@@ -39,7 +39,7 @@ class UploadEndpoint(Endpoint, path="/jobs"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_endpoint(UploadEndpoint())
+        self.include_endpoint(JobsEndpoint())
 
 
 app = App()

@@ -62,22 +62,25 @@ from unittest.mock import create_autospec
 
 
 def test_create_widget(mocker):
-    factory = create_autospec(Factory, spec_set=True, instance=True)
-    service = create_autospec(WidgetService, spec_set=True, instance=True)
-    factory.create_widget_service.return_value = service
-    service.create_widget.return_value = Widget(id="1", name="n")
+    factory_mock = create_autospec(Factory, spec_set=True, instance=True)
+    widget_service_mock = create_autospec(WidgetService, spec_set=True, instance=True)
+    factory_mock.create_widget_service.return_value = widget_service_mock
+    widget_service_mock.create_widget.return_value = Widget(id="1", name="n")
 
-    with TestClient(App(factory=factory)) as client:
+    with TestClient(App(factory=factory_mock)) as client:
         resp = client.post("/widgets", json={...}, headers={...})
         assert resp.status_code == 201
-    service.create_widget.assert_awaited_once()
+    widget_service_mock.create_widget.assert_awaited_once()
 ```
 
 ## `FactoryHarness`
 
 To test the *real* factory wiring that `factory=` mocks away — that each `create_*`
-builds the right service and opens/closes its resources — use `FactoryHarness`. It owns
-the exit stacks and runs the factory exactly as a live app would, with no app or routes:
+builds the right service and opens/closes its resources — use `FactoryHarness`. It is
+the **sync-test bridge** over `Factory.open()` (the
+[standalone entry point](wiring.md#standalone-use)): the same lifecycle, entered on a
+background loop so synchronous test code can drive async `create_*` methods, matching
+the sync `TestClient`. Outside tests, use `async with Factory.open()` directly.
 
 ```python
 from jero import FactoryHarness

@@ -1,10 +1,11 @@
-"""Tests for ``FactoryHarness``: building a factory in isolation, with teardown.
+"""Tests for standalone factory lifecycle: ``BaseFactory.open()`` and ``FactoryHarness``.
 
-``FactoryHarness`` exercises the *real* factory — the piece an app's ``factory=``
-seam mocks away — so these tests assert that ``create_*`` methods build their
-services and that resources opened on the exit stacks are closed on harness exit.
-The probe factories below open trackable context managers so teardown is
-observable without reaching into framework internals.
+``Factory.open()`` is the standalone entry point (async code owns the lifecycle
+directly); ``FactoryHarness`` is its sync-test bridge, exercising the *real*
+factory — the piece an app's ``factory=`` seam mocks away. These tests assert that
+``create_*`` methods build their services and that resources opened on the exit
+stacks are closed on exit. The probe factories below open trackable context
+managers so teardown is observable without reaching into framework internals.
 """
 
 from collections.abc import Generator
@@ -107,3 +108,30 @@ def test_harness_builds_upstream_response_error_handler(
     error = harness.run(handler.handle_exception(UpstreamResponseError(retryable=True)))
     assert isinstance(error, UpstreamUnavailableError)
     assert error.retry_after_seconds == 30
+
+
+@pytest.mark.asyncio
+async def test_open_builds_and_closes_standalone() -> None:
+    """Factory.open() yields a working factory; everything it opened closes on exit."""
+    async with ProbeFactory.open() as factory:
+        async_probe = await factory.create_async_probe()
+        sync_probe = factory.create_sync_probe()
+        states_inside = (async_probe.closed, sync_probe.closed)
+    assert states_inside == (False, False)
+    assert (async_probe.closed, sync_probe.closed) == (True, True)
+
+
+async def _open_probe_then_fail(probes: list[AsyncProbe]) -> None:
+    """Open a probe inside ProbeFactory.open(), then raise from inside the block."""
+    async with ProbeFactory.open() as factory:
+        probes.append(await factory.create_async_probe())
+        raise RuntimeError("boom")
+
+
+@pytest.mark.asyncio
+async def test_open_closes_resources_when_the_block_raises() -> None:
+    """Factory.open() unwinds the stacks even when the body raises."""
+    probes: list[AsyncProbe] = []
+    with pytest.raises(RuntimeError, match="boom"):
+        await _open_probe_then_fail(probes)
+    assert [probe.closed for probe in probes] == [True]

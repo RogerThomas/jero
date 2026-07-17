@@ -130,6 +130,13 @@ These pull against each other constantly; keep all three in mind on every change
   (opaque `RawHeaders` bag), `user` (auth result). Return a Struct, `list[Struct]`,
   `bytes`, or a response wrapper to control headers/status: `JSONResponse[T, H]` /
   `BytesResponse[H]` / a streaming response (`NDJSONStreamingResponse[T, H]`, …).
+  A wrapper's `T` may also be a **union of tagged Structs** (mixed streams — chunks
+  plus a footer, say): runtime encodes each member with its tag, and the OpenAPI
+  schema is msgspec's `anyOf` + `discriminator`. Tags are strictly required only when
+  the spec is built (untagged unions stream fine at runtime) but are recommended
+  regardless — the tag is the client's discriminator. Untagged multi-Struct unions
+  (once `include_openapi` is wired) and any other `T` shape fail loud at startup —
+  never a silent `{}` schema.
 - **Response headers & status**: the wrappers carry a typed `headers` Struct (the
   header *type* is a parameter `H`; field names inverse-mangle `x_trace_id` →
   `x-trace-id`, scalars stringify, Structs JSON-encode, None fields omit), a
@@ -138,8 +145,9 @@ These pull against each other constantly; keep all three in mind on every change
   `@dataclass` (like the streaming ones), generic over body `T` and headers `H` so
   both schemas survive to the OpenAPI spec — a bare `JSONResponse` (no `[T]`) is a
   pyright-strict error on purpose.
-- **Errors**: API errors use jero's typed Problem Details format. Its intentional RFC
-  9457 deviation is that `type` is a stable short machine code, not a URI. Define a
+- **Errors**: API errors use jero's typed Problem Details format. The built-ins use a
+  short kebab-case machine code for `type` rather than the RFC 9457 URI — a convention,
+  not a rule: any non-blank string is accepted (a URI works too). Define a
   static error as an `HTTPError` subclass with class-level `type` / `title` / `status`
   and optional `docs`; use `DataclassHTTPError[Params]` plus `detail_template` when an
   occurrence has runtime values. Parameterized errors always emit both human-only
@@ -170,7 +178,10 @@ These pull against each other constantly; keep all three in mind on every change
   the language doesn't give you free — lifecycle — is what the framework adds:
   open resources with `self.aenter` / `self.enter` (the app owns two exit
   stacks, closed in reverse at shutdown, even on partial failure), and a
-  `BaseFactory` (stacks injected) groups construction. Past that there's nothing
+  `BaseFactory` (stacks injected) groups construction. Standalone (scripts, cron,
+  notebooks): `async with Factory.open() as factory:` — a classmethod async CM that
+  owns the stack pair and unwinds on exit; `FactoryHarness` is the sync-test bridge
+  reimplemented on top of it (one lifecycle code path). Past that there's nothing
   to "resolve." Per-request resources are an `async with` inside the handler.
   Do **not** add an injection/resolver system.
   - **Naming**: the extension surface is intentionally **public** (`wire`,

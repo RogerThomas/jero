@@ -51,6 +51,66 @@ class App(BaseApp):
 app = App()
 ```
 
+### Mixed streams
+
+A stream doesn't have to be homogeneous. When the lines carry more than one shape — say
+text chunks followed by a trailing footer — make `T` a **union of tagged Structs**
+rather than one Struct with all-optional fields. Each member declares `tag=True`, so
+every line carries a `type` discriminator the client can switch on, and the OpenAPI
+schema documents the union precisely (`anyOf` of the member schemas, plus a
+`discriminator`):
+
+```python
+from collections.abc import AsyncIterator
+
+from msgspec import Struct
+
+from jero import BaseApp, Endpoint, NDJSONStreamingResponse
+
+
+class TextChunk(Struct, tag=True):
+    text: str
+
+
+class FooterChunk(Struct, tag=True):
+    total_chunks: int
+
+
+class AnswerEndpoint(Endpoint, path="/answer"):
+    async def _chunks(self) -> AsyncIterator[TextChunk | FooterChunk]:
+        yield TextChunk(text="first")
+        yield TextChunk(text="second")
+        yield FooterChunk(total_chunks=2)     # the summary line closing the stream
+
+    async def get(self) -> NDJSONStreamingResponse[TextChunk | FooterChunk]:
+        return NDJSONStreamingResponse(stream=self._chunks())
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        self.include_endpoint(AnswerEndpoint())
+
+
+app = App()
+```
+
+The wire output is one tagged line per item:
+
+```
+{"type": "TextChunk", "text": "first"}
+{"type": "TextChunk", "text": "second"}
+{"type": "FooterChunk", "total_chunks": 2}
+```
+
+Strictly, the tags are only *required* when an OpenAPI document is built — msgspec
+must be able to tell the members apart to schema the union, so an untagged union of
+several Structs fails loud at startup once `include_openapi` is wired. Without a spec,
+an untagged union streams fine. Tag them anyway: without a discriminator, clients have
+to guess each line's shape from its fields, and the tag is what makes the stream
+self-describing and cleanly decodable on the wire.
+
+The same union form works for `SSEResponse[T]` and `JSONResponse[T]`.
+
 ## Server-Sent Events
 
 `SSEResponse` is GET-only. Yield a `Struct`/`str` (sent as `data`) or a
@@ -104,7 +164,7 @@ from collections.abc import AsyncIterator
 from jero import BaseApp, Endpoint, StreamingResponse
 
 
-class CSVEndpoint(Endpoint, path="/export"):
+class ExportEndpoint(Endpoint, path="/export"):
     async def _chunks(self) -> AsyncIterator[bytes]:
         yield b"id,name\n"
         yield b"1,gizmo\n"
@@ -115,7 +175,7 @@ class CSVEndpoint(Endpoint, path="/export"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_endpoint(CSVEndpoint())
+        self.include_endpoint(ExportEndpoint())
 
 
 app = App()
@@ -158,7 +218,7 @@ class Cursor:
         yield Movie(title="second")
 
 
-class ExportEndpoint(Endpoint, path="/movies/export"):
+class MoviesExportEndpoint(Endpoint, path="/movies/export"):
     async def _lifecycle(self) -> AsyncGenerator[AsyncIterable[Movie]]:
         async with Cursor() as cursor:  # "cursor opened" — before streaming starts
             yield cursor.rows_iterator()
@@ -171,7 +231,7 @@ class ExportEndpoint(Endpoint, path="/movies/export"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_endpoint(ExportEndpoint())
+        self.include_endpoint(MoviesExportEndpoint())
 
 
 app = App()

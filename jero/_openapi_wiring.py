@@ -9,7 +9,10 @@ dependency graph stays acyclic (``core`` imports *this* module, never the revers
 """
 
 from collections.abc import Sequence
-from typing import cast, get_args
+from functools import reduce
+from operator import or_
+from types import UnionType
+from typing import Union, cast, get_args, get_origin
 
 from msgspec import Struct
 
@@ -19,6 +22,7 @@ from jero._wiring_types import (
     OperationSpec,
     ReturnKind,
     Sources,
+    WiringError,
     is_struct_type,
     strip_list,
 )
@@ -104,13 +108,38 @@ def _body_for(sources: Sources) -> BodySpec | None:
     return None
 
 
-def _item_struct(annotation: object) -> type[Struct] | None:
-    """The streamed/enveloped item type — the *first* type arg (``T`` in ``Wrapper[T, H]``),
-    returned only if it's a Struct. Positional, so a non-Struct ``T`` (e.g. ``SSEResponse``'s
-    ``str``) is never mistaken for the (later) header type ``H``."""
+# The user-facing wrapper name per return kind, for the item-type error message.
+_WRAPPER_NAMES: dict[ReturnKind, str] = {
+    "stream-ndjson": "NDJSONStreamingResponse",
+    "stream-sse": "SSEResponse",
+    "json-response": "JSONResponse",
+}
+
+
+def _item_payload(
+    annotation: object, kind: ReturnKind, operation_id: str, *, allow_str: bool = False
+) -> type[Struct] | UnionType | None:
+    """The streamed/enveloped item type — the *first* type arg (``T`` in ``Wrapper[T, H]``,
+    positional so a non-Struct ``T`` is never mistaken for the later header type ``H``) —
+    as a schema payload: a Struct, or a union of Structs normalized to ``A | B`` form
+    (msgspec schemas a union directly: ``anyOf``, plus a ``discriminator`` when the members
+    are tagged). ``None`` for an unparameterized wrapper — and for ``str`` where the
+    wrapper's bound allows it (SSE) — each caller documents its bare fallback. Any other
+    ``T`` fails loud: a typed return annotation must never silently lose its schema."""
     args = get_args(annotation)
     item = args[0] if args else None
-    return cast("type[Struct]", item) if is_struct_type(item) else None
+    if item is None or (allow_str and item is str):
+        return None
+    if is_struct_type(item):
+        return cast("type[Struct]", item)
+    if get_origin(item) in (Union, UnionType):
+        members = get_args(item)
+        if all(is_struct_type(member) or (allow_str and member is str) for member in members):
+            return cast("UnionType", reduce(or_, members))
+    allowed = "a Struct, str, or a union of them" if allow_str else "a Struct or a union of Structs"
+    raise WiringError(
+        f"{operation_id}: {_WRAPPER_NAMES[kind]} item type must be {allowed}, got {item!r}"
+    )
 
 
 def _response_header_type(kind: ReturnKind, annotation: object) -> type[Struct] | None:
@@ -162,7 +191,7 @@ def _entry_from_spec(spec: ResponseSpec) -> ResponseEntry:
     return ResponseEntry(spec.status, spec.description)
 
 
-def _success_entry(status: int, sources: Sources) -> ResponseEntry:
+def _success_entry(status: int, sources: Sources, operation_id: str) -> ResponseEntry:
     kind = sources.return_kind
     annotation = sources.return_annotation
     description = _STATUS_TEXT.get(status, "Successful response")
@@ -170,7 +199,7 @@ def _success_entry(status: int, sources: Sources) -> ResponseEntry:
     if kind in ("bytes", "bytes-response", "stream-bytes"):
         return ResponseEntry(status, description, "application/octet-stream", headers=headers)
     if kind == "stream-ndjson":
-        item = _item_struct(annotation)
+        item = _item_payload(annotation, kind, operation_id)
         if item is None:  # bare NDJSONStreamingResponse (no [T]) -> any JSON object per line
             return ResponseEntry(
                 status, description, "application/x-ndjson", schema={}, headers=headers
@@ -179,14 +208,14 @@ def _success_entry(status: int, sources: Sources) -> ResponseEntry:
             status, description, "application/x-ndjson", model=item, headers=headers
         )
     if kind == "stream-sse":
-        item = _item_struct(annotation)
+        item = _item_payload(annotation, kind, operation_id, allow_str=True)
         if item is None:  # SSEResponse[str] / bare -> the data is a plain string
             return ResponseEntry(
                 status, description, "text/event-stream", schema={"type": "string"}, headers=headers
             )
         return ResponseEntry(status, description, "text/event-stream", model=item, headers=headers)
     if kind == "json-response":
-        item = _item_struct(annotation)
+        item = _item_payload(annotation, kind, operation_id)
         if item is None:  # bare JSONResponse (no [T]) -> any JSON
             return ResponseEntry(
                 status, description, "application/json", schema={}, headers=headers
@@ -222,7 +251,7 @@ def operation_input(spec: OperationSpec) -> OperationInput:
     )
     # Responses cascade: derived (lowest), then class-meta, then op-meta (highest), by status.
     responses: dict[int, ResponseEntry] = {}
-    success = _success_entry(spec.success_status, spec.sources)
+    success = _success_entry(spec.success_status, spec.sources, operation_id)
     responses[success.status] = success
     for entry in _error_responses(spec.sources, authed=spec.authed):
         responses[entry.status] = entry

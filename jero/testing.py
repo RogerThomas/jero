@@ -20,13 +20,13 @@ import contextlib
 import queue
 import threading
 from collections.abc import Callable, Coroutine, Sequence
-from contextlib import AsyncExitStack, ExitStack
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any, Self
 from urllib.parse import urlencode
 
 from jero.codecs import msgspec_decoder, msgspec_encoder
-from jero.core import BaseApp, BaseFactory, instantiate_factory
+from jero.core import BaseApp, BaseFactory
 
 type _DataValue = str | bytes
 type _DataValues = _DataValue | list[_DataValue]
@@ -677,14 +677,15 @@ class TestClient:
 
 
 class FactoryHarness[FactoryT: BaseFactory]:
-    """Build a factory in isolation and exercise its ``create_*`` methods.
+    """Build a factory in isolation and exercise its ``create_*`` methods from sync tests.
 
-    The factory-level sibling of :class:`TestClient`. It owns the exit stacks the
-    factory writes to via ``enter`` / ``aenter`` and runs async ``create_*``
-    methods on a background loop, so services are built — and their resources
-    opened and torn down — exactly as under a live app, but with no app, routes,
-    or server. Use it to test the real factory wiring that an app's ``factory=``
-    seam mocks away.
+    The factory-level sibling of :class:`TestClient`, and a thin sync bridge over
+    :meth:`BaseFactory.open` — lifecycle has that one code path. The harness enters
+    ``Factory.open()`` on a background loop, so services are built — and their
+    resources opened and torn down — exactly as under a live app, but drivable from
+    synchronous test code (matching the sync ``TestClient``). Use it to test the
+    real factory wiring that an app's ``factory=`` seam mocks away; in async code
+    (scripts, cron jobs, notebooks) use ``async with Factory.open()`` directly.
 
         with FactoryHarness(Factory) as harness:
             service = harness.run(harness.factory.create_widget_service())
@@ -697,21 +698,19 @@ class FactoryHarness[FactoryT: BaseFactory]:
 
     def __init__(self, factory_cls: type[FactoryT]) -> None:
         self._loop_thread = _LoopThread()
-        self._stack = ExitStack()
-        self._astack = AsyncExitStack()
-        self.factory: FactoryT = instantiate_factory(factory_cls, self._stack, self._astack)
+        self._scope = AsyncExitStack()
+        self.factory: FactoryT = self._loop_thread.submit(
+            self._scope.enter_async_context(factory_cls.open())
+        )
 
     def run[T](self, coro: Coroutine[Any, Any, T]) -> T:
         """Await an async ``create_*`` coroutine on the harness's loop."""
         return self._loop_thread.submit(coro)
 
-    async def _close_stacks(self) -> None:
-        await self._astack.aclose()
-        self._stack.close()
-
     def close(self) -> None:
-        """Close everything the factory opened on its exit stacks, then stop the loop."""
-        self._loop_thread.submit(self._close_stacks())
+        """Exit ``Factory.open()`` — closing everything the factory opened — then stop
+        the loop."""
+        self._loop_thread.submit(self._scope.aclose())
         self._loop_thread.close()
 
     def __enter__(self) -> Self:

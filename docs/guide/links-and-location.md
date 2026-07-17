@@ -180,13 +180,13 @@ class JobPath(Struct):
     job_id: str
 
 
-class JobsResource(Resource, path="/jobs", ref="jobs"):
+class JobResource(Resource, path="/jobs", ref="jobs"):
     async def read_one(self, path: JobPath) -> Job:
         return Job(id=path.job_id)
 
 
 class JobLinkEndpoint(Endpoint, path="/job-link"):
-    # Imagine this lives in a module that can't import JobsResource without a cycle.
+    # Imagine this lives in a module that can't import JobResource without a cycle.
     async def get(self) -> JSONResponse[Job]:
         return JSONResponse(
             json=Job(id="job-id"),
@@ -196,7 +196,7 @@ class JobLinkEndpoint(Endpoint, path="/job-link"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_resource(JobsResource())
+        self.include_resource(JobResource())
         self.include_endpoint(JobLinkEndpoint())
 
 

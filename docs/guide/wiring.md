@@ -73,6 +73,47 @@ they open is closed when the app shuts down. The split is a useful seam: the fac
 owns the I/O services (the things with lifecycle), while pure in-memory wiring (an auth
 token map, say) can live directly in `wire`.
 
+### Standalone use
+
+A factory isn't tied to an app. For scripts, cron jobs, and notebooks,
+`Factory.open()` is the blessed entry point: it creates the exit-stack pair, builds
+the factory on them exactly as an app does at startup, and unwinds everything on
+exit — even if the block raises:
+
+```python
+import asyncio
+from dataclasses import dataclass
+
+import niquests
+
+from jero import BaseFactory
+
+
+@dataclass
+class WidgetService:
+    _client: niquests.AsyncSession
+
+
+class Factory(BaseFactory):
+    async def create_widget_service(self) -> WidgetService:
+        client = await self.aenter(niquests.AsyncSession())
+        return WidgetService(client)
+
+
+async def main() -> None:
+    async with Factory.open() as factory:
+        widget_service = await factory.create_widget_service()
+        ...  # the nightly job, the notebook cell, the script body
+    # everything opened via enter / aenter is closed here
+
+
+asyncio.run(main())
+```
+
+Same factory, same `create_*` methods, same teardown guarantees — no app, routes, or
+server. (In sync *test* code, use `FactoryHarness` — the sync bridge over `open()` —
+see below.)
+
 ### The test seam
 
 `BaseApp` accepts a prebuilt factory via `factory=`. That's the boundary tests use —
