@@ -4,7 +4,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from types import new_class
-from typing import Annotated, cast
+from typing import Annotated, Literal, cast
 
 import pytest
 from msgspec import Meta, Struct
@@ -782,12 +782,97 @@ def _define_struct_httperror(**options: object) -> str:
             {"status": 413, "description": "d", "consts": {"error_code": True}},
             "must be a str or int",
         ),
+        ({"status": 413, "description": "d", "consts": "nope"}, "consts must be a dict"),
+        (
+            {"status": 413, "description": "d", "consts": {1: "x"}},
+            "consts keys must be field-name strings",
+        ),
+        ({"status": 413, "description": "d", "templates": "nope"}, "templates must be a dict"),
+        (
+            {"status": 413, "description": "d", "templates": {"error_message": 1}},
+            "map field-name strings to format strings",
+        ),
+        (
+            {"status": 413, "description": "d", "status_field": 1},
+            "status_field must be a field-name string",
+        ),
+        (
+            {"status": 413, "description": "d", "params_field": 1},
+            "params_field must be a field-name string",
+        ),
     ],
 )
 def test_struct_httperror_subclass_validation(options: dict[str, object], match: str) -> None:
     """Each malformed set of class options fails at class definition."""
     with pytest.raises(TypeError, match=match):
         _define_struct_httperror(**options)
+
+
+class LiteralCodeBody(Struct, rename="camel"):
+    """A body whose code field is a Literal — const values must be among its members."""
+
+    error_code: Literal["a", "b"]
+    error_message: str
+
+
+def test_struct_httperror_const_must_match_literal_field() -> None:
+    """A const value outside a Literal field's members fails at class definition."""
+    with pytest.raises(TypeError, match="not among the field's literal values"):
+        new_class(
+            "Bad",
+            (StructHTTPError[LiteralCodeBody],),
+            {"status": 413, "description": "d", "consts": {"error_code": "c"}},
+        )
+
+
+class CollidingExtensions(Struct):
+    """Nested params whose field name collides with a body field."""
+
+    error_message: str
+
+
+class CollidingBody(Struct, rename="camel"):
+    """A body whose params_field nests a Struct sharing a field name with the body."""
+
+    error_message: str
+    extensions: CollidingExtensions
+
+
+def test_struct_httperror_params_field_collision_fails() -> None:
+    """A nested params-Struct field colliding with a same-named body field is loud."""
+    with pytest.raises(TypeError, match="collide with same-named body fields"):
+        new_class(
+            "Bad",
+            (StructHTTPError[CollidingBody],),
+            {"status": 413, "description": "d", "params_field": "extensions"},
+        )
+
+
+def test_struct_httperror_template_placeholder_collision_fails() -> None:
+    """A template placeholder naming another declared source is loud."""
+    with pytest.raises(TypeError, match="collide with declared body-field sources"):
+        new_class(
+            "Bad",
+            (StructHTTPError[StatusHouseBody],),
+            {
+                "status": 413,
+                "description": "d",
+                "consts": {"error_code": "x"},
+                "templates": {"error_message": "{error_code}"},
+            },
+        )
+
+
+def test_struct_httperror_abstract_intermediate_is_allowed() -> None:
+    """An `_abstract=True` intermediate defers body resolution to concrete subclasses."""
+    intermediate = new_class("Intermediate", (StructHTTPError,), {"_abstract": True})
+    assert not hasattr(intermediate, "body_type")
+
+
+def test_struct_httperror_unsubclassed_init_fails() -> None:
+    """Instantiating a StructHTTPError that was never given a body fails clearly."""
+    with pytest.raises(TypeError, match="must be subclassed with a body"):
+        _instantiate(cast("Callable[[], object]", StructHTTPError))
 
 
 def test_struct_httperror_requires_a_body_struct() -> None:
@@ -1201,3 +1286,111 @@ def test_handler_may_return_a_struct_family_error() -> None:
         resp = client.get("/errors", params={"mode": "translated"})
     assert resp.status_code == 422
     assert resp.json() == {"errorCode": "translated", "errorMessage": "boom"}
+
+
+class NoStatusAdapter(ErrorBodyAdapter[HouseBody]):
+    """An adapter without status_field: the body is rendered and documented as-is."""
+
+    def compose(self, error: HTTPError) -> HouseBody:
+        return HouseBody(error_code=error.type, error_message=str(error))
+
+
+class NoStatusPathParams(Struct):
+    """Path params so the probe endpoint derives a 404 error response."""
+
+    thing_id: str
+
+
+class NoStatusProbeEndpoint(Endpoint, path="/things/{thing_id}"):
+    """A path-sourced endpoint so the OpenAPI doc carries a derived 404."""
+
+    async def get(self, path: NoStatusPathParams) -> Result:
+        """Echo the id."""
+        _ = path
+        return Result(ok=True)
+
+
+class NoStatusAdaptedApp(BaseApp):
+    """App with the no-status adapter registered and OpenAPI served."""
+
+    async def wire(self) -> None:
+        """Register the adapter, a probe endpoint, and the spec."""
+        self.include_error_adapter(NoStatusAdapter())
+        self.include_endpoint(AdapterProbeEndpoint())
+        self.include_endpoint(NoStatusProbeEndpoint())
+        self.include_openapi(title="no-status", version="1")
+
+
+def test_adapter_without_status_field_renders_body_as_is() -> None:
+    """An adapter with no status_field emits its body Struct at runtime, and the derived
+    OpenAPI error responses document that plain body (no per-status wire model)."""
+    with TestClient(NoStatusAdaptedApp()) as client:
+        resp = client.get("/nope")
+        assert resp.json() == {"errorCode": "not-found", "errorMessage": "Not found"}
+        schema = client.get("/openapi.json").json()["paths"]["/things/{thing_id}"]["get"][
+            "responses"
+        ]["404"]["content"]["application/json"]["schema"]
+        assert schema == {"$ref": "#/components/schemas/HouseBody"}
+
+
+def test_adapter_status_field_must_be_a_string() -> None:
+    """A non-string status_field on an adapter fails at class definition."""
+    with pytest.raises(TypeError, match="status_field must be a non-blank string"):
+        new_class(
+            "Bad",
+            (ErrorBodyAdapter[HouseBody],),
+            exec_body=lambda ns: ns.update(status_field=1, compose=NoStatusAdapter.compose),
+        )
+
+
+class WrongTypeAdapter(ErrorBodyAdapter[HouseBody]):
+    """An adapter whose compose returns the wrong Struct type."""
+
+    status_field = "status_code"
+
+    def compose(self, error: HTTPError) -> HouseBody:
+        _ = error
+        return cast("HouseBody", Result(ok=True))
+
+
+class WrongTypeAdaptedApp(BaseApp):
+    """App with the wrong-type adapter registered."""
+
+    async def wire(self) -> None:
+        """Register the adapter and a probe endpoint."""
+        self.include_error_adapter(WrongTypeAdapter())
+        self.include_endpoint(AdapterProbeEndpoint())
+
+
+def test_adapter_wrong_compose_type_falls_back(caplog: pytest.LogCaptureFixture) -> None:
+    """compose returning the wrong Struct is contained: logged, Problem body sent."""
+    with TestClient(WrongTypeAdaptedApp()) as client, caplog.at_level(logging.ERROR):
+        resp = client.get("/nope")
+    assert resp.json() == {"type": "not-found", "title": "Not found", "status": 404}
+
+
+@dataclass
+class LiteralConstError(
+    StructHTTPError[LiteralCodeBody],
+    status=422,
+    description="Literal const",
+    consts={"error_code": "a"},  # a valid member of the Literal field
+):
+    """A const value that IS among the field's Literal members is accepted."""
+
+    error_message: str
+
+
+def test_struct_httperror_valid_literal_const() -> None:
+    """A const matching one of a Literal field's members renders and validates."""
+    error = LiteralConstError(error_message="m")
+    assert encode(error.response_body) == b'{"errorCode":"a","errorMessage":"m"}'
+
+
+def test_adapter_reuses_its_per_status_wire_model() -> None:
+    """Two errors of the same status render through one cached wire model."""
+    with TestClient(AdaptedApp(HouseAdapter())) as client:
+        first = client.get("/nope")  # 404, builds the model
+        second = client.get("/also-missing")  # 404, hits the cache
+    assert first.json()["statusCode"] == 404
+    assert second.json()["statusCode"] == 404
