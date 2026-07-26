@@ -6,7 +6,7 @@ routes and the dependency context stays open) on a background event loop, and ex
 `requests`-style API.
 
 ```python
-from jero import TestClient
+from jero.testing import TestClient
 
 
 def test_read_one():
@@ -83,7 +83,7 @@ background loop so synchronous test code can drive async `create_*` methods, mat
 the sync `TestClient`. Outside tests, use `async with Factory.open()` directly.
 
 ```python
-from jero import FactoryHarness
+from jero.testing import FactoryHarness
 
 
 def test_factory_builds_service():

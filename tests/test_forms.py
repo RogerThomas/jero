@@ -7,7 +7,8 @@ import pytest
 from msgspec import Meta, Struct
 from msgspec.json import encode as json_encode
 
-from jero import BaseApp, Endpoint, FilePart, FormPart, Resource, TestClient
+from jero import BaseApp, Endpoint, FilePart, FormPart, Resource
+from jero.testing import TestClient
 
 
 class Camel(Struct, rename="camel"):

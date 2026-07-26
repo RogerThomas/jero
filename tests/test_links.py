@@ -6,8 +6,9 @@ from collections.abc import Generator
 import pytest
 
 from demo_app.models import Camel, WidgetPath
-from jero import BaseApp, Endpoint, JSONResponse, Link, Location, Resource, TestClient, WiringError
+from jero import BaseApp, Endpoint, JSONResponse, Link, Location, Resource, WiringError
 from jero.links import PathTarget, URLTarget
+from jero.testing import TestClient
 
 
 class Job(Camel):

@@ -45,7 +45,6 @@ from jero.links import Link, Location
 from jero.openapi import ModelMeta, ResponseSpec, SecurityScheme, Tag
 from jero.streaming import NDJSONStreamingResponse, ServerSentEvent, SSEResponse, StreamingResponse
 from jero.structs import Struct
-from jero.testing import FactoryHarness, TestClient, TestResponse, TestSSEEvent
 
 __all__ = [
     "Auth",
@@ -63,7 +62,6 @@ __all__ = [
     "EndpointMeta",
     "ErrorBodyAdapter",
     "ExceptionResponse",
-    "FactoryHarness",
     "FilePart",
     "ForbiddenError",
     "FormPart",
@@ -93,9 +91,6 @@ __all__ = [
     "Struct",
     "StructHTTPError",
     "Tag",
-    "TestClient",
-    "TestResponse",
-    "TestSSEEvent",
     "TooManyRequestsError",
     "UnsupportedMediaTypeError",
     "ValidationFailedError",

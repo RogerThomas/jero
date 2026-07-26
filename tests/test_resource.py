@@ -7,7 +7,8 @@ from demo_app.errors import (
     WidgetNotFoundError,
 )
 from demo_app.models import Widget, WidgetIn, WidgetPatch
-from jero import ConflictError, TestClient
+from jero import ConflictError
+from jero.testing import TestClient
 
 
 def test_create_returns_201_and_delegates(

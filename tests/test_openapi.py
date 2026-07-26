@@ -38,9 +38,9 @@ from jero import (
     StreamingResponse,
     StructHTTPError,
     Tag,
-    TestClient,
 )
 from jero import Struct as JeroStruct
+from jero.testing import TestClient
 
 
 def test_document_is_valid_openapi_31(client: TestClient) -> None:

@@ -21,7 +21,7 @@ from pytest_mock import MockerFixture
 
 from demo_app import AnalyticsService, DemoApp, Factory, WidgetService
 from demo_app.errors import UpstreamResponseErrorHandler
-from jero import TestClient
+from jero.testing import TestClient
 
 
 @pytest.fixture(name="widget_service_mock")

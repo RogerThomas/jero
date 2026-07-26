@@ -116,7 +116,7 @@ jero ships a synchronous, in-process [`TestClient`](guide/testing.md) — no soc
 running server:
 
 ```python
-from jero import TestClient
+from jero.testing import TestClient
 
 
 def test_read_one():

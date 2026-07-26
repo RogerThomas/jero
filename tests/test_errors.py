@@ -23,11 +23,11 @@ from jero import (
     HTTPError,
     ParameterizedHTTPError,
     StructHTTPError,
-    TestClient,
     TooManyRequestsError,
     WiringError,
 )
 from jero.core import ExceptionHandler
+from jero.testing import TestClient
 
 
 class ErrorParams(Struct):

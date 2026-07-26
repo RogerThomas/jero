@@ -6,7 +6,8 @@ import pytest
 from msgspec import Struct
 from msgspec.json import decode as json_decode
 
-from jero import BaseApp, Endpoint, RawHeaders, Resource, TestClient
+from jero import BaseApp, Endpoint, RawHeaders, Resource
+from jero.testing import TestClient
 
 
 def test_bad_body_type_is_422(client: TestClient) -> None:

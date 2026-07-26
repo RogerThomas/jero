@@ -1,6 +1,6 @@
 """Form behavior exposed through the shared demo app."""
 
-from jero import TestClient
+from jero.testing import TestClient
 
 
 def test_demo_form_endpoint_receives_request_and_part_raw_headers(

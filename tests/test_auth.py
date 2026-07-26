@@ -1,6 +1,6 @@
 """Auth: accept, reject, and user injection — via the demo app's /me endpoint."""
 
-from jero import TestClient
+from jero.testing import TestClient
 
 
 def test_valid_token_injects_user(client: TestClient) -> None:

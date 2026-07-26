@@ -17,8 +17,8 @@ from jero import (
     ServerSentEvent,
     SSEResponse,
     StreamingResponse,
-    TestClient,
 )
+from jero.testing import TestClient
 
 
 class SetupFailedError(

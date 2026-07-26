@@ -20,7 +20,8 @@ from demo_app.errors import (
     UpstreamResponseErrorHandler,
     UpstreamUnavailableError,
 )
-from jero import BaseFactory, FactoryHarness
+from jero import BaseFactory
+from jero.testing import FactoryHarness
 
 
 @pytest.fixture(name="harness")
