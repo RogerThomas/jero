@@ -9,7 +9,8 @@ from dataclasses import dataclass
 import pytest
 from msgspec import Struct
 
-from jero import Auth, BaseApp, Endpoint, Resource, TestClient
+from jero import Auth, BaseApp, Endpoint, Resource
+from jero.testing import TestClient
 
 
 class P(Struct):

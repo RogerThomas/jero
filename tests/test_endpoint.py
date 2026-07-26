@@ -2,7 +2,8 @@
 
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, TestClient
+from jero import BaseApp, Endpoint
+from jero.testing import TestClient
 
 
 def test_endpoint_get(client: TestClient) -> None:

@@ -17,7 +17,8 @@ from pytest_mock import MockerFixture
 from demo_app import AnalyticsService, DemoApp, Factory, WidgetService
 from demo_app.errors import UpstreamResponseErrorHandler
 from demo_app.models import Widget
-from jero import BackgroundTasks, TestClient, WiringError
+from jero import BackgroundTasks, WiringError
+from jero.testing import TestClient
 
 
 class Event(Struct):

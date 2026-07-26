@@ -8,13 +8,12 @@ contracts from the :mod:`jero._wiring_types` leaf rather than from ``core``, so 
 dependency graph stays acyclic (``core`` imports *this* module, never the reverse).
 """
 
-from collections.abc import Sequence
-from functools import reduce
-from operator import or_
+from collections.abc import Mapping, Sequence
+from functools import cache
 from types import UnionType
-from typing import Union, cast, get_args, get_origin
+from typing import Any, Literal, Union, cast, get_args, get_origin
 
-from msgspec import Struct
+from msgspec import Struct, defstruct
 
 from jero._wiring_types import (
     FormSpec,
@@ -26,7 +25,14 @@ from jero._wiring_types import (
     is_struct_type,
     strip_list,
 )
-from jero.errors import Problem
+from jero.errors import (
+    BaseHTTPError,
+    ErrorBodyAdapter,
+    HTTPError,
+    ParameterizedHTTPError,
+    Problem,
+    StructHTTPError,
+)
 from jero.openapi import (
     BodySpec,
     FormFieldSpec,
@@ -135,7 +141,10 @@ def _item_payload(
     if get_origin(item) in (Union, UnionType):
         members = get_args(item)
         if all(is_struct_type(member) or (allow_str and member is str) for member in members):
-            return cast("UnionType", reduce(or_, members))
+            union = members[0]
+            for member in members[1:]:
+                union = union | member
+            return cast("UnionType", union)
     allowed = "a Struct, str, or a union of them" if allow_str else "a Struct or a union of Structs"
     raise WiringError(
         f"{operation_id}: {_WRAPPER_NAMES[kind]} item type must be {allowed}, got {item!r}"
@@ -156,10 +165,104 @@ def _response_header_type(kind: ReturnKind, annotation: object) -> type[Struct] 
     return cast("type[Struct]", candidate) if is_struct_type(candidate) else None
 
 
-def _error_responses(sources: Sources, *, authed: bool) -> list[ResponseEntry]:
+def _literal_of(value: object) -> type:
+    """``Literal[value]`` built at runtime — subscripting ``Literal`` directly is a type
+    form to checkers, so go through a cast and an ordinary mapping subscript."""
+    return cast(Mapping[object, type], Literal)[value]
+
+
+@cache
+def _problem_docs_model(cls: type[HTTPError]) -> type[Struct]:
+    """The per-class Problem schema model: the real body shape with ``type`` and
+    ``status`` as consts, so the spec says exactly which codes an operation emits (clients
+    dispatch on ``type``), plus the params schema for parameterized errors. Built once per
+    error class and never instantiated — it exists for schema generation only."""
+    name = cls.__name__.removesuffix("Error") or cls.__name__
+    model_fields: list[object] = [
+        ("type", _literal_of(cls.type)),
+        ("title", str),
+        ("status", _literal_of(cls.status)),
+        ("docs", str | None, None),
+    ]
+    if issubclass(cls, ParameterizedHTTPError):
+        model_fields += [("detail", str), ("params", cls.params_type)]
+    return defstruct(
+        f"{name}Problem",
+        cast("Sequence[tuple[str, type]]", model_fields),
+        kw_only=True,
+        omit_defaults=True,
+        module=cls.__module__,
+    )
+
+
+def _exception_docs_model(
+    cls: type[BaseHTTPError], adapter: ErrorBodyAdapter[Any] | None
+) -> type[Struct]:
+    """The schema model a declared error class documents: the Struct family's composed
+    wire model (consts and status as documented constants), the Problem family's
+    per-class const model — or, when an adapter is registered, the adapter's body for
+    that status (what the wire really carries)."""
+    if issubclass(cls, StructHTTPError):
+        return cls.wire_model
+    problem_cls = cast("type[HTTPError]", cls)
+    if adapter is not None:
+        return adapter.docs_model(problem_cls.status)
+    return _problem_docs_model(problem_cls)
+
+
+def _error_description(cls: type[BaseHTTPError]) -> str:
+    """The response description an error class carries: the Problem family's ``title``,
+    the Struct family's explicit ``description``."""
+    if issubclass(cls, StructHTTPError):
+        return cls.description
+    return cast("type[HTTPError]", cls).title
+
+
+def _exception_entries(
+    spec: OperationSpec, adapter: ErrorBodyAdapter[Any] | None, operation_id: str
+) -> list[ResponseEntry]:
+    """Response entries derived from the declared ``exceptions``: the class-level meta's
+    first, extended by the operation's (both remain raiseable — the union, deduped),
+    validated as concrete jero error classes and grouped by status. Several errors sharing
+    a status merge into one entry whose body is a ``oneOf`` of their schemas."""
+    declared: dict[type[BaseHTTPError], None] = {}
+    for meta in (spec.class_meta, spec.op_meta):
+        entries = cast("Sequence[object]", meta.exceptions if meta is not None else ())
+        for entry in entries:
+            concrete = (
+                isinstance(entry, type)
+                and hasattr(entry, "status")
+                and issubclass(entry, (HTTPError, StructHTTPError))
+            )
+            if not concrete:
+                raise WiringError(
+                    f"{operation_id}: 'exceptions' entries must be concrete jero error "
+                    f"classes (HTTPError or StructHTTPError subclasses); got {entry!r}",
+                )
+            declared.setdefault(cast("type[BaseHTTPError]", entry), None)
+    by_status: dict[int, list[type[BaseHTTPError]]] = {}
+    for cls in declared:
+        by_status.setdefault(cls.status, []).append(cls)
+    responses: list[ResponseEntry] = []
+    for status, classes in by_status.items():
+        description = " / ".join(dict.fromkeys(_error_description(cls) for cls in classes))
+        models = tuple(dict.fromkeys(_exception_docs_model(cls, adapter) for cls in classes))
+        if len(models) == 1:
+            responses.append(
+                ResponseEntry(status, description, "application/json", model=models[0])
+            )
+        else:
+            responses.append(ResponseEntry(status, description, "application/json", one_of=models))
+    return responses
+
+
+def _error_responses(
+    sources: Sources, *, authed: bool, adapter: ErrorBodyAdapter[Any] | None
+) -> list[ResponseEntry]:
     """The error responses a handler can actually produce, derived from its sources. Each
     references the shared RFC 9457 ``Problem`` schema — the wire body every framework
-    ``HTTPError`` encodes to (``application/json``)."""
+    ``HTTPError`` encodes to (``application/json``) — or, when an error body adapter is
+    registered, the adapter's per-status body (what the wire really carries)."""
     has_body = sources.json_decoder is not None or sources.form is not None
     statuses: dict[int, str] = {}
     if has_body or sources.params is not None or sources.headers is not None:
@@ -174,7 +277,12 @@ def _error_responses(sources: Sources, *, authed: bool) -> list[ResponseEntry]:
         statuses[401] = "Authentication required"
     statuses[500] = "Internal server error"
     return [
-        ResponseEntry(status, detail, "application/json", model=Problem)
+        ResponseEntry(
+            status,
+            detail,
+            "application/json",
+            model=Problem if adapter is None else adapter.docs_model(status),
+        )
         for status, detail in statuses.items()
     ]
 
@@ -234,7 +342,9 @@ def _success_entry(status: int, sources: Sources, operation_id: str) -> Response
     return ResponseEntry(status, description, "application/json", schema={})
 
 
-def operation_input(spec: OperationSpec) -> OperationInput:
+def operation_input(
+    spec: OperationSpec, adapter: ErrorBodyAdapter[Any] | None = None
+) -> OperationInput:
     """Translate a captured operation into the builder's input record.
 
     Un-underscored: it crosses the ``core`` / ``openapi`` boundary (``core`` imports it).
@@ -249,11 +359,14 @@ def operation_input(spec: OperationSpec) -> OperationInput:
         if op_meta is not None and op_meta.operation_id is not None
         else spec.operation_id_default
     )
-    # Responses cascade: derived (lowest), then class-meta, then op-meta (highest), by status.
+    # Responses cascade by status: derived (lowest), then declared exceptions, then
+    # explicit ResponseSpecs — class-meta before op-meta within each layer.
     responses: dict[int, ResponseEntry] = {}
     success = _success_entry(spec.success_status, spec.sources, operation_id)
     responses[success.status] = success
-    for entry in _error_responses(spec.sources, authed=spec.authed):
+    for entry in _error_responses(spec.sources, authed=spec.authed, adapter=adapter):
+        responses[entry.status] = entry
+    for entry in _exception_entries(spec, adapter, operation_id):
         responses[entry.status] = entry
     if spec.class_meta is not None:
         for declared in spec.class_meta.responses:

@@ -7,7 +7,8 @@ from uuid import UUID
 import pytest
 from msgspec import Struct
 
-from jero import BaseApp, BytesResponse, JSONResponse, RawHeaders, Resource, TestClient
+from jero import BaseApp, BytesResponse, JSONResponse, RawHeaders, Resource
+from jero.testing import TestClient
 
 
 class Echo(Struct):

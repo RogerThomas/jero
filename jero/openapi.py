@@ -200,8 +200,8 @@ class BodySpec:
 class ResponseEntry:
     """One documented response: a ``model`` ($ref — or, for a union of Structs, msgspec's
     ``anyOf`` with a ``discriminator`` when the members are tagged), a ``list`` of it, a
-    verbatim ``schema``, or no content. ``headers`` expands a Struct into response
-    headers."""
+    ``one_of`` of several body variants (declared errors sharing a status), a verbatim
+    ``schema``, or no content. ``headers`` expands a Struct into response headers."""
 
     status: int
     description: str
@@ -210,6 +210,7 @@ class ResponseEntry:
     is_list: bool = False
     schema: dict[str, Any] | None = None
     headers: type[Struct] | None = None
+    one_of: tuple[type[Struct], ...] = ()
 
 
 @dataclass(slots=True)
@@ -239,9 +240,12 @@ def _ref_name(ref_schema: dict[str, Any]) -> str:
 
 
 def _response_payload_types(response: ResponseEntry) -> tuple[object, ...]:
-    """The types a response contributes to the schema pass: its model, plus — when the
-    model is a union — each member. ModelMeta renames/descriptions are discovered per
-    collected type, so a member reached only through a union must be collected itself."""
+    """The types a response contributes to the schema pass: its ``one_of`` variants, or
+    its model — plus, when the model is a union, each member. ModelMeta
+    renames/descriptions are discovered per collected type, so a member reached only
+    through a union must be collected itself."""
+    if response.one_of:
+        return response.one_of
     if response.model is None:
         return ()
     if isinstance(response.model, UnionType):
@@ -502,6 +506,9 @@ def _response(entry: ResponseEntry, schemas: _Schemas) -> dict[str, Any]:
         examples = None
         if entry.schema is not None:
             schema = entry.schema
+        elif entry.one_of:
+            # several declared errors share this status: alternatives, not an open union
+            schema = {"oneOf": [schemas.ref(variant) for variant in entry.one_of]}
         elif isinstance(entry.model, UnionType):
             # a union of Structs: msgspec's anyOf (+ discriminator when the members are tagged)
             schema = schemas.schema_for(entry.model)

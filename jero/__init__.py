@@ -20,8 +20,10 @@ from jero.core import (
 )
 from jero.errors import (
     AuthenticationRequiredError,
+    BaseHTTPError,
     ConflictError,
     DataclassHTTPError,
+    ErrorBodyAdapter,
     ForbiddenError,
     GoneError,
     HTTPError,
@@ -32,6 +34,7 @@ from jero.errors import (
     ParameterizedHTTPError,
     ParameterizedProblem,
     Problem,
+    StructHTTPError,
     TooManyRequestsError,
     UnsupportedMediaTypeError,
     ValidationFailedError,
@@ -42,7 +45,6 @@ from jero.links import Link, Location
 from jero.openapi import ModelMeta, ResponseSpec, SecurityScheme, Tag
 from jero.streaming import NDJSONStreamingResponse, ServerSentEvent, SSEResponse, StreamingResponse
 from jero.structs import Struct
-from jero.testing import FactoryHarness, TestClient, TestResponse, TestSSEEvent
 
 __all__ = [
     "Auth",
@@ -50,6 +52,7 @@ __all__ = [
     "BackgroundTasks",
     "BaseApp",
     "BaseFactory",
+    "BaseHTTPError",
     "BasicAuth",
     "BearerAuth",
     "BytesResponse",
@@ -57,8 +60,8 @@ __all__ = [
     "DataclassHTTPError",
     "Endpoint",
     "EndpointMeta",
+    "ErrorBodyAdapter",
     "ExceptionResponse",
-    "FactoryHarness",
     "FilePart",
     "ForbiddenError",
     "FormPart",
@@ -86,10 +89,8 @@ __all__ = [
     "ServerSentEvent",
     "StreamingResponse",
     "Struct",
+    "StructHTTPError",
     "Tag",
-    "TestClient",
-    "TestResponse",
-    "TestSSEEvent",
     "TooManyRequestsError",
     "UnsupportedMediaTypeError",
     "ValidationFailedError",

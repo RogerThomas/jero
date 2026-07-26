@@ -20,7 +20,7 @@ from typing import Protocol, Union, cast, get_args, get_origin, get_type_hints
 from msgspec import Struct
 
 from jero._wiring_types import WiringError
-from jero.errors import HTTPError
+from jero.errors import BaseHTTPError
 from jero.headers import RawHeaders
 from jero.links import Link, Location
 
@@ -96,7 +96,7 @@ def _valid_exception_handler_return(annotation: object) -> bool:
     for variant in variants:
         if variant is NoneType:
             continue
-        if isinstance(variant, type) and issubclass(variant, HTTPError):
+        if isinstance(variant, type) and issubclass(variant, BaseHTTPError):
             has_response = True
             continue
         if _exception_response_type(cast("object", variant)) is None:
@@ -130,7 +130,7 @@ class CompiledExceptionHandler:
         if not _valid_exception_handler_return(hints.get("return")):
             raise WiringError(
                 f"{self.owner}.handle_exception must return "
-                "one or more HTTPError or ExceptionResponse types, optionally with None",
+                "one or more jero error or ExceptionResponse types, optionally with None",
             )
         self.exception_type: type[Exception] = exception_type
         self._fn = cast(Callable[[Exception], object], fn)

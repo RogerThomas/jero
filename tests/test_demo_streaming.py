@@ -8,7 +8,7 @@ from pytest_mock import MockerFixture
 from demo_app import AnalyticsService, DemoApp, Factory, QuestionService, WidgetService
 from demo_app.errors import UpstreamResponseErrorHandler
 from demo_app.models import AnswerChunk
-from jero import TestClient
+from jero.testing import TestClient
 
 
 async def _answer_chunks(*texts: str) -> AsyncIterator[AnswerChunk]:

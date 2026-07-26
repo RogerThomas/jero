@@ -8,7 +8,8 @@ returns, the docs-UI knobs, an apiKey scheme).
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Annotated
+from pathlib import Path
+from typing import Annotated, cast
 
 import pytest
 from msgspec import Meta, Struct
@@ -16,24 +17,30 @@ from openapi_spec_validator import validate
 
 from jero import (
     BaseApp,
+    BaseHTTPError,
     BearerAuth,
     Endpoint,
     EndpointMeta,
+    ErrorBodyAdapter,
     FormPart,
+    HTTPError,
     JSONResponse,
     ModelMeta,
     NDJSONStreamingResponse,
+    NotFoundError,
     OperationMeta,
+    ParameterizedHTTPError,
     Resource,
     ResourceMeta,
     ResponseSpec,
     SecurityScheme,
     SSEResponse,
     StreamingResponse,
+    StructHTTPError,
     Tag,
-    TestClient,
 )
 from jero import Struct as JeroStruct
+from jero.testing import TestClient
 
 
 def test_document_is_valid_openapi_31(client: TestClient) -> None:
@@ -1507,3 +1514,312 @@ def test_unsupported_item_type_fails_loud() -> None:
     DegradedStreamEndpoint.get.__annotations__["return"] = "NDJSONStreamingResponse[int]"
     with pytest.raises(RuntimeError, match="item type must be a Struct or a union of Structs"):
         TestClient(DegradedApp())
+
+
+# --- Declared exceptions (error classes -> response entries) ---
+
+
+class ErrorBody(Struct, rename="camel"):
+    """A house-style error body used by the declared-exception tests."""
+
+    error_code: str
+    error_message: str
+
+
+class StatusErrorBody(Struct, rename="camel"):
+    """A house-style error body carrying the status."""
+
+    error_code: str
+    error_message: str
+    status_code: int
+
+
+class QuotaError(
+    StructHTTPError[StatusErrorBody],
+    status=429,
+    description="Quota exceeded",
+    consts={"error_code": "quota-exceeded"},
+    status_field="status_code",
+):
+    """A Struct-family error pinning its code and carrying its status in the body."""
+
+
+class TeapotStructError(StructHTTPError[ErrorBody], status=418, description="Teapot"):
+    """A Struct-family error without any pinned fields."""
+
+
+class WidgetGoneError(HTTPError, type="widget-gone", title="Widget gone", status=410):
+    """A Problem-family error declared at the class level."""
+
+
+class MissingPartParams(Struct):
+    """Params rendering the missing-part detail."""
+
+    part_id: str
+
+
+class MissingPartError(
+    ParameterizedHTTPError[MissingPartParams],
+    type="missing-part",
+    title="Missing part",
+    status=404,
+    detail_template="Part {part_id} missing",
+):
+    """A parameterized Problem-family error."""
+
+
+class DeclaredErrorsEndpoint(
+    Endpoint,
+    path="/declared",
+    meta=EndpointMeta(exceptions=[WidgetGoneError]),
+    meta_get=OperationMeta(exceptions=[QuotaError, TeapotStructError]),
+):
+    """Class-level and operation-level declarations cascade (both raiseable)."""
+
+    async def get(self) -> Item:
+        """Get an item."""
+        return Item(id="id")
+
+
+class MergedStatusEndpoint(
+    Endpoint,
+    path="/merged",
+    meta_get=OperationMeta(exceptions=[NotFoundError, MissingPartError]),
+):
+    """Two declared errors share a status: the entry must merge as a oneOf."""
+
+    async def get(self) -> Item:
+        """Get an item."""
+        return Item(id="id")
+
+
+class PrecedencePath(Struct):
+    """Path params so a 404 is source-derived."""
+
+    item_id: str
+
+
+class PrecedenceEndpoint(
+    Endpoint,
+    path="/precedence/{item_id}",
+    meta_get=OperationMeta(
+        exceptions=[MissingPartError, QuotaError],
+        responses=[ResponseSpec(429, "Slow down")],
+    ),
+):
+    """Derived < declared exceptions < explicit ResponseSpec, per status."""
+
+    async def get(self, path: PrecedencePath) -> Item:
+        """Get an item by id."""
+        return Item(id=path.item_id)
+
+
+class DeclaredErrorsApp(BaseApp):
+    """App exercising exception declaration, merging, and precedence."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(DeclaredErrorsEndpoint())
+        self.include_endpoint(MergedStatusEndpoint())
+        self.include_endpoint(PrecedenceEndpoint())
+        self.include_openapi(title="declared", version="1")
+
+
+def test_declared_exceptions_derive_and_cascade() -> None:
+    """Entries derive entirely from the classes — status, schema, description — with the
+    class-level meta's entries extending the operation's, and the document stays valid."""
+    with TestClient(DeclaredErrorsApp()) as client:
+        document = client.get("/openapi.json").json()
+        validate(document)
+        responses = document["paths"]["/declared"]["get"]["responses"]
+        gone = responses["410"]
+        assert gone["description"] == "Widget gone"
+        assert gone["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/WidgetGoneProblem"
+        }
+        quota = responses["429"]
+        assert quota["description"] == "Quota exceeded"
+        assert quota["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/Quota"
+        }
+        teapot = responses["418"]
+        assert teapot["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/TeapotStruct"
+        }
+        schemas = document["components"]["schemas"]
+        assert schemas["WidgetGoneProblem"]["properties"]["type"] == {"enum": ["widget-gone"]}
+        assert schemas["WidgetGoneProblem"]["properties"]["status"] == {"enum": [410]}
+        assert schemas["Quota"]["properties"]["statusCode"] == {"enum": [429], "default": 429}
+        assert schemas["Quota"]["properties"]["errorCode"] == {
+            "enum": ["quota-exceeded"],
+            "default": "quota-exceeded",
+        }
+
+
+def test_declared_parameterized_error_documents_params() -> None:
+    """A parameterized error's docs model carries detail and the params schema."""
+    with TestClient(DeclaredErrorsApp()) as client:
+        schemas = client.get("/openapi.json").json()["components"]["schemas"]
+        missing = schemas["MissingPartProblem"]
+        assert missing["properties"]["type"] == {"enum": ["missing-part"]}
+        assert missing["properties"]["detail"] == {"type": "string"}
+        assert missing["properties"]["params"] == {"$ref": "#/components/schemas/MissingPartParams"}
+
+
+def test_declared_errors_sharing_a_status_merge_as_oneof() -> None:
+    """Same-status declarations merge into one entry with a oneOf and joined description."""
+    with TestClient(DeclaredErrorsApp()) as client:
+        entry = client.get("/openapi.json").json()["paths"]["/merged"]["get"]["responses"]["404"]
+        assert entry["description"] == "Not found / Missing part"
+        assert entry["content"]["application/json"]["schema"] == {
+            "oneOf": [
+                {"$ref": "#/components/schemas/NotFoundProblem"},
+                {"$ref": "#/components/schemas/MissingPartProblem"},
+            ]
+        }
+
+
+def test_error_response_precedence_per_status() -> None:
+    """Declared exceptions beat the derived entry; an explicit ResponseSpec beats both."""
+    with TestClient(DeclaredErrorsApp()) as client:
+        responses = client.get("/openapi.json").json()["paths"]["/precedence/{item_id}"]["get"][
+            "responses"
+        ]
+        # the path-derived 404 is replaced by the declared error's precise schema
+        assert responses["404"]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/MissingPartProblem"
+        }
+        # the declared 429 (QuotaError) is replaced by the explicit ResponseSpec
+        assert responses["429"]["description"] == "Slow down"
+        assert "content" not in responses["429"]
+
+
+class BadDeclApp(BaseApp):
+    """Invalid app declaring a non-error class in exceptions."""
+
+    async def wire(self) -> None:
+        """Wire the invalid declaration with OpenAPI enabled."""
+        self.include_endpoint(BadDeclEndpoint())
+        self.include_openapi(title="bad", version="1")
+
+
+def test_invalid_exceptions_entries_fail_at_wiring() -> None:
+    """A non-error entry in ``exceptions`` is a startup failure."""
+    with pytest.raises(RuntimeError, match="'exceptions' entries must be concrete jero error"):
+        TestClient(BadDeclApp())
+
+
+class BadDeclEndpoint(
+    Endpoint,
+    path="/bad-decl",
+    meta_get=OperationMeta(exceptions=cast(list[type[BaseHTTPError]], [str])),
+):
+    """Declares a non-error class; wiring must reject it."""
+
+    async def get(self) -> Item:
+        """Get an item."""
+        return Item(id="id")
+
+
+class SpecHouseAdapter(ErrorBodyAdapter[ErrorBody]):
+    """House adapter used to verify the derived error schemas follow it."""
+
+    status_field = "status_code"
+
+    def compose(self, error: HTTPError) -> ErrorBody:
+        return ErrorBody(error_code=error.type, error_message=str(error))
+
+
+class AdaptedSpecEndpoint(
+    Endpoint,
+    path="/adapted/{item_id}",
+    meta_get=OperationMeta(exceptions=[WidgetGoneError]),
+):
+    """A path-sourced endpoint under an adapter: derived and declared errors follow it."""
+
+    async def get(self, path: PrecedencePath) -> Item:
+        """Get an item by id."""
+        return Item(id=path.item_id)
+
+
+class AdaptedSpecApp(BaseApp):
+    """App with the adapter registered and OpenAPI served."""
+
+    async def wire(self) -> None:
+        self.include_error_adapter(SpecHouseAdapter())
+        self.include_endpoint(AdaptedSpecEndpoint())
+        self.include_openapi(title="adapted", version="1")
+
+
+def test_adapter_switches_error_schemas_in_the_spec() -> None:
+    """With an adapter registered, derived and Problem-family declared errors document the
+    adapter's per-status body instead of Problem, and the document stays valid."""
+    with TestClient(AdaptedSpecApp()) as client:
+        document = client.get("/openapi.json").json()
+        validate(document)
+        responses = document["paths"]["/adapted/{item_id}"]["get"]["responses"]
+        assert responses["404"]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/ErrorBody404"
+        }
+        assert responses["410"]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/ErrorBody410"
+        }
+        schemas = document["components"]["schemas"]
+        assert schemas["ErrorBody404"]["properties"]["statusCode"] == {
+            "enum": [404],
+            "default": 404,
+        }
+        assert "Problem" not in schemas
+
+
+# --- Favicon ---
+
+
+class FaviconApp(BaseApp):
+    """App wiring the docs with a favicon (a Path, a URL, or none)."""
+
+    def __init__(self, favicon: Path | str | None) -> None:
+        self._favicon = favicon
+        super().__init__()
+
+    async def wire(self) -> None:
+        """Serve the spec and docs with the configured favicon."""
+        self.include_endpoint(OpenEndpoint())
+        self.include_openapi(title="fav", version="1", favicon=self._favicon)
+
+
+def test_favicon_path_is_served_and_linked(tmp_path: Path) -> None:
+    """A Path favicon is read once at wiring, served precomputed at /favicon.ico,
+    linked in the default docs page, and absent from the generated document."""
+    icon = tmp_path / "icon.png"
+    icon.write_bytes(b"png-bytes")
+    with TestClient(FaviconApp(icon)) as client:
+        resp = client.get("/favicon.ico")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "image/png"
+        assert resp.content == b"png-bytes"
+        assert '<link rel="icon" href="/favicon.ico">' in client.get("/docs").text
+        assert "/favicon.ico" not in client.get("/openapi.json").json()["paths"]
+
+
+def test_favicon_url_is_linked_verbatim() -> None:
+    """A str favicon is a URL emitted verbatim in the link; nothing is served."""
+    with TestClient(FaviconApp("https://cdn.example.com/icon.svg")) as client:
+        docs = client.get("/docs").text
+        assert '<link rel="icon" href="https://cdn.example.com/icon.svg">' in docs
+        assert client.get("/favicon.ico").status_code == 404
+
+
+def test_no_favicon_means_no_link() -> None:
+    """Without a favicon the default docs page carries no icon link."""
+    with TestClient(FaviconApp(None)) as client:
+        assert 'rel="icon"' not in client.get("/docs").text
+
+
+def test_favicon_failures_are_wiring_errors(tmp_path: Path) -> None:
+    """A missing file or an unsupported suffix fails at startup, not at request time."""
+    with pytest.raises(RuntimeError, match="not readable"):
+        TestClient(FaviconApp(tmp_path / "missing.png"))
+    unsupported = tmp_path / "icon.txt"
+    unsupported.write_bytes(b"x")
+    with pytest.raises(RuntimeError, match="unsupported suffix"):
+        TestClient(FaviconApp(unsupported))

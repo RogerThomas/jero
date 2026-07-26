@@ -13,7 +13,8 @@ from msgspec import Struct
 
 from demo_app.auth import TokenAuth
 from demo_app.models import User
-from jero import BaseApp, Endpoint, TestClient
+from jero import BaseApp, Endpoint
+from jero.testing import TestClient
 
 # ---------------------------------------------------------------------------
 # Shared auth helper
