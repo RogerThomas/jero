@@ -192,19 +192,27 @@ app = App()
 
 ## Performance
 
-In a side-by-side benchmark against six other frameworks — Python (Litestar, FastAPI,
-Blacksheep, Flask), Go (Gin), and Bun (Elysia) — **jero is the fastest Python framework
-in every scenario tested.** On the pure framework hot path (a typed JSON `GET`):
+In a side-by-side benchmark against seven other frameworks — Python (Blacksheep, Robyn,
+Litestar, FastAPI, Flask), Go (Gin), and Bun (Elysia) — **jero is the fastest Python
+framework in every scenario tested.** Each panel below is scaled to its own fastest
+framework; the labels keep the absolute throughput:
+
+<p align="center">
+  <img src="docs/assets/bench-grid.svg" alt="Benchmark results: jero is the fastest Python framework across all four workloads" width="820">
+</p>
+
+On the pure framework hot path (a typed JSON `GET`):
 
 | Framework      | `GET /info` req/s | Relative to jero |
 | :------------- | :---------------- | :--------------- |
-| gin *(Go)*     | 96.5k             | 1.42×            |
-| elysia *(Bun)* | 88.1k             | 1.30×            |
-| **jero**       | **67.7k**         | **1.00×**        |
-| blacksheep     | 54.6k             | 0.81×            |
-| litestar       | 37.1k             | 0.55×            |
-| fastapi        | 26.9k             | 0.40×            |
-| flask          | 16.5k             | 0.24×            |
+| gin *(Go)*     | 96.5k             | 1.41×            |
+| elysia *(Bun)* | 88.1k             | 1.28×            |
+| **jero**       | **68.5k**         | **1.00×**        |
+| blacksheep     | 54.5k             | 0.80×            |
+| robyn          | 45.3k             | 0.66×            |
+| litestar       | 39.0k             | 0.57×            |
+| fastapi        | 29.3k             | 0.43×            |
+| flask          | 17.6k             | 0.26×            |
 
 Go and Bun top the raw table (both finished with CPU headroom; the Python frameworks
 ran at their genuine single-core ceilings). On the upstream-proxy scenario — with every
