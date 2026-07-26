@@ -39,3 +39,8 @@ repos:
         entry: uv run pylint
         language: system
         types: [python]
+        # Self-contained PEP 723 benchmark: imports uninstalled competitor frameworks
+        # (import-error) lazily inside each builder (import-outside-toplevel, intentional).
+        # pylint's ignore-paths doesn't apply to files pre-commit passes explicitly, so
+        # exclude it at the hook.
+        exclude: ^benchmarks/micro_bench\.py$

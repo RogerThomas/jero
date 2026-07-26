@@ -67,7 +67,7 @@ request/response contract, and they're verified at startup.
 <table>
 <tr>
 <td>⚡&nbsp;<strong>Fast</strong></td>
-<td>The fastest Python ASGI framework across every workload in our <a href="#performance">benchmark</a>. All introspection happens once, at startup; the request path is just dict lookup → decode → call → encode.</td>
+<td>The fastest Python ASGI framework across every workload in the <a href="#performance">benchmark</a>. All introspection happens once, at startup; the request path is just dict lookup → decode → call → encode.</td>
 </tr>
 <tr>
 <td>🎯&nbsp;<strong>Opinionated</strong></td>
@@ -219,7 +219,7 @@ ran at their genuine single-core ceilings). On the upstream-proxy scenario — w
 Python framework on the same Rust HTTP client — jero relays within ~10% of Go at an
 equal p99. On the database scenario Go pulls well clear, because there the bottleneck
 is the database driver, not the framework. jero stays the fastest Python option, but it
-isn't as fast as Go in general, and we're not claiming it is.
+isn't as fast as Go in general — and this doesn't claim it is.
 
 These are favourable, constrained conditions — single worker, one dedicated core,
 best-of-N — and a microbenchmark is not your application. See the full methodology and

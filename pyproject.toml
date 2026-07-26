@@ -143,6 +143,12 @@ ignore = [
 # The demo app is jero application code: handler params, resource fields, and Struct
 # fields are introspected at runtime, so their imports must stay runtime (not TC-gated).
 "demo_app/**" = ["TC001", "TC002", "TC003"]
+# Self-contained PEP 723 benchmark script (rendered into the performance docs). It's
+# deliberately kept simple rather than annotated to a library standard: loose annotations
+# (ANN), an assert per response (S101), a bool flag (FBT), a × / µ output table
+# (RUF001/RUF003), and a commented column legend (ERA001). ruff-format and every other
+# rule still apply.
+"benchmarks/micro_bench.py" = ["ANN", "S101", "FBT", "RUF001", "RUF003", "ERA001"]
 
 [tool.pyright]
 # Target the minimum supported version so 3.14-only APIs are caught as errors.
@@ -153,7 +159,7 @@ typeCheckingMode = "strict"
 # and emits spurious "unknown import symbol" errors the CLI run never sees.
 venvPath = "."
 venv = "./.venv"
-exclude = ["./.venv", "scratch_pad.py", "tmp.py"]
+exclude = ["./.venv", "scratch_pad.py", "tmp.py", "benchmarks/micro_bench.py"]
 
 # pytest fixtures use the `_name`-function + `@pytest.fixture(name=...)` pattern, so
 # they read as unused to pyright (pytest injects them by string). Disable the check
@@ -171,16 +177,20 @@ unused-type-ignore-comment = "ignore"
 [tool.deptry]
 # The demo app is dev/docs-only example code (not shipped) and uses dev dependencies
 # like niquests, so it isn't scanned for the package's dependency contract; error.py is
-# the throwaway error-design playground (rich, self-imports jero).
-extend_exclude = ['scratch_pad\.py', 'tmp\.py', 'demo_app/', 'error\.py']
+# the throwaway error-design playground (rich, self-imports jero). micro_bench.py is a
+# self-contained PEP 723 script: its deps (fastapi, litestar, blacksheep, …) are declared
+# inline for `uv run`, not in the package contract.
+extend_exclude = ['scratch_pad\.py', 'tmp\.py', 'demo_app/', 'error\.py', 'benchmarks/micro_bench\.py']
 
 [tool.deptry.per_rule_ignores]
 # granian is the server extra (`jero[granian]`): a CLI users run, never an import.
 DEP002 = ["granian"]
 
 [tool.pylint.main]
-# Throwaway sketches kept for reuse; don't lint them.
-ignore-paths = ['.*scratch_pad\.py$', '.*tmp\.py$']
+# Throwaway sketches kept for reuse; don't lint them. micro_bench.py is a self-contained
+# PEP 723 script: it imports uninstalled competitor frameworks (import-error) lazily
+# inside each builder (import-outside-toplevel, intentional for graceful skip-if-absent).
+ignore-paths = ['.*scratch_pad\.py$', '.*tmp\.py$', '.*benchmarks/micro_bench\.py$']
 disable = [
     "R0902",
     "R0903",
@@ -209,7 +219,9 @@ typevar-rgx = "^_?[A-Z][a-zA-Z0-9]*$"
 max-module-lines = 5000
 
 [tool.pyrefly]
-project-excludes = ["./.venv", "scratch_pad.py", "tmp.py"]
+# micro_bench.py imports competitor frameworks that aren't project deps (they're PEP 723
+# inline deps resolved by `uv run`), so type-checking it here only yields missing-imports.
+project-excludes = ["./.venv", "scratch_pad.py", "tmp.py", "benchmarks/micro_bench.py"]
 # Target the minimum supported version so 3.14-only APIs are caught as errors.
 python-version = "3.13.0"
 infer-with-first-use = false

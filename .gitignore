@@ -221,3 +221,6 @@ benchmark-results.txt
 error.py
 
 app
+
+# macOS
+.DS_Store
