@@ -8,6 +8,7 @@ returns, the docs-UI knobs, an apiKey scheme).
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Annotated, cast
 
 import pytest
@@ -1768,3 +1769,57 @@ def test_adapter_switches_error_schemas_in_the_spec() -> None:
             "default": 404,
         }
         assert "Problem" not in schemas
+
+
+# --- Favicon ---
+
+
+class FaviconApp(BaseApp):
+    """App wiring the docs with a favicon (a Path, a URL, or none)."""
+
+    def __init__(self, favicon: Path | str | None) -> None:
+        self._favicon = favicon
+        super().__init__()
+
+    async def wire(self) -> None:
+        """Serve the spec and docs with the configured favicon."""
+        self.include_endpoint(OpenEndpoint())
+        self.include_openapi(title="fav", version="1", favicon=self._favicon)
+
+
+def test_favicon_path_is_served_and_linked(tmp_path: Path) -> None:
+    """A Path favicon is read once at wiring, served precomputed at /favicon.ico,
+    linked in the default docs page, and absent from the generated document."""
+    icon = tmp_path / "icon.png"
+    icon.write_bytes(b"png-bytes")
+    with TestClient(FaviconApp(icon)) as client:
+        resp = client.get("/favicon.ico")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "image/png"
+        assert resp.content == b"png-bytes"
+        assert '<link rel="icon" href="/favicon.ico">' in client.get("/docs").text
+        assert "/favicon.ico" not in client.get("/openapi.json").json()["paths"]
+
+
+def test_favicon_url_is_linked_verbatim() -> None:
+    """A str favicon is a URL emitted verbatim in the link; nothing is served."""
+    with TestClient(FaviconApp("https://cdn.example.com/icon.svg")) as client:
+        docs = client.get("/docs").text
+        assert '<link rel="icon" href="https://cdn.example.com/icon.svg">' in docs
+        assert client.get("/favicon.ico").status_code == 404
+
+
+def test_no_favicon_means_no_link() -> None:
+    """Without a favicon the default docs page carries no icon link."""
+    with TestClient(FaviconApp(None)) as client:
+        assert 'rel="icon"' not in client.get("/docs").text
+
+
+def test_favicon_failures_are_wiring_errors(tmp_path: Path) -> None:
+    """A missing file or an unsupported suffix fails at startup, not at request time."""
+    with pytest.raises(RuntimeError, match="not readable"):
+        TestClient(FaviconApp(tmp_path / "missing.png"))
+    unsupported = tmp_path / "icon.txt"
+    unsupported.write_bytes(b"x")
+    with pytest.raises(RuntimeError, match="unsupported suffix"):
+        TestClient(FaviconApp(unsupported))

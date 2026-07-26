@@ -370,8 +370,24 @@ self.include_openapi(
     docs_path="/docs",                 # set to None to omit the UI entirely
     servers=["https://api.example.com"],
     docs_html=None,                    # supply your own HTML for offline / strict-CSP hosting
+    favicon=Path("assets/icon.png"),   # docs-page icon; or a URL string
 )
 ```
+
+### Favicon
+
+Without it, the docs page has no icon and `/favicon.ico` 404s. `favicon` takes either:
+
+- **A `Path`** (the primary case): the file is read **once at wiring** — a missing or
+  unreadable file, or a suffix other than `.ico`/`.png`/`.svg`, is a startup
+  `WiringError` — and served as a precomputed response at `/favicon.ico`. No runtime
+  file I/O, no static-file subsystem. The default docs page gets
+  `<link rel="icon" href="/favicon.ico">`.
+- **A `str`**: treated as a URL (a `data:` URI works too) and emitted verbatim in the
+  `<link>`; nothing is served.
+
+Like the spec routes, `/favicon.ico` never appears in the generated document. A custom
+`docs_html` page is never modified — reference the favicon yourself there.
 
 At startup jero logs where the docs are served (at `INFO` on the `jero` logger):
 

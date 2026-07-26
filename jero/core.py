@@ -65,6 +65,7 @@ from contextlib import (
 from dataclasses import dataclass
 from enum import Enum
 from io import BytesIO
+from pathlib import Path
 from types import NoneType, UnionType, get_original_bases
 from typing import (
     Annotated,
@@ -2083,31 +2084,57 @@ def _json_doc_handler(config: "_OpenAPIConfig") -> _Handler:
     return handler
 
 
-def _docs_handler(html: bytes) -> _Handler:
-    """A handler serving the (static) docs UI HTML page."""
+def _static_bytes_handler(body: bytes, content_type: bytes) -> _Handler:
+    """A handler serving a precomputed byte payload (the docs UI page, the favicon)."""
 
     async def handler(
         scope: Scope, receive: Receive, send: Send, path_values: dict[str, str]
     ) -> None:
         _ = (scope, receive, path_values)
         headers = [
-            (b"content-type", b"text/html; charset=utf-8"),
-            (b"content-length", str(len(html)).encode()),
+            (b"content-type", content_type),
+            (b"content-length", str(len(body)).encode()),
         ]
         await send({"type": "http.response.start", "status": 200, "headers": headers})
-        await send({"type": "http.response.body", "body": html})
+        await send({"type": "http.response.body", "body": body})
 
     return handler
 
 
-def _scalar_html(title: str, openapi_path: str) -> str:
+# Favicon media types by file suffix; anything else is a loud wiring failure.
+_FAVICON_CONTENT_TYPES: dict[str, bytes] = {
+    ".ico": b"image/x-icon",
+    ".png": b"image/png",
+    ".svg": b"image/svg+xml",
+}
+
+
+def _favicon_payload(favicon: Path) -> tuple[bytes, bytes]:
+    """Read the favicon once at wiring: its bytes and content type. Fails loud on an
+    unsupported suffix or an unreadable file — never at request time."""
+    content_type = _FAVICON_CONTENT_TYPES.get(favicon.suffix.lower())
+    if content_type is None:
+        supported = ", ".join(sorted(_FAVICON_CONTENT_TYPES))
+        raise WiringError(
+            f"include_openapi favicon {favicon} has an unsupported suffix; use {supported}",
+        )
+    try:
+        body = favicon.read_bytes()
+    except OSError as exc:
+        raise WiringError(f"include_openapi favicon {favicon} is not readable: {exc}") from exc
+    return body, content_type
+
+
+def _scalar_html(title: str, openapi_path: str, favicon_href: str | None) -> str:
     """The default docs page: Scalar's API reference, loaded from a CDN, pointed at the spec."""
+    favicon_link = f'<link rel="icon" href="{favicon_href}">\n' if favicon_href is not None else ""
     return (
         "<!doctype html>\n"
         '<html lang="en">\n'
         "<head>\n"
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        f"{favicon_link}"
         f"<title>{title}</title>\n"
         "</head>\n"
         "<body>\n"
@@ -2425,6 +2452,11 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
                 "include_error_adapter requires an ErrorBodyAdapter instance, "
                 f"got {type(adapter).__name__}",
             )
+        if getattr(type(adapter), "body_type", None) is None:
+            raise WiringError(
+                f"{type(adapter).__name__} never bound a concrete body Struct; "
+                "parameterize the class: ErrorBodyAdapter[YourBody]",
+            )
         if self._exceptions.adapter is not None:
             existing = type(self._exceptions.adapter).__name__
             raise WiringError(
@@ -2461,6 +2493,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         servers: Sequence[str] = (),
         tags: Sequence[Tag] = (),
         docs_html: str | None = None,
+        favicon: Path | str | None = None,
     ) -> None:
         """Serve an auto-generated OpenAPI 3.1 document and a docs UI.
 
@@ -2468,6 +2501,15 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         document is built once after wiring completes). ``openapi_path`` serves the JSON
         spec; ``docs_path`` serves a Scalar UI pointed at it (pass ``None`` to omit the
         UI, or ``docs_html`` to replace the page — e.g. for offline / strict-CSP hosting).
+
+        ``favicon`` gives the docs page an icon. A ``Path`` (the primary case) is read
+        once at wiring — a missing/unreadable file or an unsupported suffix
+        (``.ico``/``.png``/``.svg``) is a ``WiringError`` — and served as a precomputed
+        response at ``/favicon.ico``; no runtime file I/O. A ``str`` is a URL (a
+        ``data:`` URI works too), emitted verbatim in the page's ``<link rel="icon">``
+        with nothing served. Like the spec routes, ``/favicon.ico`` never appears in the
+        generated document. A custom ``docs_html`` page is never modified — reference
+        the favicon yourself there.
 
         ``tags`` declares document-level ``Tag``\\ s to describe operation groups and pin the
         order they appear in the docs UI. Operations may also define/use tags via their
@@ -2489,10 +2531,27 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
             openapi_path=openapi_path,
             docs_path=docs_path,
         )
+        favicon_href: str | None = None
+        if isinstance(favicon, Path):
+            body, content_type = _favicon_payload(favicon)
+            self._register(
+                "GET", _parse_template("/favicon.ico"), _static_bytes_handler(body, content_type)
+            )
+            favicon_href = "/favicon.ico"
+        elif favicon is not None:
+            favicon_href = favicon
         self._register("GET", _parse_template(openapi_path), _json_doc_handler(self._openapi))
         if docs_path is not None:
-            html = docs_html if docs_html is not None else _scalar_html(title, openapi_path)
-            self._register("GET", _parse_template(docs_path), _docs_handler(html.encode()))
+            html = (
+                docs_html
+                if docs_html is not None
+                else _scalar_html(title, openapi_path, favicon_href)
+            )
+            self._register(
+                "GET",
+                _parse_template(docs_path),
+                _static_bytes_handler(html.encode(), b"text/html; charset=utf-8"),
+            )
 
     async def create_background_tasks(
         self,

@@ -4,10 +4,11 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from types import new_class
-from typing import cast
+from typing import Annotated, cast
 
 import pytest
-from msgspec import Struct
+from msgspec import Meta, Struct
+from msgspec.json import encode
 
 from jero import (
     BaseApp,
@@ -765,6 +766,22 @@ def _define_struct_httperror(**options: object) -> str:
             {"status": 413, "description": "d", "params_field": "error_code"},
             "must be a Struct-typed field",
         ),
+        (
+            {"status": 413, "description": "d", "templates": {"error_message": "x {0}"}},
+            "must be named params",
+        ),
+        (
+            {"status": 413, "description": "d", "templates": {"error_message": "x {}"}},
+            "must be named params",
+        ),
+        (
+            {"status": 413, "description": "d", "consts": {"error_code": 123}},
+            "does not match the field's declared type",
+        ),
+        (
+            {"status": 413, "description": "d", "consts": {"error_code": True}},
+            "must be a str or int",
+        ),
     ],
 )
 def test_struct_httperror_subclass_validation(options: dict[str, object], match: str) -> None:
@@ -960,16 +977,42 @@ def test_adapter_crash_falls_back_to_problem(caplog: pytest.LogCaptureFixture) -
     assert any("CrashingAdapter" in record.message for record in caplog.records)
 
 
+def _unbound_compose(self: "ErrorBodyAdapter[HouseBody]", error: HTTPError) -> HouseBody:
+    """compose for the dynamically-built unbound adapter."""
+    _ = self
+    return HouseBody(error_code=error.type, error_message=str(error))
+
+
+class UnboundAdapterApp(BaseApp):
+    """Invalid app registering an adapter that never bound its body Struct."""
+
+    async def wire(self) -> None:
+        """Build an adapter without [B] parameterization and register it."""
+        adapter_cls = new_class(
+            "UnboundAdapter",
+            (ErrorBodyAdapter,),
+            exec_body=lambda ns: ns.update(compose=_unbound_compose),
+        )
+        self.include_error_adapter(cast("ErrorBodyAdapter[HouseBody]", adapter_cls()))
+
+
 def test_adapter_subclass_validation() -> None:
-    """Adapter declarations fail loud at class definition."""
-    with pytest.raises(TypeError, match="requires a concrete body Struct"):
-        new_class("Bad", (ErrorBodyAdapter,))
+    """A bound adapter validates at class definition; a generic intermediate (B still
+    unbound) is allowed and binds through its concrete subclasses."""
     with pytest.raises(TypeError, match="collides with a field on HouseBody"):
         new_class(
             "Bad",
             (ErrorBodyAdapter[HouseBody],),
             exec_body=lambda ns: ns.update(status_field="error_code"),
         )
+    intermediate = new_class("Intermediate", (ErrorBodyAdapter,))
+    assert not hasattr(intermediate, "body_type")
+
+
+def test_unbound_adapter_is_rejected_at_registration() -> None:
+    """Registering an adapter that never bound a body Struct is a startup failure."""
+    with pytest.raises(RuntimeError, match="never bound a concrete body Struct"):
+        TestClient(UnboundAdapterApp())
 
 
 class TwoAdaptersApp(BaseApp):
@@ -995,3 +1038,166 @@ def test_include_error_adapter_rejects_duplicates_and_non_adapters() -> None:
         TestClient(TwoAdaptersApp())
     with pytest.raises(RuntimeError, match="requires an ErrorBodyAdapter instance"):
         TestClient(NotAnAdapterApp())
+
+
+class ReservedBody(Struct, rename="camel"):
+    """A body whose leftover field name collides with the engine's attributes."""
+
+    error_message: str
+    status: int
+
+
+def test_struct_httperror_rejects_reserved_param_names() -> None:
+    """A leftover body field named like an engine attribute cannot become a param —
+    in the dataclass tier it would shadow the class contract (e.g. the status line)."""
+    with pytest.raises(TypeError, match="reserved by the error engine"):
+        new_class("Bad", (StructHTTPError[ReservedBody],), {"status": 400, "description": "d"})
+
+
+def test_direct_base_httperror_subclass_is_rejected() -> None:
+    """BaseHTTPError cannot be subclassed directly; pick a family."""
+    with pytest.raises(TypeError, match="subclasses BaseHTTPError directly"):
+        new_class("Weird", (BaseHTTPError,), {"status": 418})
+
+
+class AnnotatedBody(Struct, rename="camel"):
+    """A body using Annotated fields (the msgspec.Meta idiom)."""
+
+    error_message: Annotated[str, Meta(description="human text")]
+    status_code: Annotated[int, Meta(ge=400)]
+
+
+@dataclass
+class AnnotatedError(
+    StructHTTPError[AnnotatedBody],
+    status=418,
+    description="Annotated",
+    templates={"error_message": "hello {name}"},
+    status_field="status_code",
+):
+    """Annotated template/status fields validate through the Meta wrapper."""
+
+    name: str
+
+
+def test_struct_httperror_supports_annotated_fields() -> None:
+    """Annotated[str/int, Meta] fields validate at class creation and render."""
+    error = AnnotatedError(name="name")
+    assert encode(error.response_body) == (b'{"errorMessage":"hello name","statusCode":418}')
+
+
+@dataclass(frozen=True)
+class FrozenHouseError(
+    StructHTTPError[HouseBody],
+    status=422,
+    description="Frozen",
+    consts={"error_code": "frozen"},
+    templates={"error_message": "{why}"},
+):
+    """A frozen dataclass error: binding must not hit FrozenInstanceError."""
+
+    why: str
+
+
+def test_frozen_dataclass_error_binds() -> None:
+    """A frozen @dataclass subclass raises and renders normally."""
+    error = FrozenHouseError(why="why")
+    assert error.status == 422
+    assert encode(error.response_body) == b'{"errorCode":"frozen","errorMessage":"why"}'
+
+
+class TaggedBody(Struct, tag=True, rename="camel"):
+    """A tagged body: the composed wire model must keep the tag."""
+
+    error_message: str
+
+
+class TaggedHouseError(StructHTTPError[TaggedBody], status=422, description="Tagged"):
+    """Kwargs-tier error over a tagged body."""
+
+
+def test_tagged_body_keeps_its_tag_on_the_wire() -> None:
+    """The wire model carries the body's tag, matching B's own encoding."""
+    error = TaggedHouseError(error_message="m")
+    assert encode(error.response_body) == encode(error.body)
+    assert b'"type":"TaggedBody"' in encode(error.response_body)
+
+
+class KwargsTemplatedError(
+    StructHTTPError[HouseBody],
+    status=422,
+    description="Kwargs templated",
+    consts={"error_code": "kwargs-templated"},
+    templates={"error_message": "hello {name}"},
+):
+    """Kwargs tier with a rendered template (templates aren't dataclass-tier-only)."""
+
+
+def test_struct_httperror_kwargs_tier_renders_templates() -> None:
+    """The kwargs tier renders templates from the flat param namespace."""
+    error = KwargsTemplatedError(name="name")
+    assert encode(error.response_body) == (
+        b'{"errorCode":"kwargs-templated","errorMessage":"hello name"}'
+    )
+
+
+class KwOnlyBody(Struct, rename="camel", kw_only=True):
+    """A kw_only body: the adapter must compose by field name, not positionally."""
+
+    error_code: str
+    error_message: str
+
+
+class KwOnlyAdapter(ErrorBodyAdapter[KwOnlyBody]):
+    """Adapter over a kw_only body."""
+
+    status_field = "status_code"
+
+    def compose(self, error: HTTPError) -> KwOnlyBody:
+        return KwOnlyBody(error_code=error.type, error_message=str(error))
+
+
+class KwOnlyAdaptedApp(BaseApp):
+    """App with the kw_only adapter registered."""
+
+    async def wire(self) -> None:
+        """Register the adapter and a probe endpoint."""
+        self.include_error_adapter(KwOnlyAdapter())
+        self.include_endpoint(AdapterProbeEndpoint())
+
+
+def test_adapter_supports_kw_only_bodies() -> None:
+    """A kw_only body renders through the adapter — never a silent Problem fallback."""
+    with TestClient(KwOnlyAdaptedApp()) as client:
+        resp = client.get("/nope")
+    assert resp.json() == {
+        "errorCode": "not-found",
+        "errorMessage": "Not found",
+        "statusCode": 404,
+    }
+
+
+class StructReturningHandler:
+    """Translate the domain exception into a Struct-family error."""
+
+    def handle_exception(self, exception: DomainBoomError) -> PlainHouseError:
+        """Return the translated Struct-family error."""
+        _ = exception
+        return PlainHouseError(error_code="translated", error_message="boom")
+
+
+class StructHandlerApp(BaseApp):
+    """App whose handler returns a StructHTTPError."""
+
+    async def wire(self) -> None:
+        """Register the handler and the probe endpoint."""
+        self.add_exception_handler(StructReturningHandler())
+        self.include_endpoint(AdapterProbeEndpoint())
+
+
+def test_handler_may_return_a_struct_family_error() -> None:
+    """A custom handler's StructHTTPError return renders itself."""
+    with TestClient(StructHandlerApp()) as client:
+        resp = client.get("/errors", params={"mode": "translated"})
+    assert resp.status_code == 422
+    assert resp.json() == {"errorCode": "translated", "errorMessage": "boom"}

@@ -281,7 +281,10 @@ These pull against each other constantly; keep all three in mind on every change
   `Location` / `Link` responses, typed Problem Details errors, structurally registered
   custom exception handlers, `TestClient`, the test suite. **OpenAPI 3.1**:
   `include_openapi` serves `/openapi.json` + a Scalar `/docs` UI, derived from the
-  wired types (sources, returns incl. generics, `msgspec.Meta`). **Docstrings are never
+  wired types (sources, returns incl. generics, `msgspec.Meta`); `favicon=` (Path read
+  once at wiring → precomputed `/favicon.ico` route + `<link>` in the default page;
+  str → URL linked verbatim; bad file/suffix is a `WiringError`; the route is never
+  documented). **Docstrings are never
   published** — public prose is explicit: `OperationMeta` (summary/description), `ModelMeta`
   via `jero.Struct`'s `meta=` class keyword (model description, attached through a
   `msgspec.StructMeta` subclass), field `Meta`. `SecurityScheme` / `BearerAuth` /

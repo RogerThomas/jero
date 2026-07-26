@@ -17,10 +17,10 @@ from collections.abc import Mapping
 from dataclasses import fields as dataclass_fields
 from string import Formatter
 from types import get_original_bases
-from typing import Any, ClassVar, Literal, cast, get_args, get_origin
+from typing import Annotated, Any, ClassVar, Literal, cast, get_args, get_origin
 
 from msgspec import Struct, defstruct
-from msgspec.structs import FieldInfo, asdict, astuple, fields
+from msgspec.structs import FieldInfo, asdict, fields
 
 
 class Problem(Struct, kw_only=True, omit_defaults=True):
@@ -62,6 +62,11 @@ class BaseHTTPError(Exception):
         super().__init_subclass__()
         if _abstract:
             return
+        if BaseHTTPError in cls.__bases__:
+            raise TypeError(
+                f"{cls.__name__} subclasses BaseHTTPError directly; subclass HTTPError "
+                "(Problem Details) or StructHTTPError (your own body Struct) instead",
+            )
         if status is None:
             raise TypeError(f"{cls.__name__} is missing required class option 'status'")
         if not isinstance(status, int) or isinstance(status, bool) or not 400 <= status <= 599:
@@ -106,6 +111,12 @@ def _validated_status_field(
             f"{body_type.__name__}; the framework adds that field when composing the wire body"
         )
     return status_field
+
+
+def _unwrap_annotated(ann: object) -> object:
+    """The bare type under ``Annotated[...]`` — msgspec ``Meta`` rides along on wire
+    fields but must not defeat the engine's type checks."""
+    return get_args(ann)[0] if get_origin(ann) is Annotated else ann
 
 
 def _literal_of(value: object) -> type:
@@ -283,6 +294,30 @@ class DataclassHTTPError[P: Struct](ParameterizedHTTPError[P], ABC, _abstract=Tr
         """Build the params Struct by calling ``self._set_params(...)``."""
 
 
+# Names the engine itself uses as class/instance attributes; a raise-time param with
+# one of these names (a dataclass field especially) would shadow the class contract —
+# e.g. a `status` param overriding the validated status line.
+_RESERVED_PARAM_NAMES = frozenset(
+    {
+        "args",
+        "body",
+        "body_type",
+        "consts",
+        "description",
+        "param_body_fields",
+        "param_names",
+        "params",
+        "params_field",
+        "params_struct",
+        "response_body",
+        "status",
+        "status_field",
+        "templates",
+        "wire_model",
+    }
+)
+
+
 class _EngineSpec:
     """The parsed StructHTTPError class options (internal plumbing, not exported)."""
 
@@ -385,18 +420,52 @@ def _field_sources(
 def _validate_text_sources(
     cls_name: str, body_fields: dict[str, FieldInfo], spec: _EngineSpec
 ) -> None:
-    """Template-fed fields must be strings with placeholders; the status field an int."""
+    """Template-fed fields must be strings with named placeholders; the status field
+    an int. ``Annotated[...]`` wrappers (msgspec ``Meta``) are looked through."""
     for name, template in spec.templates.items():
-        if body_fields[name].type is not str:
+        if _unwrap_annotated(body_fields[name].type) is not str:
             raise TypeError(f"{cls_name} templates carry text; field {name!r} is not a str")
-        if not _template_placeholders(template):
+        placeholders = _template_placeholders(template)
+        if not placeholders:
             raise TypeError(
                 f"{cls_name} template for {name!r} references no placeholders — "
                 "use consts for a fixed value",
             )
+        for placeholder in placeholders:
+            if not placeholder.isidentifier():
+                raise TypeError(
+                    f"{cls_name} template for {name!r} uses placeholder "
+                    f"{{{placeholder}}}; placeholders must be named params",
+                )
     status_field = spec.status_field
-    if status_field is not None and body_fields[status_field].type is not int:
+    if status_field is not None and _unwrap_annotated(body_fields[status_field].type) is not int:
         raise TypeError(f"{cls_name} status_field {status_field!r} must be an int field")
+
+
+def _validate_const_values(
+    cls_name: str, body_fields: dict[str, FieldInfo], consts: dict[str, object]
+) -> None:
+    """Const values must be Literal-able scalars matching the field's declared type —
+    a mismatch would otherwise surface as an ill-typed wire body, or an unattributable
+    msgspec error when the OpenAPI document is built."""
+    for name, value in consts.items():
+        if not isinstance(value, (str, int)) or isinstance(value, bool):
+            raise TypeError(
+                f"{cls_name} consts[{name!r}] must be a str or int (schema consts are "
+                f"Literal-typed), got {type(value).__name__}",
+            )
+        field_type = _unwrap_annotated(body_fields[name].type)
+        if get_origin(field_type) is Literal:
+            if value not in get_args(field_type):
+                raise TypeError(
+                    f"{cls_name} consts[{name!r}] value {value!r} is not among the "
+                    "field's literal values",
+                )
+        elif not (isinstance(field_type, type) and isinstance(value, field_type)):
+            raise TypeError(
+                f"{cls_name} consts[{name!r}] value {value!r} does not match the "
+                "field's declared type",
+            )
 
 
 def _params_nesting(
@@ -405,7 +474,7 @@ def _params_nesting(
     """Resolve the params_field's Struct type and its field names (the nested params)."""
     if spec.params_field is None:
         return None, ()
-    nested_type = body_fields[spec.params_field].type
+    nested_type = _unwrap_annotated(body_fields[spec.params_field].type)
     if not (isinstance(nested_type, type) and issubclass(nested_type, Struct)):
         raise TypeError(
             f"{cls_name} params_field {spec.params_field!r} must be a Struct-typed field",
@@ -420,7 +489,8 @@ def _validate_coverage(
     nested_params: tuple[str, ...],
     param_body_fields: tuple[str, ...],
 ) -> frozenset[str]:
-    """Enforce one flat param namespace; returns the templates' placeholder names."""
+    """Enforce one flat param namespace (no reserved names); returns the full
+    raise-time param namespace."""
     ambiguous = set(nested_params) & set(param_body_fields)
     if ambiguous:
         names = ", ".join(sorted(ambiguous))
@@ -438,19 +508,31 @@ def _validate_coverage(
             f"{cls_name} template placeholder(s) {names} collide with declared body-field "
             "sources; placeholders are raise-time params",
         )
-    return placeholder_names
+    param_names = frozenset(param_body_fields) | frozenset(nested_params) | placeholder_names
+    reserved = param_names & _RESERVED_PARAM_NAMES
+    if reserved:
+        names = ", ".join(sorted(reserved))
+        raise TypeError(
+            f"{cls_name} param name(s) {names} are reserved by the error engine; "
+            "rename the body field, nested field, or placeholder",
+        )
+    return param_names
 
 
 def _engine_wire_model(
-    wire_name: str,
+    error_cls: type,
     body_type: type[Struct],
     body_fields: dict[str, FieldInfo],
     spec: _EngineSpec,
     status: int,
 ) -> type[Struct]:
-    """Compose the wire model: ``B``'s shape and wire names, const-fed fields narrowed
-    to ``Literal`` types with the pinned value as default — schema enum consts, and
-    raise-time construction only supplies the variable fields."""
+    """Compose the wire model: ``B``'s shape, wire names, and tag config, const-fed
+    fields narrowed to ``Literal`` types with the pinned value as default — schema enum
+    consts, and raise-time construction only supplies the variable fields. The model's
+    module is the error class's qualname (unique per error class), keeping it distinct
+    from a same-named user Struct in msgspec's schema pass."""
+    wire_name = error_cls.__name__.removesuffix("Error") or error_cls.__name__
+    owner_module = f"{error_cls.__module__}.{error_cls.__qualname__}"
     pinned: dict[str, object] = dict(spec.consts)
     model_fields: list[object] = []
     for name, field in body_fields.items():
@@ -460,12 +542,15 @@ def _engine_wire_model(
             model_fields.append((name, _literal_of(status), status))
         else:
             model_fields.append((name, field.type))
+    config = body_type.__struct_config__
     return defstruct(
         wire_name,
         cast("list[tuple[str, type]]", model_fields),
         kw_only=True,  # lifts default-ordering rules, so B's field order is kept
         rename={field.name: field.encode_name for field in fields(body_type)},
-        module=body_type.__module__,
+        module=owner_module,
+        tag=config.tag,
+        tag_field=config.tag_field,
     )
 
 
@@ -527,6 +612,8 @@ class StructHTTPError[B: Struct](BaseHTTPError, _abstract=True):
     param_names: ClassVar[frozenset[str]]  # all raise-time params (incl. template-only)
     _nested_params: ClassVar[tuple[str, ...]]  # the params_field Struct's field names
 
+    params: dict[str, object]  # the bound raise-time params (set by _bind)
+
     def __init_subclass__(cls, **options: object) -> None:
         abstract = options.pop("_abstract", False)
         if abstract is True:
@@ -543,13 +630,13 @@ class StructHTTPError[B: Struct](BaseHTTPError, _abstract=True):
 
         sources = _field_sources(cls.__name__, body_type.__name__, body_fields, spec)
         _validate_text_sources(cls.__name__, body_fields, spec)
+        _validate_const_values(cls.__name__, body_fields, spec.consts)
         params_struct, nested_params = _params_nesting(cls.__name__, body_fields, spec)
         param_body_fields = tuple(name for name in body_fields if name not in sources)
-        placeholder_names = _validate_coverage(
+        param_names = _validate_coverage(
             cls.__name__, spec, sources, nested_params, param_body_fields
         )
-        wire_name = cls.__name__.removesuffix("Error") or cls.__name__
-        cls.wire_model = _engine_wire_model(wire_name, body_type, body_fields, spec, cls.status)
+        cls.wire_model = _engine_wire_model(cls, body_type, body_fields, spec, cls.status)
 
         cls.description = spec.description
         cls.body_type = body_type
@@ -559,9 +646,7 @@ class StructHTTPError[B: Struct](BaseHTTPError, _abstract=True):
         cls.params_field = spec.params_field
         cls.params_struct = params_struct
         cls.param_body_fields = param_body_fields
-        cls.param_names = (
-            frozenset(param_body_fields) | frozenset(nested_params) | placeholder_names
-        )
+        cls.param_names = param_names
         cls._nested_params = nested_params
 
     def __init__(self, **params: object) -> None:
@@ -598,7 +683,8 @@ class StructHTTPError[B: Struct](BaseHTTPError, _abstract=True):
         self._bind({name: getattr(self, name) for name in declared})
 
     def _bind(self, params: dict[str, object]) -> None:
-        self.params = params
+        # object.__setattr__, so frozen @dataclass subclasses can bind too.
+        object.__setattr__(self, "params", params)
         Exception.__init__(self, self.description)
 
     def _variable_values(self) -> dict[str, object]:
@@ -649,7 +735,9 @@ class ErrorBodyAdapter[B: Struct](ABC):
         super().__init_subclass__()
         body_type = _resolve_struct_arg(cls, ErrorBodyAdapter)
         if body_type is None:
-            raise TypeError("ErrorBodyAdapter subclass requires a concrete body Struct")
+            # A generic intermediate (B still unbound) — concrete subclasses bind and
+            # validate; registering an unbound adapter fails at include_error_adapter.
+            return
         cls.body_type = body_type
         cls.status_field = _validated_status_field(cls.status_field, body_type, "ErrorBodyAdapter")
         cls._wire_models = {}
@@ -682,7 +770,13 @@ class ErrorBodyAdapter[B: Struct](ABC):
             )
         if self.status_field is None:
             return body
-        return self._wire_model_for(error.status)(*astuple(body), error.status)
+        # Compose by field name: works for kw_only bodies, and a compose() returning a
+        # body *subclass* contributes only the declared fields.
+        values: dict[str, object] = {
+            field.name: getattr(body, field.name) for field in fields(self.body_type)
+        }
+        values[self.status_field] = error.status
+        return self._wire_model_for(error.status)(**values)
 
     def docs_model(self, status: int) -> type[Struct]:
         """The wire model documented for errors of ``status`` — what the OpenAPI build

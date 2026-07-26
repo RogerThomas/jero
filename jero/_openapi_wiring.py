@@ -227,7 +227,7 @@ def _exception_entries(
     a status merge into one entry whose body is a ``oneOf`` of their schemas."""
     declared: dict[type[BaseHTTPError], None] = {}
     for meta in (spec.class_meta, spec.op_meta):
-        entries = cast("Sequence[object]", getattr(meta, "exceptions", ()) if meta else ())
+        entries = cast("Sequence[object]", meta.exceptions if meta is not None else ())
         for entry in entries:
             concrete = (
                 isinstance(entry, type)
@@ -246,7 +246,7 @@ def _exception_entries(
     responses: list[ResponseEntry] = []
     for status, classes in by_status.items():
         description = " / ".join(dict.fromkeys(_error_description(cls) for cls in classes))
-        models = tuple(_exception_docs_model(cls, adapter) for cls in classes)
+        models = tuple(dict.fromkeys(_exception_docs_model(cls, adapter) for cls in classes))
         if len(models) == 1:
             responses.append(
                 ResponseEntry(status, description, "application/json", model=models[0])
