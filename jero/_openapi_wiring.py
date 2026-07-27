@@ -26,12 +26,17 @@ from jero._wiring_types import (
     strip_list,
 )
 from jero.errors import (
+    AuthenticationRequiredError,
     BaseHTTPError,
     ErrorBodyAdapter,
     HTTPError,
+    InternalServerError,
+    MalformedRequestError,
+    NotFoundError,
     ParameterizedHTTPError,
-    Problem,
     StructHTTPError,
+    UnsupportedMediaTypeError,
+    ValidationFailedError,
 )
 from jero.openapi import (
     BodySpec,
@@ -256,34 +261,48 @@ def _exception_entries(
     return responses
 
 
+# Each framework-generated error status maps to the built-in error it is raised as, so a
+# derived response documents that error's real body — parameterized errors (400/422)
+# contribute their ``detail`` + ``params`` schema — and stays consistent with the
+# ``exceptions=``-declared path, which runs the same class through the same helpers.
+_STATUS_ERRORS: dict[int, type[BaseHTTPError]] = {
+    400: MalformedRequestError,
+    422: ValidationFailedError,
+    415: UnsupportedMediaTypeError,
+    404: NotFoundError,
+    401: AuthenticationRequiredError,
+    500: InternalServerError,
+}
+
+
 def _error_responses(
     sources: Sources, *, authed: bool, adapter: ErrorBodyAdapter[Any] | None
 ) -> list[ResponseEntry]:
     """The error responses a handler can actually produce, derived from its sources. Each
-    references the shared RFC 9457 ``Problem`` schema — the wire body every framework
-    ``HTTPError`` encodes to (``application/json``) — or, when an error body adapter is
-    registered, the adapter's per-status body (what the wire really carries)."""
+    documents the built-in error it is raised as: the RFC 9457 Problem body — with
+    ``detail`` + ``params`` for the parameterized 400/422 — or, when an error body adapter
+    is registered, the adapter's per-status body (what the wire really carries)."""
     has_body = sources.json_decoder is not None or sources.form is not None
-    statuses: dict[int, str] = {}
+    statuses: list[int] = []
     if has_body or sources.params is not None or sources.headers is not None:
-        statuses[400] = "Bad request"
+        statuses.append(400)
     if has_body:
-        statuses[422] = "Request failed validation"
+        statuses.append(422)
     if sources.form is not None:
-        statuses[415] = "Unsupported media type"
+        statuses.append(415)
     if sources.path is not None:
-        statuses[404] = "Not found"
+        statuses.append(404)
     if authed:
-        statuses[401] = "Authentication required"
-    statuses[500] = "Internal server error"
+        statuses.append(401)
+    statuses.append(500)
     return [
         ResponseEntry(
             status,
-            detail,
+            _error_description(_STATUS_ERRORS[status]),
             "application/json",
-            model=Problem if adapter is None else adapter.docs_model(status),
+            model=_exception_docs_model(_STATUS_ERRORS[status], adapter),
         )
-        for status, detail in statuses.items()
+        for status in statuses
     ]
 
 

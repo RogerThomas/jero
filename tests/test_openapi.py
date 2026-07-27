@@ -8,6 +8,7 @@ returns, the docs-UI knobs, an apiKey scheme).
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, cast
 
@@ -33,6 +34,7 @@ from jero import (
     Resource,
     ResourceMeta,
     ResponseSpec,
+    ScalarConfig,
     SecurityScheme,
     SSEResponse,
     StreamingResponse,
@@ -141,16 +143,22 @@ def test_msgspec_meta_constraints_appear_in_schema(client: TestClient) -> None:
     assert price["minimum"] == 0
 
 
-def test_shared_error_schema_is_present(client: TestClient) -> None:
-    """Derived error responses point at the shared RFC 9457 Problem component."""
+def test_derived_error_schema_is_per_class(client: TestClient) -> None:
+    """Derived error responses point at per-class Problem models. The 422 documents the
+    parameterized validation body: ``type``/``status`` consts (clients dispatch on
+    ``type``), a human ``detail``, and the typed ``params``."""
     document = client.get("/openapi.json").json()
-    problem = document["components"]["schemas"]["Problem"]["properties"]
-    assert problem["type"] == {"type": "string"}
-    assert problem["title"] == {"type": "string"}
-    assert problem["status"] == {"type": "integer"}
-    error_ref = {"$ref": "#/components/schemas/Problem"}
+    schemas = document["components"]["schemas"]
     create = document["paths"]["/widgets"]["post"]["responses"]
-    assert create["422"]["content"]["application/json"]["schema"] == error_ref
+    assert create["422"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ValidationFailedProblem"
+    }
+    problem = schemas["ValidationFailedProblem"]["properties"]
+    assert problem["type"] == {"const": "validation-failed"}
+    assert problem["status"] == {"const": 422}
+    assert problem["detail"] == {"type": "string"}
+    assert problem["params"] == {"$ref": "#/components/schemas/ErrorReason"}
+    assert schemas["ErrorReason"]["properties"]["reason"] == {"type": "string"}
 
 
 def test_streaming_content_types(client: TestClient) -> None:
@@ -1646,11 +1654,11 @@ def test_declared_exceptions_derive_and_cascade() -> None:
             "$ref": "#/components/schemas/TeapotStruct"
         }
         schemas = document["components"]["schemas"]
-        assert schemas["WidgetGoneProblem"]["properties"]["type"] == {"enum": ["widget-gone"]}
-        assert schemas["WidgetGoneProblem"]["properties"]["status"] == {"enum": [410]}
-        assert schemas["Quota"]["properties"]["statusCode"] == {"enum": [429], "default": 429}
+        assert schemas["WidgetGoneProblem"]["properties"]["type"] == {"const": "widget-gone"}
+        assert schemas["WidgetGoneProblem"]["properties"]["status"] == {"const": 410}
+        assert schemas["Quota"]["properties"]["statusCode"] == {"const": 429, "default": 429}
         assert schemas["Quota"]["properties"]["errorCode"] == {
-            "enum": ["quota-exceeded"],
+            "const": "quota-exceeded",
             "default": "quota-exceeded",
         }
 
@@ -1660,7 +1668,7 @@ def test_declared_parameterized_error_documents_params() -> None:
     with TestClient(DeclaredErrorsApp()) as client:
         schemas = client.get("/openapi.json").json()["components"]["schemas"]
         missing = schemas["MissingPartProblem"]
-        assert missing["properties"]["type"] == {"enum": ["missing-part"]}
+        assert missing["properties"]["type"] == {"const": "missing-part"}
         assert missing["properties"]["detail"] == {"type": "string"}
         assert missing["properties"]["params"] == {"$ref": "#/components/schemas/MissingPartParams"}
 
@@ -1765,7 +1773,7 @@ def test_adapter_switches_error_schemas_in_the_spec() -> None:
         }
         schemas = document["components"]["schemas"]
         assert schemas["ErrorBody404"]["properties"]["statusCode"] == {
-            "enum": [404],
+            "const": 404,
             "default": 404,
         }
         assert "Problem" not in schemas
@@ -1823,3 +1831,192 @@ def test_favicon_failures_are_wiring_errors(tmp_path: Path) -> None:
     unsupported.write_bytes(b"x")
     with pytest.raises(RuntimeError, match="unsupported suffix"):
         TestClient(FaviconApp(unsupported))
+
+
+# --- Param Structs are inlined into `parameters`, not emitted as components ---
+
+
+class PruneSlug(StrEnum):
+    """A nested enum referenced by a query param field."""
+
+    A = "a"
+    B = "b"
+
+
+class PruneConvPath(Struct):
+    """Path param source — expanded into `parameters`, never `$ref`'d."""
+
+    conversation_id: str
+
+
+class PruneSearchQuery(Struct):
+    """Query param source — expanded into `parameters`, never `$ref`'d."""
+
+    slug: PruneSlug = PruneSlug.A
+
+
+class PruneEchoBody(Struct):
+    """A request/response body — referenced, so it stays a component."""
+
+    value: int
+
+
+class PruneEndpoint(Endpoint, path="/c/{conversation_id}"):
+    """Binds a path Struct, a query Struct, and a body Struct."""
+
+    async def post(
+        self, path: PruneConvPath, params: PruneSearchQuery, json: PruneEchoBody
+    ) -> PruneEchoBody:
+        """Echo the body; the point is the generated schema, not the behaviour."""
+        _ = (path, params)
+        return json
+
+
+class PruneApp(BaseApp):
+    """Expose the endpoint plus the OpenAPI document."""
+
+    async def wire(self) -> None:
+        """Wire the docs and the endpoint."""
+        self.include_openapi(title="t", version="1")
+        self.include_endpoint(PruneEndpoint())
+
+
+def test_param_only_structs_are_not_emitted_as_components() -> None:
+    """A path/query Struct is expanded field-by-field into `parameters`, so its own
+    component is pruned — while a nested enum it references (reachable via the inlined
+    params) and the body/response model are kept."""
+    with TestClient(PruneApp()) as client:
+        document = client.get("/openapi.json").json()
+    schemas = document["components"]["schemas"]
+    assert "PruneConvPath" not in schemas
+    assert "PruneSearchQuery" not in schemas
+    assert "PruneSlug" in schemas
+    assert "PruneEchoBody" in schemas
+    params = {
+        (p["name"], p["in"])
+        for p in document["paths"]["/c/{conversation_id}"]["post"]["parameters"]
+    }
+    assert params == {("conversation_id", "path"), ("slug", "query")}
+
+
+class SharedInfo(Struct):
+    """Used as *both* a path param source and the response model."""
+
+    conversation_id: str
+
+
+class SharedEndpoint(Endpoint, path="/y/{conversation_id}"):
+    """Binds the path Struct that is also returned as the response body."""
+
+    async def get(self, path: SharedInfo) -> SharedInfo:
+        """Return the path Struct as the body."""
+        return path
+
+
+class SharedApp(BaseApp):
+    """Expose the shared-Struct endpoint plus the OpenAPI document."""
+
+    async def wire(self) -> None:
+        """Wire the docs and the endpoint."""
+        self.include_openapi(title="t", version="1")
+        self.include_endpoint(SharedEndpoint())
+
+
+def test_param_struct_also_used_as_a_body_is_kept() -> None:
+    """A Struct used as a param *and* a response is referenced, so it is not pruned."""
+    with TestClient(SharedApp()) as client:
+        document = client.get("/openapi.json").json()
+    schemas = document["components"]["schemas"]
+    assert "SharedInfo" in schemas
+    response = document["paths"]["/y/{conversation_id}"]["get"]["responses"]["200"]
+    assert response["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/SharedInfo"
+    }
+
+
+# --- scalar_config passthrough to the Scalar UI ---
+
+
+class DocsConfigEndpoint(Endpoint, path="/dc"):
+    """A trivial endpoint so the app has an operation to document."""
+
+    async def get(self) -> PruneEchoBody:
+        """Return a trivial body."""
+        return PruneEchoBody(value=1)
+
+
+class DocsConfigApp(BaseApp):
+    """Serve docs with a Scalar config passthrough."""
+
+    async def wire(self) -> None:
+        """Wire docs (with scalar_config) and the endpoint."""
+        self.include_openapi(title="t", version="1", scalar_config=ScalarConfig(hide_models=True))
+        self.include_endpoint(DocsConfigEndpoint())
+
+
+def test_scalar_config_forwarded_to_scalar_ui() -> None:
+    """A ScalarConfig's set fields render as Scalar's data-configuration (HTML-escaped JSON)."""
+    with TestClient(DocsConfigApp()) as client:
+        page = client.get("/docs").text
+    assert 'data-configuration="{&quot;hideModels&quot;:true}"' in page
+
+
+def test_scalar_config_absent_by_default() -> None:
+    """No scalar_config → no data-configuration attribute; the default page is unchanged."""
+    with TestClient(PruneApp()) as client:
+        page = client.get("/docs").text
+    assert "data-configuration" not in page
+
+
+# --- Param prune follows discriminator mappings when scanning references ---
+
+
+class TagA(Struct, tag=True):
+    """One member of a tagged union."""
+
+    a: int
+
+
+class TagB(Struct, tag=True):
+    """The other member of a tagged union."""
+
+    b: int
+
+
+class TaggedParamPath(Struct):
+    """A path param source alongside a tagged-union response."""
+
+    id: str
+
+
+class TaggedStreamEndpoint(Endpoint, path="/t/{id}"):
+    """An op with a param (triggers the prune) and a tagged-union NDJSON response."""
+
+    async def _items(self) -> AsyncIterator[TagA | TagB]:
+        """Yield a union item."""
+        yield TagA(a=1)
+
+    async def get(self, path: TaggedParamPath) -> NDJSONStreamingResponse[TagA | TagB]:
+        """Stream the tagged union."""
+        _ = path
+        return NDJSONStreamingResponse(stream=self._items())
+
+
+class TaggedStreamApp(BaseApp):
+    """Expose the tagged-union streaming endpoint plus the docs."""
+
+    async def wire(self) -> None:
+        """Wire docs and the endpoint."""
+        self.include_openapi(title="t", version="1")
+        self.include_endpoint(TaggedStreamEndpoint())
+
+
+def test_param_prune_keeps_tagged_union_members_via_discriminator() -> None:
+    """With a param (triggering the prune) and a tagged-union response, the reference scan
+    follows the discriminator mapping — so union members survive while the param Struct is
+    dropped."""
+    with TestClient(TaggedStreamApp()) as client:
+        schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    assert "TaggedParamPath" not in schemas
+    assert "TagA" in schemas
+    assert "TagB" in schemas

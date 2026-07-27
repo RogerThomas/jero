@@ -23,6 +23,23 @@ fails validation) is deliberate and follows the binding source: a body that isn'
 JSON is 400; valid JSON that doesn't match the `Struct` is 422. A bad *path* value is
 404, because a segment that doesn't convert doesn't identify a resource.
 
+These framework decode/validation errors don't just report *that* something failed —
+they surface msgspec's own message as the human `detail`, with the same string available,
+typed, under `params.reason`:
+
+```json
+{
+  "type": "validation-failed", "title": "Validation failed", "status": 422,
+  "detail": "Expected `int`, got `str` - at `$.priceCents`",
+  "params": {"reason": "Expected `int`, got `str` - at `$.priceCents`"}
+}
+```
+
+The message names the failing field and its JSON path, never the submitted value, so it
+is safe to return; it is for humans and logs, so keep dispatching on `type`, not on
+parsing `detail`. msgspec stops at the first invalid field, so a response reports one
+failure at a time rather than a collected list.
+
 ## Problem Details errors
 
 Every framework and application `HTTPError` uses a typed Problem Details body. jero's

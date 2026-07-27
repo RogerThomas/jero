@@ -24,6 +24,7 @@ from jero.errors import (
     ConflictError,
     DataclassHTTPError,
     ErrorBodyAdapter,
+    ErrorReason,
     ForbiddenError,
     GoneError,
     HTTPError,
@@ -42,7 +43,7 @@ from jero.errors import (
 from jero.forms import FilePart, FormPart
 from jero.headers import RawHeaders
 from jero.links import Link, Location
-from jero.openapi import ModelMeta, ResponseSpec, SecurityScheme, Tag
+from jero.openapi import ModelMeta, ResponseSpec, ScalarConfig, SecurityScheme, Tag
 from jero.streaming import NDJSONStreamingResponse, ServerSentEvent, SSEResponse, StreamingResponse
 from jero.structs import Struct
 
@@ -61,6 +62,7 @@ __all__ = [
     "Endpoint",
     "EndpointMeta",
     "ErrorBodyAdapter",
+    "ErrorReason",
     "ExceptionResponse",
     "FilePart",
     "ForbiddenError",
@@ -85,6 +87,7 @@ __all__ = [
     "ResourceMeta",
     "ResponseSpec",
     "SSEResponse",
+    "ScalarConfig",
     "SecurityScheme",
     "ServerSentEvent",
     "StreamingResponse",

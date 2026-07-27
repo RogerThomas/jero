@@ -517,3 +517,23 @@ def test_meta_constrained_scalar_form_field_binds_and_is_enforced() -> None:
     with TestClient(ConstrainedFormApp()) as client:
         assert client.post("/constrained-form", data={"quantity": "3"}).status_code == 200
         assert client.post("/constrained-form", data={"quantity": "0"}).status_code == 422
+
+
+def test_non_utf8_scalar_form_part_is_422() -> None:
+    """A scalar part whose raw bytes are not valid UTF-8 fails conversion with 422."""
+    boundary = b"bad-utf8-boundary"
+    body = b"".join(
+        [
+            b"--" + boundary + b"\r\n",
+            b'Content-Disposition: form-data; name="quantity"\r\n',
+            b"\r\n\xff\xfe\r\n",
+            b"--" + boundary + b"--\r\n",
+        ]
+    )
+    with TestClient(ConstrainedFormApp()) as client:
+        resp = client.post(
+            "/constrained-form",
+            content=body,
+            headers={"content-type": "multipart/form-data; boundary=bad-utf8-boundary"},
+        )
+    assert resp.status_code == 422
