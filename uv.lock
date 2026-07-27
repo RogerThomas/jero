@@ -406,7 +406,7 @@ wheels = [
 
 [[package]]
 name = "jero"
-version = "0.0.46"
+version = "0.0.47"
 source = { editable = "." }
 dependencies = [
     { name = "msgspec" },
