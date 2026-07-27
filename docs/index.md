@@ -114,7 +114,8 @@ New here? Start with [Getting Started](getting-started.md).
 - **Background tasks** — drop a typed `Struct` on an in-process queue; a worker dispatches
   it to the handler registered for its type, drained at shutdown. [→](guide/background-tasks.md)
 - **Auth that's checked at startup** — the `user` type is verified against the
-  authenticator before the app serves a request. [→](guide/auth.md)
+  authenticator before the app serves a request; return `User | None` from it and anonymous
+  callers bind `user=None` while bad credentials are still a 401. [→](guide/auth.md)
 - **Lifecycle without a DI container** — hand-wire in `wire`, open resources on exit
   stacks, group construction in a `BaseFactory`. [→](guide/wiring.md)
 - **REST semantics for free** — 404/400/422/401/405, auto `HEAD` + `OPTIONS`, camelCase

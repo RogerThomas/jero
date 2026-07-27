@@ -383,7 +383,7 @@ def operation_input(
     responses: dict[int, ResponseEntry] = {}
     success = _success_entry(spec.success_status, spec.sources, operation_id)
     responses[success.status] = success
-    for entry in _error_responses(spec.sources, authed=spec.authed, adapter=adapter):
+    for entry in _error_responses(spec.sources, authed=spec.auth_mode is not None, adapter=adapter):
         responses[entry.status] = entry
     for entry in _exception_entries(spec, adapter, operation_id):
         responses[entry.status] = entry
@@ -404,4 +404,5 @@ def operation_input(
         params=_params_for(spec.sources),
         body=_body_for(spec.sources),
         security=(spec.security_scheme.scheme_name,) if spec.security_scheme is not None else (),
+        security_optional=spec.auth_mode == "optional",
     )

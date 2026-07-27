@@ -133,6 +133,16 @@ def test_security_scheme_and_requirement(client: TestClient) -> None:
     assert "security" not in paths["/healthz"]["get"]
 
 
+def test_anonymous_accepting_auth_advertises_the_unauthenticated_alternative(
+    client: TestClient,
+) -> None:
+    """An anonymous-accepting operation lists the scheme *and* an empty requirement — the spec's
+    idiom for "credentials are accepted but not required" — and still documents its 401."""
+    get = client.get("/openapi.json").json()["paths"]["/spotlight"]["get"]
+    assert get["security"] == [{"bearerAuth": []}, {}]
+    assert get["responses"]["401"]["description"] == "Authentication required"
+
+
 def test_msgspec_meta_constraints_appear_in_schema(client: TestClient) -> None:
     """msgspec.Meta field constraints and descriptions flow into the JSON schema."""
     schemas = client.get("/openapi.json").json()["components"]["schemas"]
@@ -385,6 +395,47 @@ def test_api_key_scheme_is_emitted() -> None:
             "name": "X-API-Key",
         }
         assert document["paths"]["/secured"]["get"]["security"] == [{"apiKeyAuth": []}]
+
+
+class OptionalCredentials(Struct):
+    """Credentials whose optional field lets an absent key reach the authenticator."""
+
+    x_api_key: str | None = None
+
+
+@dataclass
+class OptionalApiKeyAuth:
+    """An apiKey authenticator that reports absent credentials by returning None."""
+
+    openapi_security = SecurityScheme.api_key(name="X-API-Key", location="header")
+
+    async def authenticate(self, headers: OptionalCredentials) -> Caller | None:
+        """Resolve a caller from the key, or None when none was presented."""
+        return None if headers.x_api_key is None else Caller(id=headers.x_api_key)
+
+
+class OptionallySecuredEndpoint(Endpoint, path="/optional"):
+    """An endpoint serving anonymous and authenticated callers alike."""
+
+    async def get(self, user: Caller | None) -> Item:
+        """Get an item, identified by the caller when there is one."""
+        return Item(id="anonymous" if user is None else user.id)
+
+
+class OptionalApiKeyApp(BaseApp):
+    """App mounting an optionally-authed endpoint behind an apiKey scheme."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(OptionallySecuredEndpoint(), auth=OptionalApiKeyAuth())
+        self.include_openapi(title="t", version="1")
+
+
+def test_anonymous_alternative_pairs_with_any_scheme() -> None:
+    """The unauthenticated alternative rides alongside whatever scheme the auth declares."""
+    with TestClient(OptionalApiKeyApp()) as client:
+        document = client.get("/openapi.json").json()
+        assert document["paths"]["/optional"]["get"]["security"] == [{"apiKeyAuth": []}, {}]
+        assert "apiKeyAuth" in document["components"]["securitySchemes"]
 
 
 class DescribedEndpoint(

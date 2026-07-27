@@ -1,7 +1,7 @@
-"""Standalone endpoints: the authenticated identity probe, health checks, a raw-form
-echo, and a cross-module ``from_ref`` link demo."""
+"""Standalone endpoints: the authenticated identity probe, the optionally-authenticated
+spotlight, health checks, a raw-form echo, and a cross-module ``from_ref`` link demo."""
 
-from demo_app.models import Health, RawForm, RawFormHeaders, User, Widget, WidgetPath
+from demo_app.models import Health, RawForm, RawFormHeaders, Spotlight, User, Widget, WidgetPath
 from jero import Endpoint, EndpointMeta, JSONResponse, Link, RawHeaders, Tag
 
 
@@ -11,6 +11,22 @@ class WhoAmIEndpoint(Endpoint, path="/me"):
     async def get(self, user: User) -> User:
         """Return the authenticated caller."""
         return user
+
+
+class SpotlightEndpoint(Endpoint, path="/spotlight"):
+    """Optionally-authenticated endpoint: everyone gets the spotlight widget, and a caller
+    who presented credentials gets it personalized.
+
+    Mounted behind ``OptionalTokenAuth`` (see ``demo_app.app``), whose ``-> User | None``
+    return is what makes this route serve anonymous callers. Credentials that are *present
+    but invalid* never reach here — jero still answers 401.
+    """
+
+    async def get(self, user: User | None) -> Spotlight:
+        """Return the spotlight widget, personalized when the caller is authenticated."""
+        return Spotlight(
+            widget_id="spotlight", personalized_for=user.name if user is not None else None
+        )
 
 
 class HealthEndpoint(

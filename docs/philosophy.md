@@ -109,7 +109,10 @@ jero tries hard to fail before the app serves traffic.
 
 If a route's path slots don't match its `path` Struct, that is a startup error. If a
 handler declares `user` without auth, that is a startup error. If auth returns one user
-type and the handler asks for another, that is a startup error. If a response type
+type and the handler asks for another, that is a startup error. If a handler's `user`
+annotation disagrees with whether its authenticator accepts anonymous callers — either
+direction, including a handler that omits `user` on a route that serves them — that is a
+startup error. If a response type
 cannot be understood as a framework response contract, that is a startup error.
 
 This is a DX choice as much as a performance choice. Runtime flexibility often means

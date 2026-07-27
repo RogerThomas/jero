@@ -188,7 +188,20 @@ These pull against each other constantly; keep all three in mind on every change
   `WiringError` at startup. JSON in and out is a typed Struct, every time — that's
   what gives it validation *and* a schema for the OpenAPI spec. No exceptions.
 - **Auth**: an object with `authenticate(headers: Struct) -> UserStruct`; the
-  user type is checked against handlers at startup.
+  user type is checked against handlers at startup. **The authenticator's declared return
+  type is the route's auth policy**: `-> UserStruct` gates, while `-> UserStruct | None`
+  makes credentials an *input* — returning `None` reports **absent** credentials and the
+  handler runs with `user=None`, while **present but invalid** ones still raise (401).
+  Absence is the authenticator's call, never a heuristic; note `authenticate` only sees what
+  its headers Struct can bind, so the credential field needs a `| None` default for absence
+  to reach it. Handlers must match (`user: UserStruct | None` against the second), checked
+  both directions at startup — **and a handler that omits `user` is a `WiringError` on an
+  anonymous-accepting route** (nothing would record that the route is open; behind a gating
+  authenticator omitting it stays fine). An app needing both policies defines two
+  authenticators over one shared lookup (`TokenAuth` / `OptionalTokenAuth` in `demo_app`),
+  so a route's policy is visible in what its mount passes. `AuthMode` (`"required" |
+  "optional" | None`) carries this on the `OperationSpec`; the spec emits
+  `[{scheme: []}, {}]` for an anonymous-accepting operation and keeps its derived 401.
 - **Wiring / DI**: there is **no DI container** — and that's deliberate, not a
   gap. You hand-wire classes in the overridden `wire` (`BaseApp` is an `ABC` and
   `wire` is abstract; subclass `BaseApp[Factory]`, linear async, no yield); a
@@ -253,15 +266,16 @@ These pull against each other constantly; keep all three in mind on every change
 - Runtime deps are intentionally sparse: `msgspec` for typed validation/JSON and
   `python-multipart` for buffered `multipart/form-data` parsing.
 - `demo_app/` — a complete, project-structured example app (`config`, `models`,
-  `auth`, `services/`, `operations/`, `factory`, `app`). It is the **single source of
+  `auth`, `services/`, `operations/`, `factory`, `app`); its `TokenAuth` gates widgets +
+  `/me` and its `OptionalTokenAuth` serves anonymous callers at `/spotlight`. It is the **single source of
   truth**: the worked example in the docs, the app the test suite runs against, and a
   typed consumer of the public API that every type checker validates. Keep it working
   and bounded (it demonstrates the shape; resist turning it into a feature dumping ground).
 - `tests/` — pytest suite driven through `TestClient` against `demo_app/` (plus small
   local apps for focused cases).
-- `plans/` — design plans for not-yet-built features (e.g. `streaming.md`,
-  `forms.md`, and `cookies.md` — fully designed, all decisions locked), staged for
-  review before implementation.
+- `plans/` — design plans for not-yet-built work, fully designed with decisions locked,
+  staged for review before implementation. Currently `middleware.md`, `websockets.md`, and
+  `private-extension-surface.md` (the `_`/`__` naming rule for the extension surface).
 - `bugs/` — one markdown note per **not-yet-fixed** bug, tracked in `bugs/README.md`
   (the manifest). **Only write a note for a bug you're leaving unfixed for later** —
   if you fix a bug in the same change, *don't* add a note; the regression test is the
@@ -274,7 +288,8 @@ These pull against each other constantly; keep all three in mind on every change
 ## Status & sharp edges
 
 - **Built**: routing + path-param templates, Resource/Endpoint, all binding sources
-  (incl. typed `headers` and the opaque `raw_headers`), auth, REST semantics,
+  (incl. typed `headers` and the opaque `raw_headers`), auth (required *and* optional),
+  REST semantics,
   response kinds — generic `JSONResponse[T, H]` / `BytesResponse[H]` / streaming
   `[T, H]` with typed response headers, `raw_headers`, and `status_code` overrides
   — `BaseApp`/`BaseFactory` lifecycle, in-process `BackgroundTasks`, reverse-routed

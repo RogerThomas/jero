@@ -297,12 +297,30 @@ class GoodAuth:
         return User(id="id")
 
 
+@dataclass
+class AnonAuth:
+    """An authenticator that accepts anonymous callers (``-> User | None``)."""
+
+    async def authenticate(self, headers: Creds) -> User | None:
+        """Resolve credentials to a user or None (never reached — wiring fails first)."""
+        _ = headers
+        return None
+
+
 class UserWithoutAuthResource(Resource, path="/x"):
     """Resource declaring 'user' but wired without any auth."""
 
     async def read_many(self, user: User) -> User:
         """Handler requesting the auth result where no auth is configured."""
         return user
+
+
+class OptionalUserWithoutAuthResource(Resource, path="/x"):
+    """Resource declaring an optional 'user' but wired without any auth."""
+
+    async def read_many(self, user: User | None) -> User:
+        """Handler requesting an optional auth result where no auth is configured."""
+        return user if user is not None else User(id="id")
 
 
 class UserMismatchResource(Resource, path="/x"):
@@ -313,8 +331,44 @@ class UserMismatchResource(Resource, path="/x"):
         return user
 
 
+class OptionalUserMismatchResource(Resource, path="/x"):
+    """Resource whose optional 'user' type disagrees with the authenticator's return."""
+
+    async def read_many(self, user: Other | None) -> Other:
+        """Handler annotating 'user' as an optional type the auth doesn't return."""
+        return user if user is not None else Other(name="name")
+
+
+class OptionalUserResource(Resource, path="/x"):
+    """Resource declaring 'user' as optional, for mounting behind required auth."""
+
+    async def read_many(self, user: User | None) -> User:
+        """Handler accepting an absent user."""
+        return user if user is not None else User(id="id")
+
+
+class RequiredUserResource(Resource, path="/x"):
+    """Resource declaring 'user' as required, for mounting behind optional auth."""
+
+    async def read_many(self, user: User) -> User:
+        """Handler that cannot accept an absent user."""
+        return user
+
+
+class NoUserResource(Resource, path="/x"):
+    """Resource whose handler ignores the auth result entirely."""
+
+    async def read_many(self) -> User:
+        """Handler that never looks at the user."""
+        return User(id="id")
+
+
 class _AuthApp(BaseApp):
-    def __init__(self, resource: Resource, auth: Auth[Creds, User] | None = None) -> None:
+    def __init__(
+        self,
+        resource: Resource,
+        auth: Auth[Creds, User] | None = None,
+    ) -> None:
         self._resource = resource
         self._auth = auth
         super().__init__()
@@ -329,10 +383,48 @@ def test_user_declared_without_auth() -> None:
         TestClient(_AuthApp(UserWithoutAuthResource()))
 
 
+def test_optional_user_declared_without_auth() -> None:
+    """Declaring an optional 'user' with no auth configured fails at startup too."""
+    with pytest.raises(RuntimeError, match="declares 'user' but no auth"):
+        TestClient(_AuthApp(OptionalUserWithoutAuthResource()))
+
+
 def test_user_type_mismatch_with_auth() -> None:
     """A 'user' type that disagrees with the authenticator's return fails at startup."""
     with pytest.raises(RuntimeError, match="'user' expects"):
         TestClient(_AuthApp(UserMismatchResource(), auth=GoodAuth()))
+
+
+def test_optional_user_type_mismatch_with_auth() -> None:
+    """An optional 'user' whose Struct disagrees with the authenticator's fails at startup."""
+    with pytest.raises(RuntimeError, match="'user' expects Other"):
+        TestClient(_AuthApp(OptionalUserMismatchResource(), AnonAuth()))
+
+
+def test_optional_user_under_gating_auth() -> None:
+    """'user: User | None' behind an authenticator returning bare User fails at startup."""
+    with pytest.raises(RuntimeError, match=r"'user' must be annotated 'User' — GoodAuth"):
+        TestClient(_AuthApp(OptionalUserResource(), auth=GoodAuth()))
+
+
+def test_required_user_under_anonymous_accepting_auth() -> None:
+    """'user: User' behind an authenticator returning User | None fails at startup."""
+    with pytest.raises(RuntimeError, match=r"'user' must be annotated 'User \| None'"):
+        TestClient(_AuthApp(RequiredUserResource(), AnonAuth()))
+
+
+def test_missing_user_under_anonymous_accepting_auth() -> None:
+    """A handler that ignores the auth result cannot sit on an anonymous-accepting route:
+    there would be no annotation to reveal that the route serves anonymous callers."""
+    with pytest.raises(RuntimeError, match=r"declares no 'user'.*serves anonymous callers"):
+        TestClient(_AuthApp(NoUserResource(), AnonAuth()))
+
+
+def test_missing_user_under_gating_auth_is_allowed() -> None:
+    """A handler that ignores the auth result stays legal behind a gating authenticator —
+    the gate has already run, so there is nothing for it to mishandle."""
+    with TestClient(_AuthApp(NoUserResource(), GoodAuth())) as client:
+        assert client.get("/x", headers={"authorization": "token"}).status_code == 200
 
 
 # --- Duplicate route registration ---

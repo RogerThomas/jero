@@ -23,7 +23,10 @@ The contract:
   to reject. When set, it runs for every method on the resource, before the body is decoded.
   Handlers that declare
   ``user`` receive its result; the annotation is checked against the authenticator's return type at
-  startup.
+  startup. An authenticator declaring ``-> UserStruct | None`` makes credentials an input
+  rather than a gate: returning ``None`` reports that none were presented and the route's
+  handlers — which must all declare ``user: UserStruct | None`` — serve the caller
+  anonymously, while invalid credentials are still a 401.
 - Dependencies are wired by hand in the overridden ``BaseApp.wire`` method (runs once at startup).
   Open resources with ``self.aenter(cm)`` / ``self.enter(cm)`` — the app holds them on exit stacks
   and closes them (reverse order) at shutdown. No ``yield``, no DI container.
@@ -95,6 +98,7 @@ from jero._exception_handlers import (
 )
 from jero._openapi_wiring import operation_input
 from jero._wiring_types import (
+    AuthMode,
     EndpointMeta,
     FormField,
     FormSpec,
@@ -433,10 +437,31 @@ class Auth[THeaders: Struct, TUser: Struct](Protocol):
     ``headers`` is bound from the request headers into your declared
     Struct (header names map ``x-trace-id`` -> ``x_trace_id``). The
     returned Struct is what handlers receive as ``user``.
+
+    **The return type is the route's auth policy.** Declaring ``-> TUser`` gates the routes
+    it is mounted on: a caller without valid credentials never reaches a handler. Declaring
+    ``-> TUser | None`` makes credentials an *input* instead — returning ``None`` reports
+    that the caller presented none, and the handler is invoked with ``user=None``. Raising
+    is rejection in both cases, so *invalid* credentials are always a 401. Handlers must
+    match: ``user: TUser`` against the first, ``user: TUser | None`` against the second,
+    checked at startup.
+
+    An app that wants both usually defines two authenticators over one shared resolution
+    step (``TokenAuth`` / ``OptionalTokenAuth``), so which policy a route gets is visible in
+    what its mount passes.
+
+    ``authenticate`` only sees credentials your ``THeaders`` Struct can bind: a Struct
+    whose fields are all required makes a credential-less request a 401 before your code
+    runs. Give the field a ``| None`` default (``authorization: str | None = None``) to
+    have absence reach ``authenticate`` and become your decision.
     """
 
-    def authenticate(self, headers: THeaders) -> TUser | Awaitable[TUser]:
-        """Validate ``headers`` and return the user Struct; raise ``HTTPError`` to reject."""
+    def authenticate(self, headers: THeaders) -> TUser | None | Awaitable[TUser | None]:
+        """Validate ``headers`` and return the user Struct; raise ``HTTPError`` to reject.
+
+        Return ``None`` only to report that no credentials were presented (see the class
+        docstring); it is never a way to say "these credentials are bad".
+        """
         ...  # pylint: disable=unnecessary-ellipsis  # Protocol stub; pyright needs the body
 
 
@@ -868,6 +893,7 @@ def _bind_sources(  # noqa: C901
     form: FormSpec | None = None
     wants_content = False
     wants_raw_headers = False
+    user_optional = False
 
     for param in inspect.signature(fn).parameters.values():
         if param.name not in _SOURCES:
@@ -893,7 +919,12 @@ def _bind_sources(  # noqa: C901
                 )
             wants_raw_headers = True
             continue
-        source_type = _struct_annotation(cls, name, param.name, hints.get(param.name))
+        annotation = hints.get(param.name)
+        if param.name == "user":
+            # 'user' is the one source that may be optional: `UserStruct | None` declares the
+            # handler serves anonymous callers too (cross-checked against the authenticator).
+            annotation, user_optional = _strip_optional(annotation)
+        source_type = _struct_annotation(cls, name, param.name, annotation)
         if param.name == "form":
             form = _compile_form(cls, name, source_type, decoder_for)
             continue
@@ -923,6 +954,7 @@ def _bind_sources(  # noqa: C901
         **types,
         json_decoder=json_decoder,
         form=form,
+        user_optional=user_optional,
         content=wants_content,
         raw_headers=wants_raw_headers,
         return_kind=return_kind,
@@ -1031,7 +1063,7 @@ class _CompiledAuth:
     introspection, so a plain ``__init__`` is the honest shape.
     """
 
-    __slots__ = ("_fn", "_is_async", "headers_type", "owner", "returns")
+    __slots__ = ("_fn", "_is_async", "headers_type", "owner", "reports_absence", "returns")
 
     def __init__(self, auth: Auth[Any, Any]) -> None:
         self.owner = type(auth).__name__
@@ -1050,22 +1082,31 @@ class _CompiledAuth:
         )
 
         returns = hints.get("return")
-        if not (isinstance(returns, type) and issubclass(returns, Struct)):
+        # `-> TUser | None` is the authenticator declaring that its routes accept anonymous
+        # callers: returning None reports absent credentials rather than rejecting them.
+        user_type, self.reports_absence = _strip_optional(returns)
+        if not (isinstance(user_type, type) and issubclass(user_type, Struct)):
             raise WiringError(
-                f"{self.owner}.authenticate must declare a msgspec.Struct return type, "
-                f"got {returns!r}",
+                f"{self.owner}.authenticate must declare a msgspec.Struct return type "
+                f"(or 'Struct | None' to accept anonymous callers), got {returns!r}",
             )
-        self.returns: type[Struct] = returns
+        self.returns: type[Struct] = user_type
         self._fn: Callable[..., Any] = fn
         self._is_async = inspect.iscoroutinefunction(fn)
 
-    async def __call__(self, raw_headers: dict[str, str]) -> Struct:
+    async def __call__(self, raw_headers: dict[str, str]) -> Struct | None:
         try:
             credentials = convert(raw_headers, self.headers_type, strict=False)
         except ValidationError:
             raise AuthenticationRequiredError() from None
         result = self._fn(credentials)
-        return (await result) if self._is_async else result
+        user = (await result) if self._is_async else result
+        # None means "no credentials presented" — anonymous on a route whose authenticator
+        # declares it. Without that declaration a None return contradicts the annotation the
+        # handlers were checked against, so reject rather than bind it.
+        if user is None and not self.reports_absence:
+            raise AuthenticationRequiredError()
+        return user
 
 
 class _Binder:
@@ -2371,10 +2412,26 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
     def _check_user_source(
         resource_cls: type,
         name: str,
-        user_type: type[Struct] | None,
+        sources: Sources,
         auth: _CompiledAuth | None,
     ) -> None:
+        """Validate a handler's ``user`` annotation against the route's authenticator — that
+        there is one, that the Struct matches, and that its optionality agrees.
+
+        A handler on an anonymous-accepting route must declare ``user``: with nothing to
+        check, a handler that ignores the auth result would serve anonymous callers with no
+        sign of it at the mount or in the signature. Behind a gating authenticator, omitting
+        ``user`` stays fine — the gate has already run."""
+        user_type = sources.user
         if user_type is None:
+            if auth is not None and auth.reports_absence:
+                raise WiringError(
+                    f"{resource_cls.__name__}.{name} declares no 'user', but "
+                    f"{auth.owner}.authenticate returns {auth.returns.__name__} | None, so "
+                    f"this route serves anonymous callers — declare "
+                    f"'user: {auth.returns.__name__} | None' and handle None, or mount it "
+                    f"behind an authenticator that returns {auth.returns.__name__} to gate it",
+                )
             return
         if auth is None:
             raise WiringError(
@@ -2384,6 +2441,20 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
             raise WiringError(
                 f"{resource_cls.__name__}.{name}: 'user' expects {user_type.__name__} "
                 f"but {auth.owner}.authenticate returns {auth.returns.__name__}",
+            )
+        if auth.reports_absence and not sources.user_optional:
+            raise WiringError(
+                f"{resource_cls.__name__}.{name}: 'user' must be annotated "
+                f"'{user_type.__name__} | None' — {auth.owner}.authenticate returns "
+                f"'{user_type.__name__} | None', so a caller may arrive anonymous",
+            )
+        if sources.user_optional and not auth.reports_absence:
+            raise WiringError(
+                f"{resource_cls.__name__}.{name}: 'user' must be annotated "
+                f"'{user_type.__name__}' — {auth.owner}.authenticate returns "
+                f"'{user_type.__name__}', so an unauthenticated caller never reaches the "
+                f"handler; return '{user_type.__name__} | None' from it to accept anonymous "
+                f"callers",
             )
 
     def _include(
@@ -2401,7 +2472,12 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
                 f"e.g. `class {cls.__name__}(..., path='/...')`.",
             )
         template = _parse_template(path)
+        # The authenticator's declared return type is the policy: `-> TUser | None` accepts
+        # anonymous callers, `-> TUser` gates. Never inferred from anything else.
         compiled_auth = _CompiledAuth(auth) if auth is not None else None
+        auth_mode: AuthMode = None
+        if compiled_auth is not None:
+            auth_mode = "optional" if compiled_auth.reports_absence else "required"
         # An authed route with no declared scheme defaults to HTTP bearer (the common case).
         security_scheme: SecurityScheme | None = None
         if auth is not None:
@@ -2416,7 +2492,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
             if fn is None:
                 continue
             sources = _bind_sources(cls, name, fn, verb.method, self._decoder)
-            self._check_user_source(cls, name, sources.user, compiled_auth)
+            self._check_user_source(cls, name, sources, compiled_auth)
             segments = _route_segments(
                 cls, name, template, sources.path, extends_path=verb.extends_path
             )
@@ -2438,7 +2514,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
                     method=verb.method.lower(),
                     success_status=verb.success_status,
                     sources=sources,
-                    authed=compiled_auth is not None,
+                    auth_mode=auth_mode,
                     security_scheme=security_scheme,
                     class_meta=cls.meta,
                     op_meta=getattr(cls, f"meta_{name}", None),
@@ -2493,7 +2569,12 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         *,
         auth: Auth[THeaders, TUser] | None = None,
     ) -> None:
-        """Register a ``Resource``'s CRUD methods as routes, optionally behind ``auth``."""
+        """Register a ``Resource``'s CRUD methods as routes, optionally behind ``auth``.
+
+        An authenticator returning ``TUser`` gates every method: no valid credentials, no
+        handler. One returning ``TUser | None`` accepts anonymous callers instead — see
+        :meth:`include_endpoint`.
+        """
         self._include(resource, Resource.METHODS, auth=auth)
 
     def include_endpoint[THeaders: Struct, TUser: Struct](
@@ -2502,7 +2583,14 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         *,
         auth: Auth[THeaders, TUser] | None = None,
     ) -> None:
-        """Register an ``Endpoint``'s verb methods as routes, optionally behind ``auth``."""
+        """Register an ``Endpoint``'s verb methods as routes, optionally behind ``auth``.
+
+        An authenticator returning ``TUser`` gates every verb: no valid credentials, no
+        handler. One returning ``TUser | None`` makes credentials an *input* — a caller
+        presenting none is served with ``user=None``, *invalid* credentials are still a 401,
+        and every handler on the route must declare ``user: TUser | None`` (all checked at
+        startup).
+        """
         self._include(endpoint, Endpoint.METHODS, auth=auth)
 
     def include_openapi(
