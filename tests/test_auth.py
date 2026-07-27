@@ -3,6 +3,7 @@ callers (absent / valid / invalid credentials) via its /spotlight endpoint."""
 
 from collections.abc import Generator
 from dataclasses import dataclass
+from typing import cast
 
 import pytest
 from msgspec import Struct
@@ -149,3 +150,81 @@ def test_invalid_credentials_are_rejected(greeting_client: TestClient) -> None:
     resp = greeting_client.get("/greeting", headers={"authorization": "wrong"})
     assert resp.status_code == 401
     assert resp.json()["type"] == "bad-token"
+
+
+# --- The framework's own two rejections, before and after authenticate ---
+
+
+class RequiredCreds(Struct):
+    """Credentials whose field is required, so an absent header cannot bind."""
+
+    authorization: str
+
+
+@dataclass
+class RequiredCredsAuth:
+    """An authenticator whose credentials Struct leaves no room for absence."""
+
+    async def authenticate(self, headers: RequiredCreds) -> Caller:
+        """Resolve the caller (never reached when the header is missing)."""
+        return Caller(id=headers.authorization)
+
+
+class StrictEndpoint(Endpoint, path="/strict"):
+    """An endpoint behind an authenticator with required credentials."""
+
+    async def get(self, user: Caller) -> Greeting:
+        """Greet the caller."""
+        return Greeting(caller=user.id)
+
+
+class _StrictApp(BaseApp):
+    """App whose authenticator cannot see absent credentials."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(StrictEndpoint(), auth=RequiredCredsAuth())
+
+
+def test_unbindable_credentials_are_401_before_authenticate() -> None:
+    """When the credentials Struct has no room for a missing header, jero answers 401
+    itself — authenticate never runs. This is why reporting absence needs an optional
+    field; it is the documented cost of a required one."""
+    with TestClient(_StrictApp()) as client:
+        resp = client.get("/strict")
+        assert resp.status_code == 401
+        assert resp.json()["type"] == "authentication-required"
+        assert client.get("/strict", headers={"authorization": "id"}).status_code == 200
+
+
+@dataclass
+class LyingAuth:
+    """An authenticator that returns None despite declaring it never does."""
+
+    async def authenticate(self, headers: Creds) -> Caller:
+        """Violate the declared return type, as a mistyped authenticator would."""
+        _ = headers
+        return cast("Caller", None)
+
+
+class LyingEndpoint(Endpoint, path="/lying"):
+    """An endpoint whose handler was wired against a non-optional user."""
+
+    async def get(self, user: Caller) -> Greeting:
+        """Greet the caller (must never receive None)."""
+        return Greeting(caller=user.id)
+
+
+class _LyingApp(BaseApp):
+    """App behind an authenticator that breaks its own contract."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(LyingEndpoint(), auth=LyingAuth())
+
+
+def test_none_from_a_gating_authenticator_is_rejected_not_bound() -> None:
+    """A None return contradicts '-> Caller', which the handler was checked against, so the
+    framework rejects rather than binding None into a 'user: Caller' argument."""
+    with TestClient(_LyingApp()) as client:
+        resp = client.get("/lying", headers={"authorization": "token"})
+        assert resp.status_code == 401
+        assert resp.json()["type"] == "authentication-required"
