@@ -7,7 +7,18 @@ from uuid import UUID
 import pytest
 from msgspec import Struct
 
-from jero import BaseApp, BytesResponse, JSONResponse, RawHeaders, Resource
+from jero import (
+    Accepted,
+    BaseApp,
+    BytesResponse,
+    Created,
+    Endpoint,
+    JSONResponse,
+    Location,
+    NoContent,
+    RawHeaders,
+    Resource,
+)
 from jero.testing import TestClient
 
 
@@ -269,3 +280,160 @@ def test_status_code_overrides_verb_default() -> None:
         resp = client.post("/status", content=b"ok")
         assert resp.status_code == 202
         assert resp.json() == {"body": "ok"}
+
+
+# --- NoContent / Created / Accepted: dynamic success status (single member) ---
+
+
+class NoContentEndpoint(Endpoint, path="/no-content"):
+    """Endpoint returning a bare NoContent — a 204 despite the GET verb's 200 default."""
+
+    async def get(self) -> NoContent:
+        """Return 204, no body, but a Location header."""
+        return NoContent(location=Location.from_path("/elsewhere"))
+
+
+class CreatedEndpoint(Endpoint, path="/created"):
+    """Endpoint returning Created — a 201 despite the GET verb's 200 default."""
+
+    async def get(self) -> Created[Echo]:
+        """Return 201 with a JSON body."""
+        return Created(json=Echo(body="ok"))
+
+
+class AcceptedEndpoint(Endpoint, path="/accepted"):
+    """Endpoint returning Accepted — a 202 despite the POST verb's 200 default."""
+
+    async def post(self, content: bytes) -> Accepted[Echo]:
+        """Return 202 with a JSON body."""
+        return Accepted(json=Echo(body=content.decode()))
+
+
+class NoContentOverrideEndpoint(Endpoint, path="/no-content-override"):
+    """Endpoint whose NoContent overrides its own fixed status via status_code=."""
+
+    async def get(self) -> NoContent:
+        """Return 200 instead of NoContent's own 204 (the escape hatch)."""
+        return NoContent(status_code=200)
+
+
+class FixedStatusApp(BaseApp):
+    """App wiring the fixed-status single-member endpoints."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(NoContentEndpoint())
+        self.include_endpoint(CreatedEndpoint())
+        self.include_endpoint(AcceptedEndpoint())
+        self.include_endpoint(NoContentOverrideEndpoint())
+
+
+@pytest.fixture(name="fixed_status_client")
+def _fixed_status_client() -> Generator[TestClient]:
+    with TestClient(FixedStatusApp()) as client:
+        yield client
+
+
+def test_no_content_is_204_with_empty_body_and_no_content_headers(
+    fixed_status_client: TestClient,
+) -> None:
+    """NoContent sends 204, an empty body, no content-type/content-length, but Location."""
+    resp = fixed_status_client.get("/no-content")
+    assert resp.status_code == 204
+    assert resp.content == b""
+    assert "content-type" not in resp.headers
+    assert "content-length" not in resp.headers
+    assert resp.headers["location"] == "/elsewhere"
+
+
+def test_created_documents_and_sends_201_on_a_get(fixed_status_client: TestClient) -> None:
+    """Created fixes 201 even though the verb (GET) would otherwise default to 200."""
+    resp = fixed_status_client.get("/created")
+    assert resp.status_code == 201
+    assert resp.json() == {"body": "ok"}
+
+
+def test_accepted_documents_and_sends_202_on_a_post(fixed_status_client: TestClient) -> None:
+    """Accepted fixes 202 even though the verb (POST on an Endpoint) defaults to 200."""
+    resp = fixed_status_client.post("/accepted", content=b"ok")
+    assert resp.status_code == 202
+    assert resp.json() == {"body": "ok"}
+
+
+def test_status_code_overrides_no_contents_own_fixed_status(
+    fixed_status_client: TestClient,
+) -> None:
+    """status_code= still wins over NoContent's own fixed 204, as the escape hatch."""
+    resp = fixed_status_client.get("/no-content-override")
+    assert resp.status_code == 200
+
+
+# --- Union returns: a handler answers with different success statuses ---
+
+
+class VisibilityParams(Struct):
+    """Query flag selecting which union branch a handler takes."""
+
+    visible: str
+
+
+class SpotlightEndpoint(Endpoint, path="/spotlight"):
+    """The motivating case: a 204 for a caller who may not see the resource, else 200."""
+
+    async def get(self, params: VisibilityParams) -> JSONResponse[Echo] | NoContent:
+        """Return the resource, or 204 when the caller may not see it."""
+        if params.visible == "no":
+            return NoContent()
+        return JSONResponse(json=Echo(body="widget"))
+
+
+class OrderingEndpoint(Endpoint, path="/ordering"):
+    """A union whose members overlap by inheritance (Created subclasses JSONResponse)."""
+
+    async def get(self, params: VisibilityParams) -> JSONResponse[Echo] | Created[Echo]:
+        """Return the Created branch or the plain JSONResponse branch, on request."""
+        if params.visible == "no":
+            return Created(json=Echo(body="made"))
+        return JSONResponse(json=Echo(body="found"))
+
+
+class UnionApp(BaseApp):
+    """App wiring the union-return endpoints."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(SpotlightEndpoint())
+        self.include_endpoint(OrderingEndpoint())
+
+
+@pytest.fixture(name="union_client")
+def _union_client() -> Generator[TestClient]:
+    with TestClient(UnionApp()) as client:
+        yield client
+
+
+def test_union_returns_the_json_branch(union_client: TestClient) -> None:
+    """The JSONResponse branch of a union return sends 200 with its body."""
+    resp = union_client.get("/spotlight", params={"visible": "yes"})
+    assert resp.status_code == 200
+    assert resp.json() == {"body": "widget"}
+
+
+def test_union_returns_the_no_content_branch(union_client: TestClient) -> None:
+    """The NoContent branch of a union return sends 204 with no body."""
+    resp = union_client.get("/spotlight", params={"visible": "no"})
+    assert resp.status_code == 204
+    assert resp.content == b""
+
+
+def test_union_dispatch_tries_the_more_derived_member_first(union_client: TestClient) -> None:
+    """A Created instance is sent as 201, not matched to the union's plain JSONResponse
+    member first (both are isinstance-compatible; Created must win)."""
+    resp = union_client.get("/ordering", params={"visible": "no"})
+    assert resp.status_code == 201
+    assert resp.json() == {"body": "made"}
+
+
+def test_union_dispatch_still_sends_the_base_member(union_client: TestClient) -> None:
+    """The plain JSONResponse branch still sends 200 when that's what's returned."""
+    resp = union_client.get("/ordering", params={"visible": "yes"})
+    assert resp.status_code == 200
+    assert resp.json() == {"body": "found"}

@@ -20,6 +20,7 @@ from jero import (
     BaseApp,
     BaseHTTPError,
     BearerAuth,
+    Created,
     Endpoint,
     EndpointMeta,
     ErrorBodyAdapter,
@@ -28,6 +29,7 @@ from jero import (
     JSONResponse,
     ModelMeta,
     NDJSONStreamingResponse,
+    NoContent,
     NotFoundError,
     OperationMeta,
     ParameterizedHTTPError,
@@ -1573,6 +1575,75 @@ def test_unsupported_item_type_fails_loud() -> None:
     DegradedStreamEndpoint.get.__annotations__["return"] = "NDJSONStreamingResponse[int]"
     with pytest.raises(RuntimeError, match="item type must be a Struct or a union of Structs"):
         TestClient(DegradedApp())
+
+
+# --- Dynamic success status: NoContent / Created / Accepted, and unions of them ---
+
+
+class NoContentOnlyEndpoint(Endpoint, path="/no-content-only"):
+    """Endpoint whose sole return is NoContent."""
+
+    async def get(self) -> NoContent:
+        """Return 204 with no body."""
+        return NoContent()
+
+
+class CreatedOnlyEndpoint(Endpoint, path="/created-only"):
+    """Endpoint whose sole return is Created (201, not the GET verb's 200 default)."""
+
+    async def get(self) -> Created[Item]:
+        """Return 201 with a JSON body."""
+        return Created(json=Item(id="id"))
+
+
+class DynamicStatusEndpoint(Endpoint, path="/dynamic"):
+    """Endpoint documenting a union of a plain JSONResponse and a NoContent."""
+
+    async def get(self) -> JSONResponse[Item] | NoContent:
+        """Return the item, or 204 when there's nothing to show."""
+        return NoContent()
+
+
+class DynamicStatusApp(BaseApp):
+    """App wiring the dynamic-success-status endpoints."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(NoContentOnlyEndpoint())
+        self.include_endpoint(CreatedOnlyEndpoint())
+        self.include_endpoint(DynamicStatusEndpoint())
+        self.include_openapi(title="dynamic", version="1")
+
+
+def test_no_content_alone_documents_204_with_no_body() -> None:
+    """A sole NoContent return documents 204 with no content key at all."""
+    with TestClient(DynamicStatusApp()) as client:
+        responses = client.get("/openapi.json").json()["paths"]["/no-content-only"]["get"][
+            "responses"
+        ]
+        assert responses["204"]["description"] == "No content"
+        assert "content" not in responses["204"]
+
+
+def test_created_alone_documents_201_not_the_verb_default() -> None:
+    """A sole Created return documents 201, not GET's own 200 default."""
+    with TestClient(DynamicStatusApp()) as client:
+        responses = client.get("/openapi.json").json()["paths"]["/created-only"]["get"]["responses"]
+        assert "200" not in responses
+        assert responses["201"]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/Item"
+        }
+
+
+def test_union_return_documents_one_entry_per_member() -> None:
+    """A union return documents one response entry per member, at its own status."""
+    with TestClient(DynamicStatusApp()) as client:
+        document = client.get("/openapi.json").json()
+        validate(document)
+        responses = document["paths"]["/dynamic"]["get"]["responses"]
+        assert responses["200"]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/Item"
+        }
+        assert "content" not in responses["204"]
 
 
 # --- Declared exceptions (error classes -> response entries) ---

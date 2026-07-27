@@ -36,7 +36,10 @@ class DemoApp(BaseApp[Factory]):
         # before that service would be torn down.
         background_tasks = await self.create_background_tasks(drain_timeout=1.0)
         background_tasks.register(analytics_service.process)
-        users = {"token": User(id="user-id", name="user-name")}
+        users = {
+            "token": User(id="user-id", name="user-name"),
+            "no-spotlight-token": User(id="other-id", name="other-name", may_see_spotlight=False),
+        }
         token_auth = TokenAuth(users)
         # Same token lookup, the other policy: credentials are an input rather than a gate, so
         # an anonymous caller binds user=None. A bad token is still a 401.

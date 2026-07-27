@@ -291,8 +291,12 @@ These pull against each other constantly; keep all three in mind on every change
   (incl. typed `headers` and the opaque `raw_headers`), auth (required *and* optional),
   REST semantics,
   response kinds — generic `JSONResponse[T, H]` / `BytesResponse[H]` / streaming
-  `[T, H]` with typed response headers, `raw_headers`, and `status_code` overrides
-  — `BaseApp`/`BaseFactory` lifecycle, in-process `BackgroundTasks`, reverse-routed
+  `[T, H]` with typed response headers, `raw_headers`, and `status_code` overrides;
+  `NoContent[H]` / `Created[T, H]` / `Accepted[T, H]` (204/201/202 regardless of the
+  verb's own default); a **union of response wrappers** as one return type lets a
+  handler answer with different, statically-typed success statuses (each documented
+  as its own OpenAPI response entry) — `BaseApp`/`BaseFactory` lifecycle, in-process
+  `BackgroundTasks`, reverse-routed
   `Location` / `Link` responses, typed Problem Details errors, structurally registered
   custom exception handlers, `TestClient`, the test suite. **OpenAPI 3.1**:
   `include_openapi` serves `/openapi.json` + a Scalar `/docs` UI, derived from the

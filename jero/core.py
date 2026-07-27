@@ -106,6 +106,7 @@ from jero._wiring_types import (
     OperationSpec,
     PayloadKind,
     ResourceMeta,
+    ResponseMember,
     ReturnKind,
     Sources,
     WiringError,
@@ -254,6 +255,23 @@ class JSONResponse[T: Struct, H: Struct | None = None](BaseResponse[H]):
     """A Struct encoded as JSON; content-type defaults to application/json."""
 
     json: T
+
+
+@dataclass(kw_only=True, slots=True)
+class NoContent[H: Struct | None = None](BaseResponse[H]):
+    """204, no body. Carries typed/raw headers, ``location``, and ``links`` like any
+    response — a 204 may legitimately carry a ``Location`` or ``Link`` (RFC 9110 §15.3.5).
+    Never emits ``content-type`` or ``content-length``, whatever ``headers`` supplies."""
+
+
+@dataclass(kw_only=True, slots=True)
+class Created[T: Struct, H: Struct | None = None](JSONResponse[T, H]):
+    """201 + a JSON body. Documents and sends 201 regardless of the verb's own default."""
+
+
+@dataclass(kw_only=True, slots=True)
+class Accepted[T: Struct, H: Struct | None = None](JSONResponse[T, H]):
+    """202 + a JSON body. Documents and sends 202 regardless of the verb's own default."""
 
 
 def _validate_meta(
@@ -852,6 +870,13 @@ def _return_kind(ann: object) -> ReturnKind | None:  # noqa: C901
             return "stream-ndjson"
         if issubclass(ann, SSEResponse):
             return "stream-sse"
+        # Created/Accepted subclass JSONResponse, so they must be checked first.
+        if issubclass(ann, NoContent):
+            return "no-content"
+        if issubclass(ann, Created):
+            return "created"
+        if issubclass(ann, Accepted):
+            return "accepted"
         if issubclass(ann, BytesResponse):
             return "bytes-response"
         if issubclass(ann, JSONResponse):
@@ -870,6 +895,12 @@ def _return_kind(ann: object) -> ReturnKind | None:  # noqa: C901
         return "stream-ndjson"
     if origin is SSEResponse:
         return "stream-sse"
+    if origin is NoContent:
+        return "no-content"
+    if origin is Created:
+        return "created"
+    if origin is Accepted:
+        return "accepted"
     if origin is BytesResponse:
         return "bytes-response"
     if origin is JSONResponse:
@@ -884,10 +915,97 @@ def _return_kind(ann: object) -> ReturnKind | None:  # noqa: C901
     return None
 
 
+# The status a return kind fixes regardless of the verb's own default; a kind absent here
+# (json, json-response, bytes, bytes-response, the streams) takes the verb's default status.
+_FIXED_STATUS: dict[ReturnKind, int] = {"no-content": 204, "created": 201, "accepted": 202}
+
+
+def _effective_status(kind: ReturnKind, verb_status: int) -> int:
+    """The status a return kind actually sends/documents: its fixed status if it has one,
+    else the verb's own default (200, or 201 for ``create``)."""
+    return _FIXED_STATUS.get(kind, verb_status)
+
+
+# Kinds a union return member may resolve to; streaming senders own the response lifecycle
+# and can't be chosen after the fact, and a bare Struct/bytes has no type to carry a status,
+# so neither joins a union — only these five carry both a concrete class and an "isinstance
+# dispatchable" runtime shape.
+_UNION_MEMBER_KINDS = frozenset(
+    {"no-content", "created", "accepted", "json-response", "bytes-response"}
+)
+
+
+def _union_args(ann: object) -> tuple[object, ...] | None:
+    """``ann``'s union members, or ``None`` if ``ann`` is not a union (of any arity)."""
+    origin = get_origin(ann)
+    if origin is not UnionType and origin is not Union:
+        return None
+    return get_args(ann)
+
+
+def _origin_or_self(ann: object) -> type:
+    origin = get_origin(ann)
+    return cast("type", origin if origin is not None else ann)
+
+
+def _union_return_members(
+    cls: type, name: str, members: tuple[object, ...], verb_status: int
+) -> tuple[ResponseMember, ...]:
+    """Resolve and validate a union return annotation's members: each must be a recognized,
+    non-streaming response wrapper, and no two may resolve to the same status."""
+    resolved: list[ResponseMember] = []
+    by_status: dict[int, type] = {}
+    for member in members:
+        kind = _return_kind(member)
+        if kind is None or kind not in _UNION_MEMBER_KINDS:
+            raise WiringError(
+                f"{cls.__name__}.{name}: union return members must each be a recognized, "
+                f"non-streaming response wrapper (NoContent, Created, Accepted, "
+                f"JSONResponse, or BytesResponse); got {member!r}",
+            )
+        status = _effective_status(kind, verb_status)
+        response_type = _origin_or_self(member)
+        clashing = by_status.get(status)
+        if clashing is not None:
+            raise WiringError(
+                f"{cls.__name__}.{name}: union return members {clashing.__name__} and "
+                f"{response_type.__name__} both resolve to status {status}; give them "
+                f"distinct statuses, or combine them as one JSONResponse[A | B] member",
+            )
+        by_status[status] = response_type
+        resolved.append(ResponseMember(response_type, member, kind, status))
+    return tuple(resolved)
+
+
+def _resolve_return(
+    cls: type, name: str, http_method: _HttpMethod, verb_status: int, return_hint: object
+) -> tuple[ReturnKind, tuple[ResponseMember, ...]]:
+    """The handler's return kind, and — for a union — its resolved members."""
+    union_args = _union_args(return_hint)
+    if union_args is not None:
+        if any(_is_none_type(arg) for arg in union_args):
+            raise WiringError(
+                f"{cls.__name__}.{name}: a handler cannot return None — did you mean "
+                f"'| NoContent' for a 204?",
+            )
+        return "union", _union_return_members(cls, name, union_args, verb_status)
+    kind = _return_kind(return_hint)
+    if kind is None:
+        raise WiringError(
+            f"{cls.__name__}.{name} must declare a return type of Struct, list[Struct], "
+            f"bytes, BytesResponse, JSONResponse, NoContent, Created, Accepted, or a "
+            f"streaming response, got {return_hint!r}",
+        )
+    if kind == "stream-sse" and http_method != "GET":
+        raise WiringError(f"{cls.__name__}.{name}: SSEResponse is only allowed on GET handlers")
+    return kind, ()
+
+
 def _bind_sources(  # noqa: C901
-    cls: type, name: str, fn: Callable[..., Any], http_method: _HttpMethod, decoder_for: _DecoderFor
+    cls: type, name: str, fn: Callable[..., Any], verb: _Verb, decoder_for: _DecoderFor
 ) -> Sources:
     """Resolve and validate the Struct types for a handler's arguments."""
+    http_method = verb.method
     hints = get_type_hints(fn)
     types: dict[str, type[Struct]] = {}
     form: FormSpec | None = None
@@ -936,15 +1054,10 @@ def _bind_sources(  # noqa: C901
             f"{cls.__name__}.{name}: only one of 'json', 'content', or 'form' is allowed",
         )
 
-    return_kind = _return_kind(hints.get("return"))
-    if return_kind is None:
-        raise WiringError(
-            f"{cls.__name__}.{name} must declare a return type of Struct, list[Struct], "
-            f"bytes, BytesResponse, JSONResponse, or a streaming response, "
-            f"got {hints.get('return')!r}",
-        )
-    if return_kind == "stream-sse" and http_method != "GET":
-        raise WiringError(f"{cls.__name__}.{name}: SSEResponse is only allowed on GET handlers")
+    return_hint = hints.get("return")
+    return_kind, return_members = _resolve_return(
+        cls, name, http_method, verb.success_status, return_hint
+    )
 
     json_type = types.get("json")
     json_decoder = decoder_for(json_type) if json_type is not None else None
@@ -958,7 +1071,8 @@ def _bind_sources(  # noqa: C901
         content=wants_content,
         raw_headers=wants_raw_headers,
         return_kind=return_kind,
-        return_annotation=hints.get("return"),
+        return_annotation=return_hint,
+        return_members=return_members,
         arity=arity,
     )
 
@@ -1332,6 +1446,19 @@ def _response_headers(
     return headers
 
 
+def _no_content_headers(
+    typed: Struct | None, raw: RawHeaders | Mapping[str, str] | None
+) -> list[tuple[bytes, bytes]]:
+    """Header pairs for a 204: unlike every other response kind, ``content-type`` and
+    ``content-length`` are never emitted (RFC 9110 §15.3.5), whatever ``typed``/``raw``
+    supply."""
+    return [
+        (key.encode("latin-1"), value.encode("latin-1"))
+        for key, value in _header_items(typed, raw)
+        if key.lower() not in ("content-type", "content-length")
+    ]
+
+
 async def _send_payload(
     send: Send, status: int, payload: bytes, headers: list[tuple[bytes, bytes]]
 ) -> None:
@@ -1572,6 +1699,41 @@ class _JSONSender:
             }
         )
         await send({"type": "http.response.body", "body": payload})
+
+
+@dataclass(slots=True)
+class _NoContentSender:
+    _status: int
+    _reverser: _Reverser
+
+    async def __call__(
+        self, scope: Scope, receive: Receive, send: Send, result: "NoContent[Any]"
+    ) -> None:
+        _ = receive
+        status = result.status_code if result.status_code is not None else self._status
+        headers = _no_content_headers(result.headers, result.raw_headers)
+        headers += _link_header_pairs(self._reverser, scope, result.location, result.links)
+        await send({"type": "http.response.start", "status": status, "headers": headers})
+        await send({"type": "http.response.body", "body": b""})
+
+
+@dataclass(slots=True)
+class _UnionResponseSender:
+    """Dispatches a union return by the runtime type of the result: the member senders
+    are pre-resolved at wiring, most-derived-first (``Created``/``Accepted`` subclass
+    ``JSONResponse``, so they must be tried before it — see ``_union_sender``)."""
+
+    _senders: tuple[tuple[type, "_Sender"], ...]
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send, result: object) -> None:
+        for response_type, sender in self._senders:
+            if isinstance(result, response_type):
+                await sender(scope, receive, send, result)
+                return
+        raise WiringError(
+            f"handler returned {type(result).__name__}, which matches none of its "
+            f"declared union return types",
+        )
 
 
 class _ExceptionHandlers:
@@ -2012,8 +2174,10 @@ def _result_sender(
         return _BytesSender(status)
     if kind == "bytes-response":
         return _BytesResponseSender(status, reverser)
-    if kind == "json-response":
+    if kind in ("json-response", "created", "accepted"):
         return _JSONResponseSender(status, reverser)
+    if kind == "no-content":
+        return _NoContentSender(status, reverser)
     if kind == "stream-bytes":
         return _StreamSender(status, b"application/octet-stream", reverser, exceptions)
     if kind == "stream-ndjson":
@@ -2021,6 +2185,22 @@ def _result_sender(
     if kind == "stream-sse":
         return _SSEStreamSender(status, b"text/event-stream", reverser, exceptions)
     return _JSONSender(status)
+
+
+def _union_sender(
+    members: tuple[ResponseMember, ...], reverser: _Reverser, exceptions: _ExceptionHandlers
+) -> _UnionResponseSender:
+    """Build the union sender's isinstance chain, most-derived-first: ``Created``/
+    ``Accepted`` subclass ``JSONResponse``, so a union of both must test them before the
+    base or a ``Created`` instance would send as a plain (incorrectly-200) ``JSONResponse``.
+    Single inheritance among the wrapper hierarchy makes ``__mro__`` length a correct,
+    hand-free ordering: a deeper subclass always has a longer mro."""
+    ordered = sorted(members, key=lambda member: len(member.response_type.__mro__), reverse=True)
+    senders = tuple(
+        (member.response_type, _result_sender(member.kind, member.status, reverser, exceptions))
+        for member in ordered
+    )
+    return _UnionResponseSender(senders)
 
 
 class _Route:
@@ -2056,7 +2236,11 @@ class _Route:
         # Plain-JSON results (the overwhelmingly common kind) are sent inline in
         # __call__ rather than through _send_result, to save a coroutine hop.
         self._json_status = status if sources.return_kind == "json" else None
-        self._send_result = _result_sender(sources.return_kind, status, reverser, exceptions)
+        self._send_result = (
+            _union_sender(sources.return_members, reverser, exceptions)
+            if sources.return_kind == "union"
+            else _result_sender(sources.return_kind, status, reverser, exceptions)
+        )
         self._exceptions = exceptions
         self._arity = sources.arity
 
@@ -2491,14 +2675,17 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
             fn = getattr(obj, name, None)
             if fn is None:
                 continue
-            sources = _bind_sources(cls, name, fn, verb.method, self._decoder)
+            sources = _bind_sources(cls, name, fn, verb, self._decoder)
             self._check_user_source(cls, name, sources, compiled_auth)
             segments = _route_segments(
                 cls, name, template, sources.path, extends_path=verb.extends_path
             )
+            # A NoContent/Created/Accepted return fixes its own status regardless of the
+            # verb's default (204/201/202); a union's members carry their own already.
+            status = _effective_status(sources.return_kind, verb.success_status)
             handler = _Route(
                 fn,
-                verb.success_status,
+                status,
                 sources=sources,
                 auth=compiled_auth,
                 reverser=self._reverser,
@@ -2512,7 +2699,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
                 OperationSpec(
                     path=_template_str(segments),
                     method=verb.method.lower(),
-                    success_status=verb.success_status,
+                    success_status=status,
                     sources=sources,
                     auth_mode=auth_mode,
                     security_scheme=security_scheme,

@@ -185,6 +185,66 @@ app = App()
 `status_code` is available on `BytesResponse` and the [streaming responses](streaming.md)
 too.
 
+## Dynamic success status
+
+A handler can answer with **different** success statuses depending on what it finds,
+while both branches stay statically typed and both show up in the OpenAPI spec: return a
+**union of response wrappers**.
+
+Three wrappers exist for the success statuses REST actually uses beyond 200:
+
+- `NoContent[H: Struct | None = None]` — 204, no body. Still carries `headers`,
+  `raw_headers`, `location`, and `links` like any response (a 204 may legitimately carry
+  a `Location`); `content-type`/`content-length` are never sent.
+- `Created[T: Struct, H: Struct | None = None]` — 201 + a JSON body, regardless of the
+  verb's own default.
+- `Accepted[T: Struct, H: Struct | None = None]` — 202 + a JSON body, regardless of the
+  verb's own default.
+
+```python
+from msgspec import Struct
+
+from jero import BaseApp, JSONResponse, NoContent, Resource
+
+
+class Widget(Struct):
+    id: str
+    name: str
+
+
+class WidgetPath(Struct):
+    widget_id: str
+
+
+class WidgetResource(Resource, path="/widgets"):
+    async def read_one(self, path: WidgetPath) -> JSONResponse[Widget] | NoContent:
+        if path.widget_id == "missing":
+            return NoContent()                                            # 204, no body
+        return JSONResponse(json=Widget(id=path.widget_id, name="gizmo"))  # 200 + Widget
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        self.include_resource(WidgetResource())
+
+
+app = App()
+```
+
+Both branches are documented: the spec's `200` response describes `Widget`, and its `204`
+has no body.
+
+The framework checks this shape at startup, not just at the type-checker:
+
+- Every member must be a recognized wrapper — `NoContent`, `Created`, `Accepted`,
+  `JSONResponse`, or `BytesResponse`. A bare `Struct`/`bytes` return, or a streaming
+  response, can't join a union — the former has no type to carry a status, and a
+  streaming sender owns the response lifecycle and can't be chosen after the fact.
+- Every member must resolve to a **distinct status** — `JSONResponse[A] | JSONResponse[B]`
+  is ambiguous (both would document/send 200); use `JSONResponse[A | B]` instead.
+- `-> JSONResponse[Widget] | None` is rejected with a pointed message, since it's the
+  natural typo for this feature: return `NoContent`, not `None`, for a 204.
+
 ## Errors
 
 Raise a typed `HTTPError` subclass from a handler to short-circuit with a Problem

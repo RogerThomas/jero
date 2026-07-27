@@ -124,6 +124,8 @@ _WRAPPER_NAMES: dict[ReturnKind, str] = {
     "stream-ndjson": "NDJSONStreamingResponse",
     "stream-sse": "SSEResponse",
     "json-response": "JSONResponse",
+    "created": "Created",
+    "accepted": "Accepted",
 }
 
 
@@ -158,12 +160,13 @@ def _item_payload(
 
 def _response_header_type(kind: ReturnKind, annotation: object) -> type[Struct] | None:
     """The typed response-header Struct ``H`` from a response wrapper's annotation, if any.
-    Its position depends on the wrapper: ``Bytes``/``Streaming`` take only ``H``; the rest
-    take ``T`` then ``H`` (so ``H`` is the second arg, present only when both are given)."""
+    Its position depends on the wrapper: ``Bytes``/``Streaming``/``NoContent`` take only
+    ``H``; the rest take ``T`` then ``H`` (so ``H`` is the second arg, present only when
+    both are given)."""
     args = get_args(annotation)
-    if kind in ("bytes-response", "stream-bytes"):
+    if kind in ("bytes-response", "stream-bytes", "no-content"):
         candidate = args[0] if args else None
-    elif kind in ("json-response", "stream-ndjson", "stream-sse"):
+    elif kind in ("json-response", "stream-ndjson", "stream-sse", "created", "accepted"):
         candidate = args[1] if len(args) > 1 else None
     else:
         return None
@@ -318,11 +321,15 @@ def _entry_from_spec(spec: ResponseSpec) -> ResponseEntry:
     return ResponseEntry(spec.status, spec.description)
 
 
-def _success_entry(status: int, sources: Sources, operation_id: str) -> ResponseEntry:
-    kind = sources.return_kind
-    annotation = sources.return_annotation
+def _success_entry(
+    kind: ReturnKind, status: int, annotation: object, operation_id: str
+) -> ResponseEntry:
+    """The documented response for one return kind — a union's member, or the sole
+    kind/annotation/status of a non-union return."""
     description = _STATUS_TEXT.get(status, "Successful response")
     headers = _response_header_type(kind, annotation)
+    if kind == "no-content":
+        return ResponseEntry(status, description, headers=headers)
     if kind in ("bytes", "bytes-response", "stream-bytes"):
         return ResponseEntry(status, description, "application/octet-stream", headers=headers)
     if kind == "stream-ndjson":
@@ -341,9 +348,9 @@ def _success_entry(status: int, sources: Sources, operation_id: str) -> Response
                 status, description, "text/event-stream", schema={"type": "string"}, headers=headers
             )
         return ResponseEntry(status, description, "text/event-stream", model=item, headers=headers)
-    if kind == "json-response":
+    if kind in ("json-response", "created", "accepted"):
         item = _item_payload(annotation, kind, operation_id)
-        if item is None:  # bare JSONResponse (no [T]) -> any JSON
+        if item is None:  # bare wrapper (no [T]) -> any JSON
             return ResponseEntry(
                 status, description, "application/json", schema={}, headers=headers
             )
@@ -359,6 +366,17 @@ def _success_entry(status: int, sources: Sources, operation_id: str) -> Response
             is_list=is_list,
         )
     return ResponseEntry(status, description, "application/json", schema={})
+
+
+def _success_entries(status: int, sources: Sources, operation_id: str) -> list[ResponseEntry]:
+    """One documented response per return kind: a union's members each contribute their
+    own (kind, status, annotation); a non-union return contributes the one it declared."""
+    if sources.return_kind == "union":
+        return [
+            _success_entry(member.kind, member.status, member.annotation, operation_id)
+            for member in sources.return_members
+        ]
+    return [_success_entry(sources.return_kind, status, sources.return_annotation, operation_id)]
 
 
 def operation_input(
@@ -381,8 +399,8 @@ def operation_input(
     # Responses cascade by status: derived (lowest), then declared exceptions, then
     # explicit ResponseSpecs — class-meta before op-meta within each layer.
     responses: dict[int, ResponseEntry] = {}
-    success = _success_entry(spec.success_status, spec.sources, operation_id)
-    responses[success.status] = success
+    for entry in _success_entries(spec.success_status, spec.sources, operation_id):
+        responses[entry.status] = entry
     for entry in _error_responses(spec.sources, authed=spec.auth_mode is not None, adapter=adapter):
         responses[entry.status] = entry
     for entry in _exception_entries(spec, adapter, operation_id):

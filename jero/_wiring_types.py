@@ -19,14 +19,21 @@ from jero.errors import BaseHTTPError
 from jero.openapi import ResponseSpec, SecurityScheme, Tag
 
 # How a handler's return value is encoded onto the wire; see _return_kind / _result_sender.
+# "no-content" / "created" / "accepted" are JSONResponse-shaped (NoContent excepted) but fix
+# their status regardless of the verb's own default; "union" is a union of the other kinds,
+# resolved member-by-member into Sources.return_members.
 type ReturnKind = Literal[
     "json",
     "json-response",
+    "no-content",
+    "created",
+    "accepted",
     "bytes",
     "bytes-response",
     "stream-bytes",
     "stream-ndjson",
     "stream-sse",
+    "union",
 ]
 # How a multipart form field's body is decoded; see _payload_kind / _decode_form_payload.
 type PayloadKind = Literal["bytes", "struct", "scalar"]
@@ -143,6 +150,19 @@ class FormSpec(Struct, frozen=True):
     fields: tuple[FormField, ...]
 
 
+class ResponseMember(Struct, frozen=True):
+    """One resolved member of a union return annotation (``JSONResponse[Widget] |
+    NoContent``): its concrete response class (for the runtime ``isinstance`` dispatch),
+    the raw — possibly subscripted — annotation (for OpenAPI item/header derivation), its
+    resolved kind (never ``"union"``), and its effective status (the verb's default for a
+    plain ``JSONResponse``/``BytesResponse`` member, else the member type's fixed status)."""
+
+    response_type: type
+    annotation: object
+    kind: ReturnKind
+    status: int
+
+
 class Sources(Struct):
     """The resolved Struct types for one handler's arguments."""
 
@@ -161,6 +181,7 @@ class Sources(Struct):
     raw_headers: bool = False
     return_kind: ReturnKind = "json"
     return_annotation: object = None  # the raw return hint, kept for OpenAPI response derivation
+    return_members: tuple[ResponseMember, ...] = ()  # populated iff return_kind == "union"
     arity: int = 0  # number of binding args the handler declares
 
 
