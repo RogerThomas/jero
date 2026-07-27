@@ -1966,3 +1966,57 @@ def test_scalar_config_absent_by_default() -> None:
     with TestClient(PruneApp()) as client:
         page = client.get("/docs").text
     assert "data-configuration" not in page
+
+
+# --- Param prune follows discriminator mappings when scanning references ---
+
+
+class TagA(Struct, tag=True):
+    """One member of a tagged union."""
+
+    a: int
+
+
+class TagB(Struct, tag=True):
+    """The other member of a tagged union."""
+
+    b: int
+
+
+class TaggedParamPath(Struct):
+    """A path param source alongside a tagged-union response."""
+
+    id: str
+
+
+class TaggedStreamEndpoint(Endpoint, path="/t/{id}"):
+    """An op with a param (triggers the prune) and a tagged-union NDJSON response."""
+
+    async def _items(self) -> AsyncIterator[TagA | TagB]:
+        """Yield a union item."""
+        yield TagA(a=1)
+
+    async def get(self, path: TaggedParamPath) -> NDJSONStreamingResponse[TagA | TagB]:
+        """Stream the tagged union."""
+        _ = path
+        return NDJSONStreamingResponse(stream=self._items())
+
+
+class TaggedStreamApp(BaseApp):
+    """Expose the tagged-union streaming endpoint plus the docs."""
+
+    async def wire(self) -> None:
+        """Wire docs and the endpoint."""
+        self.include_openapi(title="t", version="1")
+        self.include_endpoint(TaggedStreamEndpoint())
+
+
+def test_param_prune_keeps_tagged_union_members_via_discriminator() -> None:
+    """With a param (triggering the prune) and a tagged-union response, the reference scan
+    follows the discriminator mapping — so union members survive while the param Struct is
+    dropped."""
+    with TestClient(TaggedStreamApp()) as client:
+        schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    assert "TaggedParamPath" not in schemas
+    assert "TagA" in schemas
+    assert "TagB" in schemas
