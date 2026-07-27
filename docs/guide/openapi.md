@@ -356,6 +356,14 @@ class CookieAuth:
 `SecurityScheme` has three constructors: `http_bearer()`, `http_basic()`, and
 `api_key(name=..., location="header" | "query" | "cookie")`.
 
+An operation whose authenticator [accepts anonymous callers](auth.md#optional-authentication) advertises
+its scheme *and* the unauthenticated alternative, which OpenAPI spells as an empty
+requirement object alongside it:
+
+```json
+"security": [{"bearerAuth": []}, {}]
+```
+
 ## The docs UI
 
 `/docs` serves a [Scalar](https://github.com/scalar/scalar) reference loaded from a CDN

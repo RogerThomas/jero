@@ -30,6 +30,10 @@ type ReturnKind = Literal[
 ]
 # How a multipart form field's body is decoded; see _payload_kind / _decode_form_payload.
 type PayloadKind = Literal["bytes", "struct", "scalar"]
+# How auth gates one operation: mandatory (the authenticator returns ``TUser``),
+# credentials-if-offered (it returns ``TUser | None``), or None for a route with no auth at
+# all. One value rather than two bools, so "optional but unauthed" is unrepresentable.
+type AuthMode = Literal["required", "optional"] | None
 
 
 class WiringError(TypeError):
@@ -149,6 +153,10 @@ class Sources(Struct):
     path: type[Struct] | None = None
     headers: type[Struct] | None = None
     user: type[Struct] | None = None
+    # True when 'user' was declared ``UserStruct | None`` (the anonymous-caller contract). Set
+    # together with ``user``; cross-checked at wiring time against whether the route's
+    # authenticator reports absence.
+    user_optional: bool = False
     content: bool = False
     raw_headers: bool = False
     return_kind: ReturnKind = "json"
@@ -164,7 +172,7 @@ class OperationSpec(Struct):
     method: str  # lowercase HTTP verb
     success_status: int
     sources: Sources
-    authed: bool
+    auth_mode: AuthMode
     security_scheme: SecurityScheme | None
     class_meta: ResourceMeta | EndpointMeta | None
     op_meta: OperationMeta | None

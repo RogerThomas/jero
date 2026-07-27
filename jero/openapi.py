@@ -264,7 +264,10 @@ class OperationInput:
     description: str | None = None
     params: tuple[ParamSpec, ...] = ()
     body: BodySpec | None = None
-    security: tuple[str, ...] = ()  # required scheme names (referenced from securitySchemes)
+    security: tuple[str, ...] = ()  # scheme names to require (referenced from securitySchemes)
+    # True when the operation also accepts an unauthenticated caller: the spec's idiom for
+    # that is an empty requirement object alongside the scheme's.
+    security_optional: bool = False
 
 
 class OpenAPINameConflictError(Exception):
@@ -647,7 +650,12 @@ def _operation(op: OperationInput, schemas: _Schemas) -> dict[str, Any]:
         str(entry.status): _response(entry, schemas) for entry in op.responses
     }
     if op.security:
-        operation["security"] = [{name: []} for name in op.security]
+        requirements: list[dict[str, list[str]]] = [{name: []} for name in op.security]
+        if op.security_optional:
+            # An empty requirement object means "no security applied" — listing it beside the
+            # scheme is how OpenAPI says the credentials are optional.
+            requirements.append({})
+        operation["security"] = requirements
     return operation
 
 

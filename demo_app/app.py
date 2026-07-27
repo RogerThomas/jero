@@ -1,12 +1,12 @@
 """The demo app: a factory-injected widgets API used by the test suite and the docs.
 
-It wires authed widgets (CRUD + background analytics + links), an authed ``/me``, open
-health checks, a raw-form echo, and a ``from_ref`` link demo. Auth is a pure in-memory
-token map built in ``wire`` (no lifecycle), so swapping the factory in tests replaces
-only the I/O services and leaves auth intact.
+It wires authed widgets (CRUD + background analytics + links), an authed ``/me``, an
+optionally-authed ``/spotlight``, open health checks, a raw-form echo, and a ``from_ref``
+link demo. Auth is a pure in-memory token map built in ``wire`` (no lifecycle), so swapping
+the factory in tests replaces only the I/O services and leaves auth intact.
 """
 
-from demo_app.auth import TokenAuth
+from demo_app.auth import OptionalTokenAuth, TokenAuth
 from demo_app.factory import Factory
 from demo_app.models import User
 from demo_app.operations.streaming_operations import NotificationsEndpoint, QuestionsEndpoint
@@ -15,6 +15,7 @@ from demo_app.operations.system_operations import (
     HealthEndpoint,
     RawFormEndpoint,
     RawHealthEndpoint,
+    SpotlightEndpoint,
     WhoAmIEndpoint,
 )
 from demo_app.operations.widget_operations import WidgetResource
@@ -22,7 +23,8 @@ from jero import BaseApp
 
 
 class DemoApp(BaseApp[Factory]):
-    """Factory-injected demo app: authed widgets and ``/me``; open health, raw-form, links."""
+    """Factory-injected demo app: authed widgets and ``/me``, optionally-authed
+    ``/spotlight``; open health, raw-form, links."""
 
     async def wire(self) -> None:
         """Build services from the factory, open the background queue, and wire the routes."""
@@ -34,10 +36,15 @@ class DemoApp(BaseApp[Factory]):
         # before that service would be torn down.
         background_tasks = await self.create_background_tasks(drain_timeout=1.0)
         background_tasks.register(analytics_service.process)
-        auth = TokenAuth({"token": User(id="user-id", name="user-name")})
+        users = {"token": User(id="user-id", name="user-name")}
+        token_auth = TokenAuth(users)
+        # Same token lookup, the other policy: credentials are an input rather than a gate, so
+        # an anonymous caller binds user=None. A bad token is still a 401.
+        optional_token_auth = OptionalTokenAuth(users)
         self.add_exception_handler(upstream_response_error_handler)
-        self.include_resource(WidgetResource(widget_service, background_tasks), auth=auth)
-        self.include_endpoint(WhoAmIEndpoint(), auth=auth)
+        self.include_resource(WidgetResource(widget_service, background_tasks), auth=token_auth)
+        self.include_endpoint(WhoAmIEndpoint(), auth=token_auth)
+        self.include_endpoint(SpotlightEndpoint(), auth=optional_token_auth)
         self.include_endpoint(HealthEndpoint())
         self.include_endpoint(RawHealthEndpoint())
         self.include_endpoint(RawFormEndpoint())

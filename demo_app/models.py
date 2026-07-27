@@ -75,9 +75,15 @@ class WidgetEvent(Camel):
 
 
 class Credentials(Camel):
-    """The bearer token lifted from the request's Authorization header."""
+    """The bearer token lifted from the request's Authorization header.
 
-    authorization: str
+    The field is optional so a request carrying no ``Authorization`` header still binds and
+    reaches ``authenticate``, which decides what absence means (see ``demo_app.auth``). Were
+    it required, jero would answer 401 before the authenticator ran — right for a gated
+    route, but it would make anonymous callers impossible to serve.
+    """
+
+    authorization: str | None = None
 
 
 class User(Camel):
@@ -91,6 +97,13 @@ class Health(Camel):
     """Health-check response body."""
 
     status: str
+
+
+class Spotlight(Camel):
+    """The spotlight widget, personalized when the caller presented credentials."""
+
+    widget_id: str
+    personalized_for: str | None
 
 
 class Question(Camel):

@@ -13,7 +13,7 @@ learns *which* sources a handler wants, and the request path just fills them in.
 | `path`        | URL template slots              | a `Struct`               |
 | `headers`     | request headers                 | a `Struct`               |
 | `raw_headers` | request headers (opaque)        | `RawHeaders`             |
-| `user`        | the auth result                 | a `Struct` (see [Auth](auth.md)) |
+| `user`        | the auth result                 | a `Struct`, or `Struct \| None` behind [optional auth](auth.md#optional-authentication) |
 
 `json`, `content`, and `form` are mutually exclusive (one request body), and are
 rejected on bodyless verbs (`GET`, `DELETE`). Everything else can combine freely.
