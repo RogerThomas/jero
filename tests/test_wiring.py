@@ -9,16 +9,7 @@ from dataclasses import dataclass
 import pytest
 from msgspec import Struct
 
-from jero import (
-    Auth,
-    BaseApp,
-    Created,
-    Endpoint,
-    JSONResponse,
-    NoContent,
-    Resource,
-    StreamingResponse,
-)
+from jero import Auth, BaseApp, Endpoint, JSONResponse, NoContent, Resource, StreamingResponse
 from jero.testing import TestClient
 
 
@@ -142,11 +133,11 @@ class UnionNoneResource(Resource, path="/x"):
 
 
 class UnionNonWrapperResource(Resource, path="/x"):
-    """Resource whose union return includes a bare Struct member."""
+    """Resource whose union return includes a type that is no return kind at all."""
 
-    async def read_many(self) -> P | NoContent:  # bare Struct returns stay single
-        """Handler unioning a bare Struct with NoContent."""
-        return P(name="name")
+    async def read_many(self) -> int | NoContent:  # int is not a return type, unioned or not
+        """Handler unioning an unsupported plain int with NoContent."""
+        return 0
 
 
 class UnionStreamingResource(Resource, path="/x"):
@@ -157,12 +148,18 @@ class UnionStreamingResource(Resource, path="/x"):
         return NoContent()
 
 
-class UnionDuplicateStatusResource(Resource, path="/x"):
-    """Resource whose union return members resolve to the same status."""
+class Q(Struct):
+    """A second minimal struct, for the shared-status body union."""
 
-    async def create(self, json: P) -> JSONResponse[P] | Created[P]:
-        """create's own 201 default clashes with Created's fixed 201."""
-        return JSONResponse(json=json)
+    count: int
+
+
+class UnionSharedStatusStructsResource(Resource, path="/x"):
+    """Resource whose union return has two bare Structs at one status — legal."""
+
+    async def read_many(self) -> P | Q:
+        """Two bodies at 200; they document as one anyOf."""
+        return P(name="name")
 
 
 def test_union_return_with_none_is_rejected() -> None:
@@ -171,8 +168,8 @@ def test_union_return_with_none_is_rejected() -> None:
         TestClient(_ResourceApp(UnionNoneResource()))
 
 
-def test_union_return_with_a_bare_struct_member_is_rejected() -> None:
-    """A bare Struct cannot join a union return; it must be wrapped."""
+def test_union_return_with_an_unsupported_member_is_rejected() -> None:
+    """A member that is no return kind at all fails, exactly as it would on its own."""
     with pytest.raises(RuntimeError, match="must each be a recognized"):
         TestClient(_ResourceApp(UnionNonWrapperResource()))
 
@@ -183,10 +180,12 @@ def test_union_return_mixing_streaming_and_buffered_is_rejected() -> None:
         TestClient(_ResourceApp(UnionStreamingResource()))
 
 
-def test_union_return_with_duplicate_statuses_is_rejected() -> None:
-    """Two union members that resolve to the same status is ambiguous."""
-    with pytest.raises(RuntimeError, match="both resolve to status 201"):
-        TestClient(_ResourceApp(UnionDuplicateStatusResource()))
+def test_union_return_with_two_members_at_one_status_is_allowed() -> None:
+    """Members may share a status — OpenAPI keys one response there and they merge into it.
+    Whether a given group *can* merge is a question about the document, so it is settled
+    where the document is built (see test_openapi), not by the runtime wiring."""
+    with TestClient(_ResourceApp(UnionSharedStatusStructsResource())) as client:
+        assert client.get("/x").status_code == 200
 
 
 def test_endpoint_path_must_be_exact() -> None:

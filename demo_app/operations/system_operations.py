@@ -24,15 +24,13 @@ class SpotlightEndpoint(Endpoint, path="/spotlight"):
     but invalid* never reach here — jero still answers 401.
     """
 
-    async def get(self, user: User | None) -> JSONResponse[Spotlight] | NoContent:
+    async def get(self, user: User | None) -> Spotlight | NoContent:
         """Return the spotlight widget, personalized when authenticated, or 204 when the
         caller is authenticated but not permitted to see it."""
         if user is not None and not user.may_see_spotlight:
             return NoContent()
-        return JSONResponse(
-            json=Spotlight(
-                widget_id="spotlight", personalized_for=user.name if user is not None else None
-            )
+        return Spotlight(
+            widget_id="spotlight", personalized_for=user.name if user is not None else None
         )
 
 

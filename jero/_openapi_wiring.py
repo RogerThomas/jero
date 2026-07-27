@@ -14,6 +14,7 @@ from types import UnionType
 from typing import Any, Literal, Union, cast, get_args, get_origin
 
 from msgspec import Struct, defstruct
+from msgspec.structs import fields as struct_fields
 
 from jero._wiring_types import (
     FormSpec,
@@ -327,7 +328,8 @@ def _success_entry(
     """The documented response for one return kind — a union's member, or the sole
     kind/annotation/status of a non-union return."""
     description = _STATUS_TEXT.get(status, "Successful response")
-    headers = _response_header_type(kind, annotation)
+    header_type = _response_header_type(kind, annotation)
+    headers = () if header_type is None else (header_type,)
     if kind == "no-content":
         return ResponseEntry(status, description, headers=headers)
     if kind in ("bytes", "bytes-response", "stream-bytes"):
@@ -368,15 +370,95 @@ def _success_entry(
     return ResponseEntry(status, description, "application/json", schema={})
 
 
+def _merged_body_model(entries: Sequence[ResponseEntry], operation_id: str) -> UnionType:
+    """The ``A | B`` body for several members sharing one status *and* media type, so they
+    document as one ``anyOf`` (with msgspec's ``discriminator`` when the members are
+    tagged) — identical to what those Structs produce inside ``JSONResponse[A | B]``."""
+    models = [entry.model for entry in entries]
+    if any(model is None or entry.is_list for model, entry in zip(models, entries, strict=True)):
+        # A bare/unparameterized wrapper documents an open `{}` body, and a list documents an
+        # array; neither composes into an anyOf that still says anything useful.
+        raise WiringError(
+            f"{operation_id}: union return members sharing a status must each declare a "
+            f"Struct body to merge into one anyOf; a bare wrapper or a list[Struct] member "
+            f"cannot be combined — give it its own status",
+        )
+    merged = models[0]
+    for model in models[1:]:
+        merged = merged | model  # pyrefly: ignore  # Struct/union operands build a UnionType
+    return cast("UnionType", merged)
+
+
+def _merged_header_types(
+    entries: Sequence[ResponseEntry], operation_id: str
+) -> tuple[type[Struct], ...]:
+    """Every member's ``H`` for one status, de-duplicated. A status has exactly one header
+    map, so two members describing the same wire name with *different* field types cannot
+    both be documented — that is a loud wiring failure rather than a silent last-wins."""
+    by_wire_name: dict[str, object] = {}
+    collected: dict[type[Struct], None] = {}
+    for entry in entries:
+        for header_type in entry.headers:
+            for field_info in struct_fields(header_type):
+                wire_name = field_info.name.replace("_", "-")
+                previous = by_wire_name.get(wire_name)
+                if previous is not None and previous != field_info.type:
+                    raise WiringError(
+                        f"{operation_id}: union return members sharing a status disagree on "
+                        f"response header {wire_name!r} ({previous!r} vs {field_info.type!r}); "
+                        f"one status has one header map, so give them distinct statuses or "
+                        f"one shared header Struct",
+                    )
+                by_wire_name[wire_name] = field_info.type
+            collected.setdefault(header_type, None)
+    return tuple(collected)
+
+
+def _merge_status_group(
+    entries: Sequence[ResponseEntry], status: int, operation_id: str
+) -> ResponseEntry:
+    """Several union members resolving to one status, as the single response OpenAPI keys
+    by that status: bodies of one media type merged into an ``anyOf``, header maps unioned.
+
+    Mixed media types are rejected. OpenAPI *can* hold them (``content`` is keyed by media
+    type), but there it means content negotiation — the client chooses via ``Accept`` —
+    whereas a union return means the handler chose. Documenting the second as the first
+    would state something the operation does not do.
+    """
+    media_types = {entry.content_type for entry in entries}
+    if len(media_types) > 1:
+        listed = ", ".join(sorted(str(media_type) for media_type in media_types))
+        raise WiringError(
+            f"{operation_id}: union return members sharing status {status} must share a "
+            f"media type, got {listed}; OpenAPI keys several media types under one status "
+            f"as content negotiation (the client picks via Accept), which is not what a "
+            f"union return does — give them distinct statuses",
+        )
+    return ResponseEntry(
+        status,
+        _STATUS_TEXT.get(status, "Successful response"),
+        entries[0].content_type,
+        model=_merged_body_model(entries, operation_id),
+        headers=_merged_header_types(entries, operation_id),
+    )
+
+
 def _success_entries(status: int, sources: Sources, operation_id: str) -> list[ResponseEntry]:
-    """One documented response per return kind: a union's members each contribute their
-    own (kind, status, annotation); a non-union return contributes the one it declared."""
-    if sources.return_kind == "union":
+    """One documented response per success *status*: a non-union return contributes the one
+    it declared, and a union contributes one entry per status its members resolve to, with
+    several members at one status merged into the single response OpenAPI allows there."""
+    if sources.return_kind != "union":
         return [
-            _success_entry(member.kind, member.status, member.annotation, operation_id)
-            for member in sources.return_members
+            _success_entry(sources.return_kind, status, sources.return_annotation, operation_id)
         ]
-    return [_success_entry(sources.return_kind, status, sources.return_annotation, operation_id)]
+    by_status: dict[int, list[ResponseEntry]] = {}
+    for member in sources.return_members:
+        entry = _success_entry(member.kind, member.status, member.annotation, operation_id)
+        by_status.setdefault(member.status, []).append(entry)
+    return [
+        group[0] if len(group) == 1 else _merge_status_group(group, member_status, operation_id)
+        for member_status, group in by_status.items()
+    ]
 
 
 def operation_input(

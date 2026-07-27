@@ -926,12 +926,13 @@ def _effective_status(kind: ReturnKind, verb_status: int) -> int:
     return _FIXED_STATUS.get(kind, verb_status)
 
 
-# Kinds a union return member may resolve to; streaming senders own the response lifecycle
-# and can't be chosen after the fact, and a bare Struct/bytes has no type to carry a status,
-# so neither joins a union — only these five carry both a concrete class and an "isinstance
-# dispatchable" runtime shape.
+# Kinds a union return member may resolve to: every buffered kind, plain returns included —
+# a bare ``Struct`` / ``list[Struct]`` / ``bytes`` member simply takes the verb's default
+# status, exactly as it does when it is a handler's sole return, so ``-> Widget | NoContent``
+# needs no wrapper. Only the streaming kinds are excluded: their senders own the response
+# lifecycle (disconnect handling, mid-stream failure) and cannot be chosen after the fact.
 _UNION_MEMBER_KINDS = frozenset(
-    {"no-content", "created", "accepted", "json-response", "bytes-response"}
+    {"json", "bytes", "no-content", "created", "accepted", "json-response", "bytes-response"}
 )
 
 
@@ -943,7 +944,10 @@ def _union_args(ann: object) -> tuple[object, ...] | None:
     return get_args(ann)
 
 
-def _origin_or_self(ann: object) -> type:
+def _dispatch_type(ann: object) -> type:
+    """The class a union member is matched against at request time. Subscripted
+    annotations dispatch on their origin (``JSONResponse[W]`` -> ``JSONResponse``,
+    ``list[W]`` -> ``list``), since a subscripted generic is not ``isinstance``-able."""
     origin = get_origin(ann)
     return cast("type", origin if origin is not None else ann)
 
@@ -952,28 +956,26 @@ def _union_return_members(
     cls: type, name: str, members: tuple[object, ...], verb_status: int
 ) -> tuple[ResponseMember, ...]:
     """Resolve and validate a union return annotation's members: each must be a recognized,
-    non-streaming response wrapper, and no two may resolve to the same status."""
+    non-streaming return kind.
+
+    Members **may** share a status: OpenAPI keys one response per status, so those merge
+    into it — bodies as one ``anyOf``, header maps unioned. Whether a given group actually
+    merges is a question about the *document*, so it is settled where the document is built
+    (``_openapi_wiring._merge_status_group``), alongside the item-type checks — not here.
+    Runtime dispatch needs no such rule: members sharing a status also share a sender, and
+    that sender reads the body and headers off whichever instance was returned.
+    """
     resolved: list[ResponseMember] = []
-    by_status: dict[int, type] = {}
     for member in members:
         kind = _return_kind(member)
         if kind is None or kind not in _UNION_MEMBER_KINDS:
             raise WiringError(
                 f"{cls.__name__}.{name}: union return members must each be a recognized, "
-                f"non-streaming response wrapper (NoContent, Created, Accepted, "
-                f"JSONResponse, or BytesResponse); got {member!r}",
+                f"non-streaming return type (a Struct, list[Struct], bytes, NoContent, "
+                f"Created, Accepted, JSONResponse, or BytesResponse); got {member!r}",
             )
         status = _effective_status(kind, verb_status)
-        response_type = _origin_or_self(member)
-        clashing = by_status.get(status)
-        if clashing is not None:
-            raise WiringError(
-                f"{cls.__name__}.{name}: union return members {clashing.__name__} and "
-                f"{response_type.__name__} both resolve to status {status}; give them "
-                f"distinct statuses, or combine them as one JSONResponse[A | B] member",
-            )
-        by_status[status] = response_type
-        resolved.append(ResponseMember(response_type, member, kind, status))
+        resolved.append(ResponseMember(_dispatch_type(member), member, kind, status))
     return tuple(resolved)
 
 

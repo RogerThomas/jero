@@ -1604,6 +1604,22 @@ class DynamicStatusEndpoint(Endpoint, path="/dynamic"):
         return NoContent()
 
 
+class PlainUnionEndpoint(Endpoint, path="/plain-union"):
+    """Endpoint documenting a union of a *bare* Struct and a NoContent."""
+
+    async def get(self) -> Item | NoContent:
+        """Return the item, or 204 when there's nothing to show."""
+        return NoContent()
+
+
+class PlainListUnionEndpoint(Endpoint, path="/plain-list-union"):
+    """Endpoint documenting a union of a bare list[Struct] and a NoContent."""
+
+    async def get(self) -> list[Item] | NoContent:
+        """Return the items, or 204 when there are none to show."""
+        return NoContent()
+
+
 class DynamicStatusApp(BaseApp):
     """App wiring the dynamic-success-status endpoints."""
 
@@ -1611,6 +1627,8 @@ class DynamicStatusApp(BaseApp):
         self.include_endpoint(NoContentOnlyEndpoint())
         self.include_endpoint(CreatedOnlyEndpoint())
         self.include_endpoint(DynamicStatusEndpoint())
+        self.include_endpoint(PlainUnionEndpoint())
+        self.include_endpoint(PlainListUnionEndpoint())
         self.include_openapi(title="dynamic", version="1")
 
 
@@ -1642,6 +1660,138 @@ def test_union_return_documents_one_entry_per_member() -> None:
         responses = document["paths"]["/dynamic"]["get"]["responses"]
         assert responses["200"]["content"]["application/json"]["schema"] == {
             "$ref": "#/components/schemas/Item"
+        }
+        assert "content" not in responses["204"]
+
+
+def test_bare_struct_union_member_keeps_its_schema() -> None:
+    """A plain Struct member needs no wrapper and still documents its $ref at 200."""
+    with TestClient(DynamicStatusApp()) as client:
+        responses = client.get("/openapi.json").json()["paths"]["/plain-union"]["get"]["responses"]
+        assert responses["200"]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/Item"
+        }
+        assert "content" not in responses["204"]
+
+
+# --- Several union members at one status merge into the single response OpenAPI keys there
+
+
+class Tagged(Struct, tag=True):
+    """A tagged member of a shared-status body union."""
+
+    id: str
+
+
+class OtherTagged(Struct, tag=True):
+    """The second tagged member of a shared-status body union."""
+
+    code: int
+
+
+class CacheHeaders(Struct):
+    """Typed headers carried by one branch of a shared-status union. The other branch
+    reuses ``RateHeaders`` above — disjoint wire names, so the two maps merge."""
+
+    x_cache: str
+
+
+class ClashingHeaders(Struct):
+    """Headers that describe the same wire name as CacheHeaders with a different type."""
+
+    x_cache: int
+
+
+class MergedWrapperEndpoint(Endpoint, path="/merged"):
+    """Two wrapped members at 200, each with its own body and typed headers."""
+
+    async def get(
+        self,
+    ) -> JSONResponse[Tagged, CacheHeaders] | JSONResponse[OtherTagged, RateHeaders]:
+        """Return either branch; the document merges them into one 200."""
+        return JSONResponse(json=Tagged(id="id"), headers=CacheHeaders(x_cache="hit"))
+
+
+class MergedWrapperApp(BaseApp):
+    """App wiring the mergeable shared-status union."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(MergedWrapperEndpoint())
+        self.include_openapi(title="merged", version="1")
+
+
+def test_shared_status_wrappers_merge_bodies_and_headers() -> None:
+    """Two wrappers at one status document as one response: an anyOf body and the union of
+    their header maps (OpenAPI emits response headers without `required`, so nothing that
+    a single header Struct asserted is lost)."""
+    with TestClient(MergedWrapperApp()) as client:
+        document = client.get("/openapi.json").json()
+        validate(document)
+        ok = document["paths"]["/merged"]["get"]["responses"]["200"]
+        assert ok["content"]["application/json"]["schema"]["anyOf"] == [
+            {"$ref": "#/components/schemas/Tagged"},
+            {"$ref": "#/components/schemas/OtherTagged"},
+        ]
+        assert ok["headers"]["x-cache"]["schema"] == {"type": "string"}
+        assert ok["headers"]["x-rate-limit"]["schema"] == {"type": "integer"}
+
+
+class ClashingHeaderEndpoint(Endpoint, path="/clashing"):
+    """Two members at 200 describing the same header wire name with different types."""
+
+    async def get(
+        self,
+    ) -> JSONResponse[Tagged, CacheHeaders] | JSONResponse[OtherTagged, ClashingHeaders]:
+        """Return either branch; the header maps cannot both be documented."""
+        return JSONResponse(json=Tagged(id="id"), headers=CacheHeaders(x_cache="hit"))
+
+
+class ClashingHeaderApp(BaseApp):
+    """App wiring the conflicting-header union."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(ClashingHeaderEndpoint())
+        self.include_openapi(title="clashing", version="1")
+
+
+def test_shared_status_members_disagreeing_on_a_header_fail_loud() -> None:
+    """One status has one header map, so two members cannot describe a name differently."""
+    with pytest.raises(RuntimeError, match="disagree on response header 'x-cache'"):
+        TestClient(ClashingHeaderApp())
+
+
+class MixedMediaEndpoint(Endpoint, path="/mixed-media"):
+    """Two members at 200 whose bodies are different media types."""
+
+    async def get(self) -> bytes | JSONResponse[Tagged]:
+        """Return raw bytes or JSON — representable in OpenAPI, but as negotiation."""
+        return b"blob"
+
+
+class MixedMediaApp(BaseApp):
+    """App wiring the mixed-media-type union."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(MixedMediaEndpoint())
+        self.include_openapi(title="mixed", version="1")
+
+
+def test_shared_status_members_with_different_media_types_fail_loud() -> None:
+    """OpenAPI can key two media types under one status, but that means the *client* picks
+    via Accept — not what a union return does, so jero refuses to say it."""
+    with pytest.raises(RuntimeError, match="must share a media type"):
+        TestClient(MixedMediaApp())
+
+
+def test_bare_list_union_member_documents_an_array() -> None:
+    """A plain list[Struct] member documents an array of $refs at 200."""
+    with TestClient(DynamicStatusApp()) as client:
+        responses = client.get("/openapi.json").json()["paths"]["/plain-list-union"]["get"][
+            "responses"
+        ]
+        assert responses["200"]["content"]["application/json"]["schema"] == {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/Item"},
         }
         assert "content" not in responses["204"]
 

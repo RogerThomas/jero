@@ -239,7 +239,14 @@ class ResponseEntry:
     """One documented response: a ``model`` ($ref — or, for a union of Structs, msgspec's
     ``anyOf`` with a ``discriminator`` when the members are tagged), a ``list`` of it, a
     ``one_of`` of several body variants (declared errors sharing a status), a verbatim
-    ``schema``, or no content. ``headers`` expands a Struct into response headers."""
+    ``schema``, or no content.
+
+    ``headers`` is a *tuple* of Structs, expanded into one merged response-header map: a
+    status has exactly one such map, but several union return members can reach it, each
+    contributing its own ``H`` (see ``_success_entries``). Every entry is emitted without
+    ``required``, which OpenAPI reads as optional — so merging asserts nothing that a
+    single Struct did not.
+    """
 
     status: int
     description: str
@@ -247,7 +254,7 @@ class ResponseEntry:
     model: type[Struct] | UnionType | None = None
     is_list: bool = False
     schema: dict[str, Any] | None = None
-    headers: type[Struct] | None = None
+    headers: tuple[type[Struct], ...] = ()
     one_of: tuple[type[Struct], ...] = ()
 
 
@@ -313,8 +320,8 @@ def _collect_types(operations: tuple[OperationInput, ...]) -> list[object]:
         for response in op.responses:
             for payload in _response_payload_types(response):
                 seen.setdefault(payload, None)
-            if response.headers is not None:
-                seen.setdefault(response.headers, None)
+            for header_type in response.headers:
+                seen.setdefault(header_type, None)
     return list(seen)
 
 
@@ -598,12 +605,19 @@ def _request_body(body: BodySpec, schemas: _Schemas) -> dict[str, Any]:
     }
 
 
-def _response_headers(headers: type[Struct], schemas: _Schemas) -> dict[str, Any]:
-    props = schemas.properties(headers)
-    return {
-        field_info.name.replace("_", "-"): {"schema": props.get(field_info.encode_name, {})}
-        for field_info in struct_fields(headers)
-    }
+def _response_headers(headers: tuple[type[Struct], ...], schemas: _Schemas) -> dict[str, Any]:
+    """The merged response-header map for a status. Several Structs can reach one status
+    (union return members each carrying their own ``H``); ``_openapi_wiring`` has already
+    rejected any wire name they disagree on, so a later Struct only ever re-states a name
+    an earlier one described identically."""
+    merged: dict[str, Any] = {}
+    for header_type in headers:
+        props = schemas.properties(header_type)
+        for field_info in struct_fields(header_type):
+            merged[field_info.name.replace("_", "-")] = {
+                "schema": props.get(field_info.encode_name, {})
+            }
+    return merged
 
 
 def _response(entry: ResponseEntry, schemas: _Schemas) -> dict[str, Any]:
@@ -627,7 +641,7 @@ def _response(entry: ResponseEntry, schemas: _Schemas) -> dict[str, Any]:
         else:
             schema = _binary_schema()
         response["content"] = _content(entry.content_type, schema, examples)
-    if entry.headers is not None:
+    if entry.headers:
         response["headers"] = _response_headers(entry.headers, schemas)
     return response
 

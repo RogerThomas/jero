@@ -396,12 +396,45 @@ class OrderingEndpoint(Endpoint, path="/ordering"):
         return JSONResponse(json=Echo(body="found"))
 
 
+class PlainStructEndpoint(Endpoint, path="/plain-struct"):
+    """A union of a *plain* Struct return and NoContent — no wrapper needed."""
+
+    async def get(self, params: VisibilityParams) -> Echo | NoContent:
+        """Return the bare Struct at the verb's default status, or 204."""
+        if params.visible == "no":
+            return NoContent()
+        return Echo(body="plain")
+
+
+class PlainListEndpoint(Endpoint, path="/plain-list"):
+    """A union whose body branch is a bare ``list[Struct]``."""
+
+    async def get(self, params: VisibilityParams) -> list[Echo] | NoContent:
+        """Return a JSON array at the verb's default status, or 204."""
+        if params.visible == "no":
+            return NoContent()
+        return [Echo(body="plain")]
+
+
+class PlainBytesEndpoint(Endpoint, path="/plain-bytes"):
+    """A union whose body branch is bare ``bytes``."""
+
+    async def get(self, params: VisibilityParams) -> bytes | NoContent:
+        """Return raw bytes at the verb's default status, or 204."""
+        if params.visible == "no":
+            return NoContent()
+        return b"plain"
+
+
 class UnionApp(BaseApp):
     """App wiring the union-return endpoints."""
 
     async def wire(self) -> None:
         self.include_endpoint(SpotlightEndpoint())
         self.include_endpoint(OrderingEndpoint())
+        self.include_endpoint(PlainStructEndpoint())
+        self.include_endpoint(PlainListEndpoint())
+        self.include_endpoint(PlainBytesEndpoint())
 
 
 @pytest.fixture(name="union_client")
@@ -437,3 +470,33 @@ def test_union_dispatch_still_sends_the_base_member(union_client: TestClient) ->
     resp = union_client.get("/ordering", params={"visible": "yes"})
     assert resp.status_code == 200
     assert resp.json() == {"body": "found"}
+
+
+@pytest.mark.parametrize(
+    ("path", "content_type", "body"),
+    [
+        ("/plain-struct", "application/json", b'{"body":"plain"}'),
+        ("/plain-list", "application/json", b'[{"body":"plain"}]'),
+        ("/plain-bytes", "application/octet-stream", b"plain"),
+    ],
+)
+def test_plain_return_joins_a_union_without_a_wrapper(
+    union_client: TestClient, path: str, content_type: str, body: bytes
+) -> None:
+    """A bare Struct / list[Struct] / bytes member needs no wrapper: it takes the verb's
+    default status, exactly as it does when it is the handler's sole return."""
+    resp = union_client.get(path, params={"visible": "yes"})
+    assert resp.status_code == 200
+    assert resp.content == body
+    assert resp.headers["content-type"] == content_type
+
+
+@pytest.mark.parametrize("path", ["/plain-struct", "/plain-list", "/plain-bytes"])
+def test_plain_return_unions_still_take_the_no_content_branch(
+    union_client: TestClient, path: str
+) -> None:
+    """The other branch of a plain-return union is still a bodyless 204."""
+    resp = union_client.get(path, params={"visible": "no"})
+    assert resp.status_code == 204
+    assert resp.content == b""
+    assert "content-type" not in resp.headers

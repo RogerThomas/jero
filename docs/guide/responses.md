@@ -201,10 +201,13 @@ Three wrappers exist for the success statuses REST actually uses beyond 200:
 - `Accepted[T: Struct, H: Struct | None = None]` — 202 + a JSON body, regardless of the
   verb's own default.
 
+Any return type from this page can be a union member, **plain returns included** — a bare
+`Struct` needs no wrapper just to sit beside a `NoContent`:
+
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, JSONResponse, NoContent, Resource
+from jero import BaseApp, NoContent, Resource
 
 
 class Widget(Struct):
@@ -217,10 +220,10 @@ class WidgetPath(Struct):
 
 
 class WidgetResource(Resource, path="/widgets"):
-    async def read_one(self, path: WidgetPath) -> JSONResponse[Widget] | NoContent:
+    async def read_one(self, path: WidgetPath) -> Widget | NoContent:
         if path.widget_id == "missing":
-            return NoContent()                                            # 204, no body
-        return JSONResponse(json=Widget(id=path.widget_id, name="gizmo"))  # 200 + Widget
+            return NoContent()                             # 204, no body
+        return Widget(id=path.widget_id, name="gizmo")     # 200 + Widget
 
 
 class App(BaseApp):
@@ -232,18 +235,58 @@ app = App()
 ```
 
 Both branches are documented: the spec's `200` response describes `Widget`, and its `204`
-has no body.
+has no body. Reach for a wrapper on a branch only when that branch needs one —
+`JSONResponse[Widget, Headers] | NoContent` to add typed headers to the 200, say.
 
-The framework checks this shape at startup, not just at the type-checker:
+Each member's status is the one it would have on its own: a plain `Struct`,
+`list[Struct]`, `bytes`, `JSONResponse`, or `BytesResponse` takes the verb's default
+(201 for `create`, else 200); `NoContent` / `Created` / `Accepted` take their own.
 
-- Every member must be a recognized wrapper — `NoContent`, `Created`, `Accepted`,
-  `JSONResponse`, or `BytesResponse`. A bare `Struct`/`bytes` return, or a streaming
-  response, can't join a union — the former has no type to carry a status, and a
-  streaming sender owns the response lifecycle and can't be chosen after the fact.
-- Every member must resolve to a **distinct status** — `JSONResponse[A] | JSONResponse[B]`
-  is ambiguous (both would document/send 200); use `JSONResponse[A | B]` instead.
-- `-> JSONResponse[Widget] | None` is rejected with a pointed message, since it's the
-  natural typo for this feature: return `NoContent`, not `None`, for a 204.
+### Members that share a status
+
+Members are free to land on the *same* status. OpenAPI keys one response per status, so
+they merge into it — bodies as one `anyOf`, header maps unioned:
+
+```python
+async def get(self) -> Widget | Archived:                      # both 200
+    ...
+```
+
+documents exactly what `JSONResponse[Widget | Archived]` documents: one 200 whose schema
+is `anyOf: [Widget, Archived]`, with a `discriminator` when the members are tagged. The
+two spellings agree, so pick whichever reads better. Wrappers merge the same way, and
+each may carry its own typed headers:
+
+```python
+async def get(self) -> JSONResponse[Widget, CacheHeaders] | JSONResponse[Archived, RateHeaders]:
+    ...
+```
+
+The 200 gets both header sets. Nothing is lost by merging: OpenAPI response headers are
+emitted without `required`, so a single header Struct was never asserting presence either.
+What you gain over hand-merging into `JSONResponse[Widget | Archived, BothHeaders]` is
+that the type checker now enforces the *pairing* — a `Widget` can't be returned with
+`RateHeaders`.
+
+### What's rejected
+
+- A **streaming** member. Its sender owns the response lifecycle (disconnect handling,
+  mid-stream failure) and can't be chosen after the handler has already returned.
+- Members at one status with **different media types** — `bytes | JSONResponse[Widget]`.
+  OpenAPI *can* key `application/octet-stream` and `application/json` under one status,
+  but there it means content negotiation: the client picks via `Accept`. A union return
+  means the handler picked. Documenting the second as the first would state something the
+  operation doesn't do, so give them distinct statuses.
+- Members at one status that **disagree on a header** — two `H` Structs describing the
+  same wire name with different types. One status, one header map, no way to say both.
+- Members at one status where one has **no single Struct body** to merge — a bare
+  unparameterized wrapper (an open `{}` body) or a `list[Struct]` (an array). Neither
+  composes into an `anyOf` that still says anything useful.
+- `-> Widget | None`, with a pointed message: it's the natural typo for this feature.
+  Return `NoContent`, not `None`, for a 204.
+
+The media-type, header, and body-merge checks are questions about the generated document,
+so they run when `include_openapi` is enabled — like the streaming item-type checks.
 
 ## Errors
 

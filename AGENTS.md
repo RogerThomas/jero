@@ -293,9 +293,19 @@ These pull against each other constantly; keep all three in mind on every change
   response kinds — generic `JSONResponse[T, H]` / `BytesResponse[H]` / streaming
   `[T, H]` with typed response headers, `raw_headers`, and `status_code` overrides;
   `NoContent[H]` / `Created[T, H]` / `Accepted[T, H]` (204/201/202 regardless of the
-  verb's own default); a **union of response wrappers** as one return type lets a
-  handler answer with different, statically-typed success statuses (each documented
-  as its own OpenAPI response entry) — `BaseApp`/`BaseFactory` lifecycle, in-process
+  verb's own default); a **union return** (`Widget | NoContent`) lets a handler answer
+  with different, statically-typed success statuses, each documented as its own OpenAPI
+  response entry. Any non-streaming return kind may be a union member, plain
+  `Struct`/`list[Struct]`/`bytes` included — a member's status is the one it would have
+  alone, so no wrapper is needed just to join a union. Members **may** share a status:
+  OpenAPI keys one response there, so they merge into it (bodies as one `anyOf`, header
+  maps unioned — response headers carry no `required`, so merging asserts nothing new),
+  which makes `Widget | Other` and `JSONResponse[Widget | Other]` produce the identical
+  document. A shared status is rejected only when the merge can't be *said*: different
+  media types (OpenAPI reads those as `Accept` negotiation, not a handler's choice),
+  header Structs disagreeing on a wire name, or a member with no single Struct body (bare
+  wrapper / `list`). Those are document questions, so they fire under `include_openapi`,
+  like the streaming item-type checks — `BaseApp`/`BaseFactory` lifecycle, in-process
   `BackgroundTasks`, reverse-routed
   `Location` / `Link` responses, typed Problem Details errors, structurally registered
   custom exception handlers, `TestClient`, the test suite. **OpenAPI 3.1**:
