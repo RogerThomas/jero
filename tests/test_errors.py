@@ -24,6 +24,7 @@ from jero import (
     ParameterizedHTTPError,
     StructHTTPError,
     TooManyRequestsError,
+    ValidationFailedError,
     WiringError,
 )
 from jero.core import ExceptionHandler
@@ -1394,3 +1395,104 @@ def test_adapter_reuses_its_per_status_wire_model() -> None:
         second = client.get("/also-missing")  # 404, hits the cache
     assert first.json()["statusCode"] == 404
     assert second.json()["statusCode"] == 404
+
+
+# --------------------------------------------------------------------------
+# A msgspec validation failure surfaces its detail through both house channels:
+# an app-wide adapter, and a per-error exception handler.
+# --------------------------------------------------------------------------
+class Widget(Struct, rename="camel"):
+    """Body Struct that forces a msgspec validation error on a bad field type."""
+
+    name: str
+    price_cents: int
+
+
+class WidgetEndpoint(Endpoint, path="/widgets"):
+    """Decode a Widget body so a bad field type raises ``ValidationFailedError``."""
+
+    async def post(self, json: Widget) -> Result:
+        """Echo success; the interesting path is the 422 on a bad body."""
+        _ = json
+        return Result(ok=True)
+
+
+class HouseErrorBody(Struct, rename="camel"):
+    """A house error format whose message field is named ``info``, not ``detail``."""
+
+    error_code: str
+    info: str
+
+
+class InfoHouseAdapter(ErrorBodyAdapter[HouseErrorBody]):
+    """Re-skin the whole Problem family into the house shape, app-wide."""
+
+    status_field = "status_code"
+
+    def compose(self, error: HTTPError) -> HouseErrorBody:
+        """Map any Problem-family error; ``str(error)`` is the rendered detail."""
+        return HouseErrorBody(error_code=error.type, info=str(error))
+
+
+class HouseAdapterApp(BaseApp):
+    """Wire the endpoint behind an app-wide error body adapter."""
+
+    async def wire(self) -> None:
+        """Register the house adapter, then expose the endpoint."""
+        self.include_error_adapter(InfoHouseAdapter())
+        self.include_endpoint(WidgetEndpoint())
+
+
+class ValidationBody(Struct, rename="camel"):
+    """The custom body a per-error validation handler returns."""
+
+    code: str
+    message: str
+
+
+class ValidationHandler:
+    """Handle only ``ValidationFailedError``, leaving every other error untouched."""
+
+    def handle_exception(
+        self, exception: ValidationFailedError
+    ) -> ExceptionResponse[ValidationBody]:
+        """Build a bespoke body from the error's typed params."""
+        return ExceptionResponse(
+            status_code=exception.status,
+            json=ValidationBody(code=exception.type, message=exception.params.reason),
+        )
+
+
+class ValidationHandlerApp(BaseApp):
+    """Wire the endpoint behind a validation-specific exception handler."""
+
+    async def wire(self) -> None:
+        """Register the per-error handler, then expose the endpoint."""
+        self.add_exception_handler(ValidationHandler())
+        self.include_endpoint(WidgetEndpoint())
+
+
+_BAD_WIDGET = {"name": "gizmo", "priceCents": "not-an-int"}
+_MSGSPEC_DETAIL = "Expected `int`, got `str` - at `$.priceCents`"
+
+
+def test_msgspec_detail_reaches_house_adapter() -> None:
+    """A msgspec validation failure renders into the house body's ``info`` field."""
+    with TestClient(HouseAdapterApp()) as client:
+        resp = client.post("/widgets", json=_BAD_WIDGET)
+
+    assert resp.status_code == 422
+    assert resp.json() == {
+        "errorCode": "validation-failed",
+        "info": _MSGSPEC_DETAIL,
+        "statusCode": 422,
+    }
+
+
+def test_msgspec_detail_reaches_per_error_handler() -> None:
+    """A ``ValidationFailedError`` handler reads the msgspec message from typed params."""
+    with TestClient(ValidationHandlerApp()) as client:
+        resp = client.post("/widgets", json=_BAD_WIDGET)
+
+    assert resp.status_code == 422
+    assert resp.json() == {"code": "validation-failed", "message": _MSGSPEC_DETAIL}

@@ -153,6 +153,44 @@ class Tag(Struct):
         return entry
 
 
+type ScalarTheme = Literal[
+    "default",
+    "alternate",
+    "moon",
+    "purple",
+    "solarized",
+    "bluePlanet",
+    "saturn",
+    "kepler",
+    "mars",
+    "deepSpace",
+    "laserwave",
+    "none",
+]
+
+
+class ScalarConfig(Struct, rename="camel", omit_defaults=True):
+    """A typed subset of the Scalar docs-UI configuration, passed to
+    :meth:`~jero.BaseApp.include_openapi` as ``scalar_config`` and forwarded to the viewer as
+    its ``data-configuration``.
+
+    Only the commonly-useful, verified options are modeled — jero blesses a subset rather
+    than mirroring Scalar's whole (evolving) surface; for anything not here, supply a full
+    ``docs_html`` page instead. Unset fields are omitted from the wire, so Scalar's own
+    defaults apply untouched.
+    """
+
+    theme: ScalarTheme | None = None
+    layout: Literal["modern", "classic"] | None = None
+    dark_mode: bool | None = None
+    hide_models: bool = False
+    hide_search: bool = False
+    hide_download_button: bool = False
+    hide_test_request_button: bool = False
+    hide_dark_mode_toggle: bool = False
+    show_sidebar: bool = True
+
+
 @dataclass(slots=True)
 class Info:
     """The document's ``info`` block, ``servers``, and declared document-level ``tags``."""
@@ -384,6 +422,67 @@ def _apply_component_names(
     return renamed
 
 
+def _collect_ref_names(node: object, acc: set[str]) -> None:
+    """Collect every component name referenced under ``node`` — via ``$ref`` and via a
+    tagged union's ``discriminator.mapping`` (whose targets are bare component paths, not
+    ``$ref`` entries)."""
+    if isinstance(node, dict):
+        mapping = cast("dict[str, Any]", node)
+        ref = mapping.get("$ref")
+        if isinstance(ref, str):
+            acc.add(ref.rsplit("/", 1)[-1])
+        discriminator = mapping.get("discriminator")
+        if isinstance(discriminator, dict):
+            disc_map = cast("dict[str, Any]", discriminator).get("mapping")
+            if isinstance(disc_map, dict):
+                for target in cast("dict[str, str]", disc_map).values():
+                    acc.add(target.rsplit("/", 1)[-1])
+        for value in mapping.values():
+            _collect_ref_names(value, acc)
+    elif isinstance(node, list):
+        for item in cast("list[Any]", node):
+            _collect_ref_names(item, acc)
+
+
+def _prune_param_only_components(
+    paths: dict[str, Any], operations: tuple[OperationInput, ...], schemas: _Schemas
+) -> None:
+    """Drop the component of any path/query/header Struct. Such a Struct is expanded
+    field-by-field into ``parameters`` — its fields' schemas, and their nested ``$ref``s,
+    inlined there — so its own top-level component is never referenced. Remove those that
+    nothing ``$ref``s; a Struct also used as a body/response stays (it is referenced), and
+    the fields' nested components stay (reachable through the inlined parameters)."""
+    param_names = {
+        _ref_name(schemas.refs[param.struct]) for op in operations for param in op.params
+    }
+    if not param_names:
+        return
+    referenced: set[str] = set()
+    _collect_ref_names(paths, referenced)
+    _collect_ref_names(schemas.components, referenced)
+    for name in param_names - referenced:
+        schemas.components.pop(name, None)
+
+
+def _enums_to_consts(node: object) -> None:
+    """Rewrite, in place, every single-value ``enum`` to a ``const``. msgspec renders a
+    ``Literal[x]`` — and a Struct ``tag`` — as a one-element ``enum``; ``const`` is the
+    equivalent but idiomatic OpenAPI-3.1 form for a *fixed* value, and codegen reads it
+    as a literal rather than a loose one-member choice. This sharpens error ``type`` /
+    ``status`` consts and tagged-union discriminator tags alike."""
+    if isinstance(node, dict):
+        mapping = cast("dict[str, Any]", node)
+        enum = mapping.get("enum")
+        if isinstance(enum, list) and len(enum) == 1:
+            del mapping["enum"]
+            mapping["const"] = enum[0]
+        for value in mapping.values():
+            _enums_to_consts(value)
+    elif isinstance(node, list):
+        for item in cast("list[Any]", node):
+            _enums_to_consts(item)
+
+
 def _build_schemas(types: list[object]) -> _Schemas:
     schemas, components = schema_components(types, ref_template="#/components/schemas/{name}")
     refs = dict(zip(types, schemas, strict=True))
@@ -406,6 +505,10 @@ def _build_schemas(types: list[object]) -> _Schemas:
             renames[name] = meta.name
     if renames:
         components = _apply_component_names(components, refs, renames)
+    for component in components.values():
+        _enums_to_consts(component)
+    for ref in refs.values():
+        _enums_to_consts(ref)
     return _Schemas(refs=refs, components=components)
 
 
@@ -578,6 +681,7 @@ def build_openapi(
         "info": {"title": info.title, "version": info.version},
         "paths": _paths(operations, schemas),
     }
+    _prune_param_only_components(document["paths"], operations, schemas)
     if info.description is not None:
         document["info"]["description"] = info.description
     if info.servers:

@@ -802,20 +802,31 @@ class MethodNotAllowedError(
     """The path exists but does not support the requested method."""
 
 
+class ErrorReason(Struct):
+    """Occurrence detail for the framework's decode/bind errors: the underlying msgspec
+    (or multipart) message, so a 400/422 says what actually failed rather than nothing.
+    The message is human-readable and names fields/paths, never submitted values — read
+    ``type``/``status`` as the machine contract, not this string."""
+
+    reason: str
+
+
 class MalformedRequestError(
-    HTTPError,
+    ParameterizedHTTPError[ErrorReason],
     type="malformed-request",
     title="Malformed request",
     status=400,
+    detail_template="{reason}",
 ):
     """The request cannot be parsed or bound."""
 
 
 class ValidationFailedError(
-    HTTPError,
+    ParameterizedHTTPError[ErrorReason],
     type="validation-failed",
     title="Validation failed",
     status=422,
+    detail_template="{reason}",
 ):
     """The request is syntactically valid but does not match its typed contract."""
 

@@ -18,22 +18,26 @@ def test_bad_body_type_is_422(client: TestClient) -> None:
         headers={"authorization": "Bearer token"},
     )
     assert resp.status_code == 422
-    assert resp.json() == {
-        "type": "validation-failed",
-        "title": "Validation failed",
-        "status": 422,
-    }
+    # The msgspec message is surfaced as the human `detail` and, typed, under `params`.
+    body = resp.json()
+    assert body["type"] == "validation-failed"
+    assert body["title"] == "Validation failed"
+    assert body["status"] == 422
+    assert body["detail"] == "Expected `int`, got `str` - at `$.priceCents`"
+    assert body["params"] == {"reason": body["detail"]}
 
 
 def test_malformed_body_is_400(client: TestClient) -> None:
     """A syntactically invalid JSON body fails decoding with 400."""
     resp = client.post("/widgets", content=b'{"name":', headers={"authorization": "Bearer token"})
     assert resp.status_code == 400
-    assert resp.json() == {
-        "type": "malformed-request",
-        "title": "Malformed request",
-        "status": 400,
-    }
+    body = resp.json()
+    assert body["type"] == "malformed-request"
+    assert body["title"] == "Malformed request"
+    assert body["status"] == 400
+    # The msgspec DecodeError message is surfaced rather than dropped.
+    assert body["detail"]
+    assert body["params"] == {"reason": body["detail"]}
 
 
 def test_bad_query_param_is_400(client: TestClient) -> None:

@@ -40,6 +40,7 @@ the body suppressed, and OPTIONS answers 204 with ``Allow``.
 
 import asyncio
 import contextlib
+import html
 import inspect
 import logging
 import os
@@ -113,6 +114,7 @@ from jero.errors import (
     AuthenticationRequiredError,
     BaseHTTPError,
     ErrorBodyAdapter,
+    ErrorReason,
     HTTPError,
     InternalServerError,
     MalformedRequestError,
@@ -137,6 +139,7 @@ from jero.openapi import (
     Info,
     OpenAPINameConflictError,
     OperationInput,
+    ScalarConfig,
     SecurityScheme,
     Tag,
     build_openapi,
@@ -542,19 +545,19 @@ def _convert_source(
     """Convert one request source to its Struct, mapping failure to an HTTP status."""
     try:
         return convert(raw, struct_type, strict=False)
-    except ValidationError:
+    except ValidationError as e:
         if status == 404:
             raise NotFoundError() from None
-        raise MalformedRequestError() from None
+        raise MalformedRequestError(ErrorReason(reason=str(e))) from e
 
 
 def _decode_json_body(body: bytes, decoder: Decoder[Struct]) -> Struct:
     try:
         return decoder.decode(body)
-    except ValidationError:
-        raise ValidationFailedError() from None
-    except DecodeError:
-        raise MalformedRequestError() from None
+    except ValidationError as e:
+        raise ValidationFailedError(ErrorReason(reason=str(e))) from e
+    except DecodeError as e:
+        raise MalformedRequestError(ErrorReason(reason=str(e))) from e
 
 
 def _is_none_type(ann: object) -> bool:
@@ -719,7 +722,7 @@ def _parse_form_parts(body: bytes, raw_headers: dict[str, str]) -> dict[str, lis
     try:
         for raw_part in MultipartParser(BytesIO(body), parsed[1], strict=True):
             if raw_part.name is None:
-                raise MalformedRequestError()
+                raise MalformedRequestError(ErrorReason(reason="multipart part is missing a name"))
             headers = _part_headers(raw_part.headerlist)
             parts[raw_part.name].append(
                 _Part(
@@ -731,8 +734,10 @@ def _parse_form_parts(body: bytes, raw_headers: dict[str, str]) -> dict[str, lis
                     body=raw_part.raw,
                 )
             )
-    except MultipartError:
-        raise MalformedRequestError() from None
+    except MultipartError as e:
+        raise MalformedRequestError(
+            ErrorReason(reason=f"malformed multipart form data: {e}")
+        ) from e
     return parts
 
 
@@ -742,16 +747,16 @@ def _decode_form_payload(field: FormField, part: _Part) -> object:
     if field.decoder is not None:  # struct payload — reuse the prebuilt typed decoder
         try:
             return field.decoder.decode(part.body)
-        except ValidationError:
-            raise ValidationFailedError() from None
-        except DecodeError:
-            raise MalformedRequestError() from None
+        except ValidationError as e:
+            raise ValidationFailedError(ErrorReason(reason=str(e))) from e
+        except DecodeError as e:
+            raise MalformedRequestError(ErrorReason(reason=str(e))) from e
     try:
         return convert(part.body.decode(), field.payload_type, strict=False)
-    except UnicodeDecodeError:
-        raise ValidationFailedError() from None
-    except ValidationError:
-        raise ValidationFailedError() from None
+    except UnicodeDecodeError as e:
+        raise ValidationFailedError(ErrorReason(reason=f"part is not valid UTF-8: {e}")) from e
+    except ValidationError as e:
+        raise ValidationFailedError(ErrorReason(reason=str(e))) from e
 
 
 def _decode_form_value(field: FormField, part: _Part) -> object:
@@ -765,7 +770,9 @@ def _decode_form_value(field: FormField, part: _Part) -> object:
     )
     if field.file:
         if part.filename is None:
-            raise ValidationFailedError()
+            raise ValidationFailedError(
+                ErrorReason(reason=f"file part {field.wire_name!r} is missing a filename")
+            )
         return FilePart(
             data=cast("bytes", data),
             content_type=part.content_type,
@@ -791,14 +798,16 @@ def _decode_form_body(body: bytes, raw_headers: dict[str, str], spec: FormSpec) 
             continue
         if not matched:
             if field.required:
-                raise ValidationFailedError()
+                raise ValidationFailedError(
+                    ErrorReason(reason=f"missing required form field {field.wire_name!r}")
+                )
             values[field.wire_name] = None
             continue
         values[field.wire_name] = _decode_form_value(field, matched[-1])
     try:
         return convert(values, spec.struct_type, strict=False)
-    except ValidationError:
-        raise ValidationFailedError() from None
+    except ValidationError as e:
+        raise ValidationFailedError(ErrorReason(reason=str(e))) from e
 
 
 def _struct_annotation(cls: type, method: str, name: str, ann: object) -> type[Struct]:
@@ -2125,9 +2134,23 @@ def _favicon_payload(favicon: Path) -> tuple[bytes, bytes]:
     return body, content_type
 
 
-def _scalar_html(title: str, openapi_path: str, favicon_href: str | None) -> str:
-    """The default docs page: Scalar's API reference, loaded from a CDN, pointed at the spec."""
+def _scalar_html(
+    title: str,
+    openapi_path: str,
+    favicon_href: str | None,
+    config: ScalarConfig | None,
+) -> str:
+    """The default docs page: Scalar's API reference, loaded from a CDN, pointed at the spec.
+
+    ``config`` is rendered as Scalar's ``data-configuration`` (its set fields as JSON,
+    HTML-escaped into the attribute); an all-default config adds nothing.
+    """
     favicon_link = f'<link rel="icon" href="{favicon_href}">\n' if favicon_href is not None else ""
+    config_attr = ""
+    if config is not None:
+        encoded = msgspec_encoder.encode(config).decode()
+        if encoded != "{}":
+            config_attr = f' data-configuration="{html.escape(encoded, quote=True)}"'
     return (
         "<!doctype html>\n"
         '<html lang="en">\n'
@@ -2138,7 +2161,7 @@ def _scalar_html(title: str, openapi_path: str, favicon_href: str | None) -> str
         f"<title>{title}</title>\n"
         "</head>\n"
         "<body>\n"
-        f'<script id="api-reference" data-url="{openapi_path}"></script>\n'
+        f'<script id="api-reference" data-url="{openapi_path}"{config_attr}></script>\n'
         '<script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>\n'
         "</body>\n"
         "</html>\n"
@@ -2494,6 +2517,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         tags: Sequence[Tag] = (),
         docs_html: str | None = None,
         favicon: Path | str | None = None,
+        scalar_config: ScalarConfig | None = None,
     ) -> None:
         """Serve an auto-generated OpenAPI 3.1 document and a docs UI.
 
@@ -2501,6 +2525,12 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         document is built once after wiring completes). ``openapi_path`` serves the JSON
         spec; ``docs_path`` serves a Scalar UI pointed at it (pass ``None`` to omit the
         UI, or ``docs_html`` to replace the page — e.g. for offline / strict-CSP hosting).
+
+        ``scalar_config`` is a typed :class:`~jero.ScalarConfig` tuning the Scalar UI — e.g.
+        ``scalar_config=ScalarConfig(hide_models=True)`` drops the global Models list, or set a
+        ``theme`` / ``layout``. Only its set fields are sent, so Scalar's own defaults apply
+        otherwise. For options ``ScalarConfig`` doesn't model, supply a full ``docs_html``
+        page instead (``scalar_config`` is ignored when ``docs_html`` is given).
 
         ``favicon`` gives the docs page an icon. A ``Path`` (the primary case) is read
         once at wiring — a missing/unreadable file or an unsupported suffix
@@ -2542,15 +2572,15 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
             favicon_href = favicon
         self._register("GET", _parse_template(openapi_path), _json_doc_handler(self._openapi))
         if docs_path is not None:
-            html = (
+            page = (
                 docs_html
                 if docs_html is not None
-                else _scalar_html(title, openapi_path, favicon_href)
+                else _scalar_html(title, openapi_path, favicon_href, scalar_config)
             )
             self._register(
                 "GET",
                 _parse_template(docs_path),
-                _static_bytes_handler(html.encode(), b"text/html; charset=utf-8"),
+                _static_bytes_handler(page.encode(), b"text/html; charset=utf-8"),
             )
 
     async def create_background_tasks(
