@@ -196,7 +196,8 @@ Three wrappers exist for the success statuses REST actually uses beyond 200:
 
 - `NoContent[H: Struct | None = None]` — 204, no body. Still carries `headers`,
   `raw_headers`, `location`, and `links` like any response (a 204 may legitimately carry
-  a `Location`); `content-type`/`content-length` are never sent.
+  a `Location`); at 204 neither `content-type` nor `content-length` is sent, since the
+  status forbids them.
 - `Created[T: Struct, H: Struct | None = None]` — 201 + a JSON body, regardless of the
   verb's own default.
 - `Accepted[T: Struct, H: Struct | None = None]` — 202 + a JSON body, regardless of the
@@ -251,45 +252,82 @@ Each member's status is the one it would have on its own: a plain `Struct`,
 ### Members that share a status
 
 Members are free to land on the *same* status. OpenAPI keys one response per status, so
-they merge into it — bodies as one `anyOf`, header maps unioned:
+they merge into it — bodies as one `anyOf`, header maps unioned, and differing media types
+side by side:
 
 ```python
-async def get(self) -> Widget | Archived:                      # both 200
-    ...
-```
+from msgspec import Struct
 
-documents exactly what `JSONResponse[Widget | Archived]` documents: one 200 whose schema
-is `anyOf: [Widget, Archived]`, with a `discriminator` when the members are tagged. The
-two spellings agree, so pick whichever reads better. Wrappers merge the same way, and
-each may carry its own typed headers:
+from jero import BaseApp, Endpoint, JSONResponse
 
-```python
-async def get(self) -> JSONResponse[Widget, CacheHeaders] | JSONResponse[Archived, RateHeaders]:
-    ...
-```
 
-The 200 gets both header sets. Nothing is lost by merging: OpenAPI response headers are
-emitted without `required`, so a single header Struct was never asserting presence either.
-What you gain over hand-merging into `JSONResponse[Widget | Archived, BothHeaders]` is
-that the type checker now enforces the *pairing* — a `Widget` can't be returned with
-`RateHeaders`.
+class Widget(Struct, tag=True):
+    id: str
+    name: str
 
-Members that encode *differently* share a status too. `content` is keyed by media type, so
-they sit side by side rather than merging — which is the OpenAPI shape for content
-negotiation, and reads correctly when that's what the handler is doing:
 
-```python
+class Archived(Struct, tag=True):
+    id: str
+    archived_at: str
+
+
+class CacheHeaders(Struct):
+    cache_control: str = "no-store"
+
+
+class RateHeaders(Struct):
+    x_rate_limit: int = 100
+
+
 class AcceptHeaders(Struct):
     accept: str = "application/json"
 
 
-async def get(self, headers: AcceptHeaders) -> bytes | JSONResponse[Widget]:
-    if headers.accept == "application/octet-stream":
-        return b"..."
-    return JSONResponse(json=widget)
+class MergedBodies(Endpoint, path="/merged-bodies"):
+    async def get(self) -> Widget | Archived:                        # both 200
+        return Archived(id="widget-id", archived_at="2026-01-01")
+
+
+class MergedHeaders(Endpoint, path="/merged-headers"):
+    async def get(
+        self,
+    ) -> JSONResponse[Widget, CacheHeaders] | JSONResponse[Archived, RateHeaders]:
+        return JSONResponse(json=Widget(id="widget-id", name="gizmo"), headers=CacheHeaders())
+
+
+class Negotiated(Endpoint, path="/negotiated"):
+    async def get(self, headers: AcceptHeaders) -> bytes | JSONResponse[Widget]:
+        if headers.accept == "application/octet-stream":
+            return b"raw bytes"
+        return JSONResponse(json=Widget(id="widget-id", name="gizmo"))
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        self.include_endpoint(MergedBodies())
+        self.include_endpoint(MergedHeaders())
+        self.include_endpoint(Negotiated())
+        self.include_openapi(title="Widgets", version="1.0")
+
+
+app = App()
 ```
 
-The 200 documents both `application/octet-stream` and `application/json`.
+`MergedBodies` documents exactly what `JSONResponse[Widget | Archived]` documents: one 200
+whose schema is `anyOf: [Widget, Archived]`, with a `discriminator` because the members are
+tagged. The two spellings agree, so pick whichever reads better.
+
+`MergedHeaders` shows wrappers merging the same way, each carrying its own typed headers:
+the 200 gets both `cache-control` and `x-rate-limit`. Nothing is lost by merging — OpenAPI
+response headers are emitted without `required`, so a single header Struct was never
+asserting presence either. What you gain over hand-merging into
+`JSONResponse[Widget | Archived, BothHeaders]` is that the type checker now enforces the
+*pairing*: a `Widget` can't be returned with `RateHeaders`.
+
+`Negotiated` shows members that encode *differently*. `content` is keyed by media type, so
+they sit side by side rather than merging — the OpenAPI shape for content negotiation, and
+what the handler is actually doing. Its 200 documents both `application/octet-stream` and
+`application/json`.
 
 ### What's rejected
 

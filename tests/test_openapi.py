@@ -1845,6 +1845,96 @@ def test_named_json_subclass_keeps_body_and_header_types(named_client: TestClien
     assert ok["headers"]["x-rate-limit"]["schema"] == {"type": "integer"}
 
 
+# --- The other end of that resolution: a wrapper left unparameterized states no body type ---
+
+
+class BareSSEEndpoint(Endpoint, path="/bare-sse"):
+    """Returns an ``SSEResponse`` with no ``[T]`` — its ``T`` defaults to ``str``."""
+
+    async def _events(self) -> AsyncIterator[str]:
+        yield "tick"
+
+    async def get(self) -> SSEResponse:
+        """Get events."""
+        return SSEResponse(stream=self._events())
+
+
+class PagedJSON[H: Struct | None = None](JSONResponse[Item, H]):
+    """A named response type that binds only the *body*, leaving the header type open."""
+
+
+class PagedEndpoint(Endpoint, path="/paged"):
+    """Returns a partially bound subclass."""
+
+    async def get(self) -> PagedJSON:
+        """Get one."""
+        return PagedJSON(json=Item(id="id"))
+
+
+class BareApp(BaseApp):
+    """App wiring the unparameterized-wrapper endpoints."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(BareSSEEndpoint())
+        self.include_endpoint(PagedEndpoint())
+        self.include_openapi(title="bare", version="1")
+
+
+@pytest.fixture(name="bare_client")
+def _bare_client() -> Generator[TestClient]:
+    with TestClient(BareApp()) as client:
+        yield client
+
+
+def test_unparameterized_wrapper_documents_its_open_fallback(bare_client: TestClient) -> None:
+    """A wrapper whose ``T`` defaults, left unparameterized, documents that default rather than
+    failing to wire. Resolving a *named subclass* through its original bases must not reach for
+    a wrapper's own bases: those restate its type **parameters** rather than any caller's types,
+    and ``SSEResponse``'s is ``_StreamingResponse[T | ServerSentEvent[T], H]`` — a generic
+    *expression*, not a bare TypeVar. Reading it as bound would hand that expression to the
+    item-type check and reject a legal annotation at startup."""
+    ok = bare_client.get("/openapi.json").json()["paths"]["/bare-sse"]["get"]["responses"]["200"]
+    assert ok["content"]["text/event-stream"]["schema"] == {"type": "string"}
+
+
+def test_partially_bound_subclass_resolves_only_what_it_binds(bare_client: TestClient) -> None:
+    """Blanking unbound positions is per *position*, not per base: a subclass binding the body
+    and leaving the header type open still documents the body, and declares no headers."""
+    ok = bare_client.get("/openapi.json").json()["paths"]["/paged"]["get"]["responses"]["200"]
+    assert ok["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/Item"}
+    assert "headers" not in ok
+
+
+class UnparameterizedEndpoint(Endpoint, path="/unparameterized"):
+    """Returns a ``JSONResponse`` naming no body type at all — the annotation under test.
+
+    The suppression is the point, not a dodge: pyright independently rejects every spelling of
+    a bare wrapper whose ``T`` has no default, so the diagnostic *agrees* with the startup check
+    being asserted here. Written the way a user on a laxer checker would write it, so the
+    message they get is what the test pins."""
+
+    async def get(self) -> JSONResponse:  # pyright: ignore[reportMissingTypeArgument, reportUnknownParameterType]
+        """Get one."""
+        return JSONResponse(json=Item(id="id"))
+
+
+class UnparameterizedApp(BaseApp):
+    """App wiring the endpoint whose wrapper names no body type."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(UnparameterizedEndpoint())
+        self.include_openapi(title="unparameterized", version="1")
+
+
+def test_wrapper_naming_no_body_type_is_rejected() -> None:
+    """A wrapper whose ``T`` carries no default must be parameterized. Documenting an open
+    ``{}`` body instead would be the framework quietly dropping the one thing it exists to
+    derive from the annotation, so it fails loud at startup and names the fix. ``H`` defaults
+    and so stays optional, as does ``SSEResponse``'s ``T`` — those still wire bare."""
+    with pytest.raises(RuntimeError, match=r"JSONResponse must name its body type"):
+        TestClient(UnparameterizedApp())
+
+
 # --- Several union members at one status merge into the single response OpenAPI keys there
 
 

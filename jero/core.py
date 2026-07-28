@@ -262,7 +262,9 @@ class JSONResponse[T: Struct, H: Struct | None = None](BaseResponse[H]):
 class NoContent[H: Struct | None = None](BaseResponse[H]):
     """204, no body. Carries typed/raw headers, ``location``, and ``links`` like any
     response — a 204 may legitimately carry a ``Location`` or ``Link`` (RFC 9110 §15.3.5).
-    Never emits ``content-type`` or ``content-length``, whatever ``headers`` supplies."""
+    At 204 it emits neither ``content-type`` nor ``content-length``, whatever ``headers``
+    supplies; override ``status_code`` to a status that permits them and the body is still
+    empty, so ``content-length: 0`` frames it. See :func:`_no_content_headers`."""
 
 
 @dataclass(kw_only=True, slots=True)

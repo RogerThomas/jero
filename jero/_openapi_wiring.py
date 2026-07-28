@@ -11,7 +11,7 @@ dependency graph stays acyclic (``core`` imports *this* module, never the revers
 from collections.abc import Mapping, Sequence
 from functools import cache
 from types import UnionType, get_original_bases
-from typing import Any, Literal, Union, cast, get_args, get_origin
+from typing import Any, Literal, TypeVar, Union, cast, get_args, get_origin
 
 from msgspec import Struct, defstruct
 from msgspec.structs import fields as struct_fields
@@ -131,6 +131,20 @@ _WRAPPER_NAMES: dict[ReturnKind, str] = {
 }
 
 
+def _is_generic(annotation: object) -> bool:
+    """Whether a type expression still mentions a type parameter anywhere — ``T``, but also
+    ``T | ServerSentEvent[T]``. Such an expression states no concrete type."""
+    if isinstance(annotation, TypeVar):
+        return True
+    return any(_is_generic(arg) for arg in get_args(annotation))
+
+
+def _bound_only(args: tuple[object, ...]) -> tuple[object, ...]:
+    """``args`` with every still-generic position blanked to ``None``, so a class's own
+    parameters never read as a caller's types."""
+    return tuple(None if _is_generic(arg) else arg for arg in args)
+
+
 def _wrapper_args(annotation: object) -> tuple[object, ...]:
     """The type arguments a return annotation carries, following a *named subclass* up to the
     parameterized base it bound.
@@ -139,15 +153,38 @@ def _wrapper_args(annotation: object) -> tuple[object, ...]:
     for a project to name its response types — but it holds ``Widget`` on its original base
     rather than on itself. Reading only ``get_args`` would see nothing and document an open
     ``{}`` body, silently losing a schema the annotation does state. Recursive, so a subclass
-    of a subclass resolves too; the first base carrying arguments wins."""
+    of a subclass resolves too; the first base to bind an argument wins.
+
+    Only arguments found by *walking bases* are filtered through :func:`_bound_only`. A
+    wrapper's own original bases restate its parameters — ``JSONResponse``'s are
+    ``BaseResponse[H]`` and ``Generic[T, H]``, ``SSEResponse``'s is
+    ``_StreamingResponse[T | ServerSentEvent[T], H]`` — so a bare ``-> JSONResponse`` must
+    resolve to ``()``, letting :func:`_item_payload` see that no body type was named, rather
+    than being handed ``H`` and reporting the *header* TypeVar as a bad body type. Blanking
+    per position rather than rejecting the whole base keeps a partially bound subclass working:
+    ``class Paged[H](JSONResponse[Item, H])`` still yields ``Item`` for the body. Arguments
+    written *directly* in the annotation are returned as-is, so a TypeVar left unresolved
+    there — an endpoint generic in its own response type — still fails loud."""
     args = get_args(annotation)
     if args or not isinstance(annotation, type):
         return args
     for base in get_original_bases(annotation):
-        inherited = _wrapper_args(base)
-        if inherited:
+        inherited = _bound_only(_wrapper_args(base))
+        if any(arg is not None for arg in inherited):
             return inherited
     return ()
+
+
+def _item_defaults(annotation: object) -> bool:
+    """Whether the wrapper declares its item parameter ``T`` *with a default*, so omitting it
+    still states a type. ``SSEResponse``'s ``T: Struct | str = str`` does — a bare
+    ``SSEResponse`` documents a string. ``JSONResponse``'s ``T: Struct`` does not, so a bare
+    ``JSONResponse`` states nothing and is rejected rather than documented as an open body."""
+    origin = get_origin(annotation) or annotation
+    if not isinstance(origin, type):
+        return False
+    params: tuple[TypeVar, ...] = getattr(origin, "__type_params__", ())
+    return bool(params) and params[0].has_default()
 
 
 def _item_payload(
@@ -157,11 +194,20 @@ def _item_payload(
     positional so a non-Struct ``T`` is never mistaken for the later header type ``H``) —
     as a schema payload: a Struct, or a union of Structs normalized to ``A | B`` form
     (msgspec schemas a union directly: ``anyOf``, plus a ``discriminator`` when the members
-    are tagged). ``None`` for an unparameterized wrapper — and for ``str`` where the
-    wrapper's bound allows it (SSE) — each caller documents its bare fallback. Any other
-    ``T`` fails loud: a typed return annotation must never silently lose its schema."""
+    are tagged).
+
+    ``None`` only where the wrapper still states a type without the argument: ``str`` where
+    the bound allows it, and an omitted ``T`` that *defaults* (SSE, both cases). Omitting a
+    ``T`` that has no default fails loud, as does any other ``T`` — a return annotation is
+    where the response schema comes from, so it must never silently lose one."""
     args = _wrapper_args(annotation)
     item = args[0] if args else None
+    if item is None and not _item_defaults(annotation):
+        name = _WRAPPER_NAMES[kind]
+        raise WiringError(
+            f"{operation_id}: {name} must name its body type — write {name}[YourStruct]. "
+            f"A bare {name} declares no schema, and the spec is derived from the annotation."
+        )
     if item is None or (allow_str and item is str):
         return None
     if is_struct_type(item):
@@ -360,10 +406,6 @@ def _success_entry(
         )
     if kind == "stream-ndjson":
         item = _item_payload(annotation, kind, operation_id)
-        if item is None:  # bare NDJSONStreamingResponse (no [T]) -> any JSON object per line
-            return ResponseEntry.single(
-                status, description, "application/x-ndjson", schema={}, headers=headers
-            )
         return ResponseEntry.single(
             status, description, "application/x-ndjson", model=item, headers=headers
         )
@@ -378,10 +420,6 @@ def _success_entry(
         )
     if kind in ("json-response", "created", "accepted"):
         item = _item_payload(annotation, kind, operation_id)
-        if item is None:  # bare wrapper (no [T]) -> any JSON
-            return ResponseEntry.single(
-                status, description, "application/json", schema={}, headers=headers
-            )
         return ResponseEntry.single(
             status, description, "application/json", model=item, headers=headers
         )
@@ -405,11 +443,11 @@ def _merged_body_model(bodies: Sequence[ResponseBody], operation_id: str) -> Uni
     merged: type[Struct] | UnionType | None = None
     for body in bodies:
         if body.model is None or body.is_list:
-            # A bare/unparameterized wrapper documents an open `{}` body, and a list
-            # documents an array; neither composes into an anyOf that still says anything.
+            # An anyOf composes object schemas. A bodyless member has no schema to contribute,
+            # and a list documents an array; neither combines into one that still says anything.
             raise WiringError(
                 f"{operation_id}: union return members sharing a status and media type must "
-                f"each declare a Struct body to merge into one anyOf; a bare wrapper or a "
+                f"each declare a Struct body to merge into one anyOf; a bodyless or "
                 f"list[Struct] member cannot be combined — give it its own status",
             )
         merged = body.model if merged is None else merged | body.model
