@@ -24,8 +24,10 @@ from jero._wiring_types import (
     Sources,
     WiringError,
     is_struct_type,
+    param_bindings,
     strip_list,
     substitute,
+    unwrap_alias,
 )
 from jero.errors import (
     AuthenticationRequiredError,
@@ -146,20 +148,13 @@ def _bound_only(args: tuple[object, ...]) -> tuple[object, ...]:
     return tuple(None if _is_generic(arg) else arg for arg in args)
 
 
-def _param_bindings(
-    params: tuple[TypeVar, ...], supplied: tuple[object, ...]
-) -> dict[TypeVar, object]:
-    """Each of a class's type parameters mapped to what an annotation binds it to: the argument
-    supplied at that position, else the parameter's own default. A parameter with neither is
-    left out, so substitution leaves its TypeVar in place and the caller can see that the
-    annotation stated nothing there."""
-    bindings: dict[TypeVar, object] = {}
-    for index, param in enumerate(params):
-        if index < len(supplied):
-            bindings[param] = supplied[index]
-        elif param.has_default():
-            bindings[param] = param.__default__
-    return bindings
+def _type_params(origin: type) -> Sequence[object]:
+    """A class's own type parameters. ``__type_params__`` is the PEP 695 spelling and is empty
+    for a pre-695 ``class Api(Generic[T], JSONResponse[T, H])``, whose parameters live on
+    ``__parameters__`` instead — so fall back to it rather than reading such a class as binding
+    nothing and rejecting an annotation that does state its types. Both are empty once every
+    parameter is bound, so the fallback only ever adds genuinely open parameters."""
+    return getattr(origin, "__type_params__", ()) or getattr(origin, "__parameters__", ())
 
 
 def _resolve_args(annotation: object, target: type) -> tuple[object, ...]:
@@ -174,10 +169,12 @@ def _resolve_args(annotation: object, target: type) -> tuple[object, ...]:
     origin = get_origin(annotation) or annotation
     if not isinstance(origin, type):
         return ()
-    params: tuple[TypeVar, ...] = getattr(origin, "__type_params__", ())
-    bindings = _param_bindings(params, get_args(annotation))
+    params = _type_params(origin)
+    bindings = param_bindings(params, get_args(annotation))
     if origin is target:
-        return tuple(bindings.get(param) for param in params)
+        return tuple(
+            bindings.get(param) if isinstance(param, TypeVar) else None for param in params
+        )
     for base in get_original_bases(origin):
         if (get_origin(base) or base) is Generic:
             continue  # a bare parameter list, carrying no inheritance to follow
@@ -200,7 +197,8 @@ def _wrapper_args(annotation: object, wrapper: type | None) -> tuple[object, ...
     resolves ``T`` to nothing rather than to ``BaseResponse[H]``'s ``H``."""
     if wrapper is None:
         return ()
-    return _bound_only(_resolve_args(annotation, wrapper))
+    resolved = tuple(unwrap_alias(arg) for arg in _resolve_args(annotation, wrapper))
+    return _bound_only(resolved)
 
 
 def _item_payload(
@@ -230,16 +228,16 @@ def _item_payload(
             f"{operation_id}: {name} must name its body type — write {name}[YourStruct]. "
             f"A bare {name} declares no schema, and the spec is derived from the annotation."
         )
-    if item is None or (allow_str and item is str):
+    if allow_str and item is str:
         return None
     if is_struct_type(item):
         return cast("type[Struct]", item)
     if get_origin(item) in (Union, UnionType):
-        members = get_args(item)
+        members = tuple(unwrap_alias(member) for member in get_args(item))
         if all(is_struct_type(member) or (allow_str and member is str) for member in members):
-            union = members[0]
+            union: type | UnionType = cast("type", members[0])
             for member in members[1:]:
-                union = union | member
+                union = union | cast("type", member)
             return cast("UnionType", union)
     allowed = "a Struct, str, or a union of them" if allow_str else "a Struct or a union of Structs"
     raise WiringError(

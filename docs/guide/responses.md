@@ -252,7 +252,9 @@ of aliases resolve, and either form works as a union member (`WidgetResponse | N
 
 A wrapper still has to *say* what its body is: `-> JSONResponse` with no `[Widget]` anywhere in
 the chain fails at startup with `must name its body type`, since there would be no schema to
-derive. `SSEResponse` is the exception, its `T` defaulting to `str`.
+derive. Like the other spec-shape checks below, it runs when `include_openapi` is enabled, which
+is where the schema is actually needed. `SSEResponse` is the exception, its `T` defaulting
+to `str`.
 
 ## Dynamic success status
 

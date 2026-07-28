@@ -979,6 +979,22 @@ def _union_args(ann: object) -> tuple[object, ...] | None:
     return get_args(ann)
 
 
+def _flatten_union_members(members: tuple[object, ...]) -> tuple[object, ...]:
+    """Union members with every ``type`` alias resolved, and a member that resolves to a union
+    itself spliced in.
+
+    Python flattens ``A | (B | C)`` as it builds the union, but not when the inner union arrives
+    behind an alias: ``type Kinds = A | B`` in ``Kinds | Created[C]`` stays a single member until
+    the alias is resolved, and would then be classified as one unrecognized return type. Recursive
+    so an alias of an alias of a union flattens too."""
+    flat: list[object] = []
+    for member in members:
+        resolved = unwrap_alias(member)
+        inner = _union_args(resolved)
+        flat.extend(_flatten_union_members(inner) if inner is not None else [resolved])
+    return tuple(flat)
+
+
 def _dispatch_type(ann: object) -> type:
     """The class a union member is matched against at request time. Subscripted
     annotations dispatch on their origin (``JSONResponse[W]`` -> ``JSONResponse``,
@@ -1002,8 +1018,7 @@ def _union_return_members(
     classes), so whether two of them happen to share a status is simply irrelevant here.
     """
     resolved: list[ResponseMember] = []
-    for aliased in members:
-        member = unwrap_alias(aliased)
+    for member in members:
         kind = _return_kind(member)
         if kind is None or kind not in _UNION_MEMBER_KINDS:
             raise WiringError(
@@ -1024,6 +1039,7 @@ def _resolve_return(
     """The handler's return kind, and — for a union — its resolved members."""
     union_args = _union_args(return_hint)
     if union_args is not None:
+        union_args = _flatten_union_members(union_args)
         if any(_is_none_type(arg) for arg in union_args):
             raise WiringError(
                 f"{cls.__name__}.{name}: a handler cannot return None — did you mean "

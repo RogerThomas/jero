@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Generator
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, cast
+from typing import Annotated, Generic, TypeVar, cast
 
 import pytest
 from msgspec import Meta, Struct
@@ -1972,6 +1972,11 @@ type SimpleAlias = JSONResponse[Item, RateHeaders]
 type NestedAlias = SimpleAlias
 type ApiAlias[T: Struct] = JSONResponse[T, RateHeaders]
 type KindsAlias = Item | NoContent
+# A generic alias with a PEP 696 default on its *header* parameter, used partially applied.
+type DefaultedHeaders[T: Struct, H: Struct | None = RateHeaders] = JSONResponse[T, H]
+# Aliases standing in an argument position rather than naming the whole response.
+type HeaderAlias = RateHeaders
+type BodyAlias = Item
 
 
 class NestedAliasEndpoint(Endpoint, path="/nested-alias"):
@@ -1998,6 +2003,22 @@ class UnionAliasEndpoint(Endpoint, path="/union-alias"):
         return NoContent()
 
 
+class DefaultedHeadersEndpoint(Endpoint, path="/defaulted-headers"):
+    """Returns a partially applied generic alias whose header parameter has a default."""
+
+    async def get(self) -> DefaultedHeaders[Item]:
+        """Get one."""
+        return JSONResponse(json=Item(id="id"), headers=RateHeaders(x_rate_limit=1))
+
+
+class ArgumentAliasEndpoint(Endpoint, path="/argument-alias"):
+    """Returns a wrapper whose body *and* header arguments are both aliases."""
+
+    async def get(self) -> JSONResponse[BodyAlias, HeaderAlias]:
+        """Get one."""
+        return JSONResponse(json=Item(id="id"), headers=RateHeaders(x_rate_limit=1))
+
+
 class AliasMemberEndpoint(Endpoint, path="/alias-member"):
     """Returns a union whose first member is an alias."""
 
@@ -2013,6 +2034,8 @@ class AliasApp(BaseApp):
         self.include_endpoint(NestedAliasEndpoint())
         self.include_endpoint(GenericAliasEndpoint())
         self.include_endpoint(UnionAliasEndpoint())
+        self.include_endpoint(DefaultedHeadersEndpoint())
+        self.include_endpoint(ArgumentAliasEndpoint())
         self.include_endpoint(AliasMemberEndpoint())
         self.include_openapi(title="alias", version="1")
 
@@ -2023,12 +2046,20 @@ def _alias_client() -> Generator[TestClient]:
         yield client
 
 
-@pytest.mark.parametrize("path", ["/nested-alias", "/generic-alias"])
+@pytest.mark.parametrize(
+    "path", ["/nested-alias", "/generic-alias", "/defaulted-headers", "/argument-alias"]
+)
 def test_type_alias_resolves_to_what_it_aliases(alias_client: TestClient, path: str) -> None:
     """``type WidgetResponse = JSONResponse[Widget]`` is the spelling 3.13+ recommends for naming
     a response type, so it has to resolve rather than read as an unrecognized object. Nested
     aliases resolve through, and a *generic* alias substitutes its arguments into the aliased
-    expression — both the body and the header type survive."""
+    expression — both the body and the header type survive.
+
+    ``/defaulted-headers`` is partially applied, so ``H`` comes from its PEP 696 default: a
+    parameter's default is part of what the annotation states, and reading only the supplied
+    positions would drop the header type *silently*, since an absent one documents as absent.
+    ``/argument-alias`` puts aliases in the argument positions rather than over the whole
+    response, which resolve on the same pass."""
     ok = alias_client.get("/openapi.json").json()["paths"][path]["get"]["responses"]["200"]
     assert ok["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/Item"}
     assert ok["headers"]["x-rate-limit"]["schema"] == {"type": "integer"}
@@ -2048,6 +2079,85 @@ def test_type_alias_dispatches_at_runtime(alias_client: TestClient) -> None:
     """And the resolved kinds drive dispatch, so the alias member answers with its own status."""
     assert alias_client.get("/alias-member").status_code == 204
     assert alias_client.get("/nested-alias").status_code == 200
+
+
+# --- An alias that resolves to a union, nested inside another union ---
+
+
+class StreamRow(Struct, tag=True):
+    """One arm of an aliased union, tagged so msgspec can discriminate it."""
+
+    a: int
+
+
+class StreamFooter(Struct, tag=True):
+    """The other arm."""
+
+    b: int
+
+
+type PairAlias = StreamRow | NoContent
+type RowPairAlias = StreamRow | StreamFooter
+
+
+class NestedUnionAliasEndpoint(Endpoint, path="/nested-union-alias"):
+    """Returns an alias-that-is-a-union as one member of a wider union."""
+
+    async def post(self) -> PairAlias | Created[StreamFooter]:
+        """Create one, or answer with an existing one, or nothing."""
+        return NoContent()
+
+
+class StreamItemAliasEndpoint(Endpoint, path="/stream-item-alias"):
+    """Streams an aliased item union."""
+
+    async def _rows(self) -> AsyncIterator[StreamRow | StreamFooter]:
+        yield StreamRow(a=1)
+        yield StreamFooter(b=2)
+
+    async def get(self) -> NDJSONStreamingResponse[RowPairAlias]:
+        """Stream them."""
+        return NDJSONStreamingResponse(stream=self._rows())
+
+
+class NestedUnionAliasApp(BaseApp):
+    """App wiring the nested-union-alias endpoints."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(NestedUnionAliasEndpoint())
+        self.include_endpoint(StreamItemAliasEndpoint())
+        self.include_openapi(title="nested-union", version="1")
+
+
+@pytest.fixture(name="nested_union_client")
+def _nested_union_client() -> Generator[TestClient]:
+    with TestClient(NestedUnionAliasApp()) as client:
+        yield client
+
+
+def test_alias_resolving_to_a_union_flattens_into_the_outer_union(
+    nested_union_client: TestClient,
+) -> None:
+    """Python flattens ``A | (B | C)`` as it builds the union, but not when the inner union hides
+    behind an alias — it stays one member. Resolving it has to splice its members in, or the
+    whole union reads as a single unrecognized return type."""
+    responses = nested_union_client.get("/openapi.json").json()["paths"]["/nested-union-alias"][
+        "post"
+    ]["responses"]
+    assert {"200", "201", "204"} <= set(responses)
+    assert nested_union_client.post("/nested-union-alias").status_code == 204
+
+
+def test_alias_in_a_streaming_item_position_resolves(nested_union_client: TestClient) -> None:
+    """An alias naming the streamed *item* union resolves too, rather than failing the item-type
+    check with a message that contradicts itself by naming the alias as the offending type."""
+    content = nested_union_client.get("/openapi.json").json()["paths"]["/stream-item-alias"]["get"][
+        "responses"
+    ]["200"]["content"]
+    assert content["application/x-ndjson"]["schema"]["anyOf"] == [
+        {"$ref": "#/components/schemas/StreamRow"},
+        {"$ref": "#/components/schemas/StreamFooter"},
+    ]
 
 
 # --- Resolution through an *intermediate* generic, where positions can shift ---
@@ -2137,6 +2247,29 @@ class HeaderedAcceptedEndpoint(Endpoint, path="/headered-accepted"):
         return Accepted(json=Item(id="id"), headers=RateHeaders(x_rate_limit=1))
 
 
+_OldT = TypeVar("_OldT", bound=Struct)
+
+
+class OldStyleApiResponse(Generic[_OldT], JSONResponse[_OldT, PageHeaders]):  # noqa: UP046
+    """The pre-PEP-695 spelling of a house response type, whose parameters live on
+    ``__parameters__`` rather than ``__type_params__``.
+
+    The ``UP046`` suppression is the subject, not a dodge: ruff is telling us to modernize this
+    to type parameters, which is precisely the spelling this test must *not* use."""
+
+
+class OldStyleBound(OldStyleApiResponse[Item]):
+    """The pre-695 house type, bound."""
+
+
+class OldStyleEndpoint(Endpoint, path="/old-style"):
+    """Returns a subclass of a pre-695 generic intermediate."""
+
+    async def get(self) -> OldStyleBound:
+        """Get one."""
+        return OldStyleBound(json=Item(id="id"), headers=PageHeaders(x_page=1))
+
+
 class OrFallbackEndpoint(Endpoint, path="/or-fallback"):
     """Returns an intermediate whose body is a union mentioning its own parameter."""
 
@@ -2149,6 +2282,7 @@ class IntermediateApp(BaseApp):
     """App wiring the endpoints whose type arguments resolve through an intermediate class."""
 
     async def wire(self) -> None:
+        self.include_endpoint(OldStyleEndpoint())
         self.include_endpoint(OrFallbackEndpoint())
         self.include_endpoint(HouseEndpoint())
         self.include_endpoint(RateLimitedPageEndpoint())
@@ -2190,6 +2324,18 @@ def test_intermediate_generic_does_not_shift_argument_positions(
     ]["200"]
     assert ok["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/Item"}
     assert ok["headers"]["x-rate-limit"]["schema"] == {"type": "integer"}
+
+
+def test_pre_695_generic_intermediate_resolves(intermediate_client: TestClient) -> None:
+    """``class Api(Generic[T], JSONResponse[T, H])`` is still legal Python and type-checks, but
+    leaves ``__type_params__`` empty — its parameters live on ``__parameters__``. Reading only the
+    modern attribute would see the class as binding nothing and reject an annotation that does
+    state its types."""
+    ok = intermediate_client.get("/openapi.json").json()["paths"]["/old-style"]["get"]["responses"][
+        "200"
+    ]
+    assert ok["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/Item"}
+    assert ok["headers"]["x-page"]["schema"] == {"type": "integer"}
 
 
 def test_intermediate_generic_substitutes_into_a_union_body(

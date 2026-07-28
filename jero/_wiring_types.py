@@ -92,6 +92,31 @@ def substitute(ann: object, bindings: Mapping[TypeVar, object]) -> object:
     return cast(Mapping[tuple[object, ...], object], origin)[replaced]
 
 
+def param_bindings(params: Sequence[object], supplied: tuple[object, ...]) -> dict[TypeVar, object]:
+    """Each type parameter mapped to what an annotation binds it to: the argument supplied at
+    that position, else the parameter's own PEP 696 default. A parameter with neither is left
+    out, so :func:`substitute` leaves its TypeVar in place and callers can see that the
+    annotation stated nothing there.
+
+    Shared by the class walk and the alias walk so both fill defaults by one rule: a parameter's
+    default is part of what the annotation *states*, and reading only the supplied positions
+    would drop it — silently, since a dropped body or header type documents as absent rather
+    than failing.
+
+    Only ``TypeVar`` parameters bind: a ``ParamSpec``/``TypeVarTuple`` names something no
+    response annotation can be, so it is left in place to fail the return-kind check like any
+    other unusable type."""
+    bindings: dict[TypeVar, object] = {}
+    for index, param in enumerate(params):
+        if not isinstance(param, TypeVar):
+            continue
+        if index < len(supplied):
+            bindings[param] = supplied[index]
+        elif param.has_default():
+            bindings[param] = param.__default__
+    return bindings
+
+
 def unwrap_alias(ann: object) -> object:
     """A PEP 695 ``type`` alias replaced by whatever it aliases, so every downstream check sees
     the real annotation. ``type WidgetResponse = JSONResponse[Widget]`` is the spelling 3.13+
@@ -100,18 +125,16 @@ def unwrap_alias(ann: object) -> object:
 
     Recursive, so an alias of an alias resolves. A *generic* alias arrives as a subscripted
     ``TypeAliasType`` — ``type Api[T] = JSONResponse[T, TraceHeaders]`` used as ``Api[Widget]`` —
-    so its arguments substitute into the aliased expression on the way through. Only ``TypeVar``
-    parameters are bound: a ``ParamSpec``/``TypeVarTuple`` names something no response annotation
-    can be, so it is left in place to fail the return-kind check like any other unusable type."""
+    so its arguments substitute into the aliased expression on the way through. Both forms go
+    through :func:`param_bindings`, so a parameter left off still contributes its default: a
+    partially applied ``type Api[T, H = TraceHeaders]`` states ``H`` just as surely as if it had
+    been written out."""
     if isinstance(ann, TypeAliasType):
-        return unwrap_alias(ann.__value__)
+        bindings = param_bindings(ann.__type_params__, ())
+        return unwrap_alias(substitute(ann.__value__, bindings))
     origin = get_origin(ann)
     if isinstance(origin, TypeAliasType):
-        bindings = {
-            param: arg
-            for param, arg in zip(origin.__type_params__, get_args(ann), strict=False)
-            if isinstance(param, TypeVar)
-        }
+        bindings = param_bindings(origin.__type_params__, get_args(ann))
         return unwrap_alias(substitute(origin.__value__, bindings))
     return ann
 
