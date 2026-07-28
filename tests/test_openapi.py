@@ -6,7 +6,7 @@ returns, the docs-UI knobs, an apiKey scheme).
 """
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Generator
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -17,6 +17,7 @@ from msgspec import Meta, Struct
 from openapi_spec_validator import validate
 
 from jero import (
+    Accepted,
     BaseApp,
     BaseHTTPError,
     BearerAuth,
@@ -1734,6 +1735,114 @@ def test_bare_struct_union_member_keeps_its_schema() -> None:
             "$ref": "#/components/schemas/Item"
         }
         assert "content" not in responses["204"]
+
+
+# --- A project's own named response types (bound subclasses of a wrapper) ---
+
+
+class NamedCreated(Created[Item]):
+    """An application naming its own response type by binding a wrapper's parameters."""
+
+
+class NamedAccepted(Accepted[Item]):
+    """The ``Accepted`` equivalent."""
+
+
+class NamedStream(NDJSONStreamingResponse[Item]):
+    """A named NDJSON stream type."""
+
+
+class NamedJSON(JSONResponse[Item, RateHeaders]):
+    """A named JSON response, binding both the body *and* the header type."""
+
+
+class NamedCreatedEndpoint(Endpoint, path="/named-created"):
+    """Returns a named subclass of ``Created``."""
+
+    async def get(self) -> NamedCreated:
+        """Get one."""
+        return NamedCreated(json=Item(id="id"))
+
+
+class NamedAcceptedEndpoint(Endpoint, path="/named-accepted"):
+    """Returns a named subclass of ``Accepted``."""
+
+    async def get(self) -> NamedAccepted:
+        """Get one."""
+        return NamedAccepted(json=Item(id="id"))
+
+
+class NamedStreamEndpoint(Endpoint, path="/named-stream"):
+    """Returns a named subclass of ``NDJSONStreamingResponse``."""
+
+    async def _chunks(self) -> AsyncIterator[Item]:
+        yield Item(id="id")
+
+    async def get(self) -> NamedStream:
+        """Stream items."""
+        return NamedStream(stream=self._chunks())
+
+
+class NamedJSONEndpoint(Endpoint, path="/named-json"):
+    """Returns a named subclass of ``JSONResponse`` carrying typed headers."""
+
+    async def get(self) -> NamedJSON:
+        """Get one."""
+        return NamedJSON(json=Item(id="id"), headers=RateHeaders(x_rate_limit=1))
+
+
+class NamedApp(BaseApp):
+    """App wiring the named-response-type endpoints."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(NamedCreatedEndpoint())
+        self.include_endpoint(NamedAcceptedEndpoint())
+        self.include_endpoint(NamedStreamEndpoint())
+        self.include_endpoint(NamedJSONEndpoint())
+        self.include_openapi(title="named", version="1")
+
+
+@pytest.fixture(name="named_client")
+def _named_client() -> Generator[TestClient]:
+    with TestClient(NamedApp()) as client:
+        yield client
+
+
+@pytest.mark.parametrize(
+    ("path", "status"), [("/named-created", "201"), ("/named-accepted", "202")]
+)
+def test_named_wrapper_subclass_keeps_status_and_schema(
+    named_client: TestClient, path: str, status: str
+) -> None:
+    """A bound subclass carries its parameters on its *base*, not on itself, so the schema has
+    to be resolved through ``__orig_bases__`` — otherwise the body documents as an open ``{}``
+    and the annotation silently loses the model it does state. The fixed status survives too."""
+    responses = named_client.get("/openapi.json").json()["paths"][path]["get"]["responses"]
+    assert responses[status]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/Item"
+    }
+
+
+def test_named_wrapper_subclass_sends_its_fixed_status(named_client: TestClient) -> None:
+    """And at runtime the subclass answers with the status its base fixes."""
+    assert named_client.get("/named-created").status_code == 201
+    assert named_client.get("/named-accepted").status_code == 202
+
+
+def test_named_stream_subclass_keeps_its_item_schema(named_client: TestClient) -> None:
+    """The same resolution applies to a named streaming type."""
+    content = named_client.get("/openapi.json").json()["paths"]["/named-stream"]["get"][
+        "responses"
+    ]["200"]["content"]
+    assert content["application/x-ndjson"]["schema"] == {"$ref": "#/components/schemas/Item"}
+
+
+def test_named_json_subclass_keeps_body_and_header_types(named_client: TestClient) -> None:
+    """A subclass binding both parameters resolves both — the body model and the typed
+    response headers, which are read from a later argument slot."""
+    ok = named_client.get("/openapi.json").json()["paths"]["/named-json"]["get"]["responses"]["200"]
+    assert ok["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/Item"}
+    assert ok["headers"]["x-rate-limit"]["schema"] == {"type": "integer"}
 
 
 # --- Several union members at one status merge into the single response OpenAPI keys there

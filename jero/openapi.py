@@ -14,7 +14,6 @@ no extra work here.
 """
 
 from dataclasses import dataclass
-from dataclasses import field as dataclass_field
 from types import UnionType
 from typing import Any, Literal, cast, get_args
 
@@ -250,55 +249,42 @@ class ResponseBody:
 
 @dataclass(slots=True)
 class ResponseEntry:
-    """One documented response: a ``model`` ($ref — or, for a union of Structs, msgspec's
-    ``anyOf`` with a ``discriminator`` when the members are tagged), a ``list`` of it, a
-    ``one_of`` of several body variants (declared errors sharing a status), a verbatim
-    ``schema``, or no content.
+    """One documented response: its ``bodies`` and its response headers.
+
+    ``bodies`` holds one entry per media type. ``content`` is keyed by media type, so a
+    status may carry several — what a union return whose members encode differently resolves
+    to, and the OpenAPI shape for content negotiation. Empty means a response with no body.
+    Almost every response has exactly one, so build those with :meth:`single` rather than
+    assembling a tuple by hand.
 
     ``headers`` is a *tuple* of Structs, expanded into one merged response-header map: a
     status has exactly one such map, but several union return members can reach it, each
     contributing its own ``H`` (see ``_success_entries``). Every entry is emitted without
     ``required``, which OpenAPI reads as optional — so merging asserts nothing that a
     single Struct did not.
-
-    The body arguments describe *one* media type, which is what almost every response is.
-    ``content`` is keyed by media type though, so a status can carry several: build those
-    with :meth:`over_media_types`. Readers should use ``bodies``, which both paths fill.
     """
 
     status: int
     description: str
-    content_type: str | None = None
-    model: type[Struct] | UnionType | None = None
-    is_list: bool = False
-    schema: dict[str, Any] | None = None
+    bodies: tuple[ResponseBody, ...] = ()
     headers: tuple[type[Struct], ...] = ()
-    one_of: tuple[type[Struct], ...] = ()
-    # Every media type this response documents. Derived from the single-body arguments
-    # above, or replaced wholesale by over_media_types().
-    bodies: tuple["ResponseBody", ...] = dataclass_field(init=False, default=())
-
-    def __post_init__(self) -> None:
-        if self.content_type is not None:
-            self.bodies = (
-                ResponseBody(self.content_type, self.model, self.is_list, self.schema, self.one_of),
-            )
 
     @classmethod
-    def over_media_types(
+    def single(
         cls,
         status: int,
         description: str,
-        bodies: tuple["ResponseBody", ...],
+        content_type: str,
+        *,
+        model: type[Struct] | UnionType | None = None,
+        is_list: bool = False,
+        schema: dict[str, Any] | None = None,
+        one_of: tuple[type[Struct], ...] = (),
         headers: tuple[type[Struct], ...] = (),
     ) -> "ResponseEntry":
-        """A response documenting several media types under one status — what a union
-        return whose members encode differently resolves to. OpenAPI reads a multi-media
-        response as content negotiation, which is what such a handler is doing when it
-        branches on ``Accept``."""
-        entry = cls(status, description, headers=headers)
-        entry.bodies = bodies
-        return entry
+        """A response documenting one media type — every response but a merged union return."""
+        body = ResponseBody(content_type, model, is_list, schema, one_of)
+        return cls(status, description, (body,), headers)
 
 
 @dataclass(slots=True)

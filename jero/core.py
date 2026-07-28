@@ -978,8 +978,9 @@ def _union_return_members(
     into it — bodies as one ``anyOf``, header maps unioned. Whether a given group actually
     merges is a question about the *document*, so it is settled where the document is built
     (``_openapi_wiring._merge_status_group``), alongside the item-type checks — not here.
-    Runtime dispatch needs no such rule: members sharing a status also share a sender, and
-    that sender reads the body and headers off whichever instance was returned.
+    Runtime dispatch needs no such rule at all: every member resolves its own sender from
+    its own kind and status (``bytes | JSONResponse[W]`` at 200 gets two *different* sender
+    classes), so whether two of them happen to share a status is simply irrelevant here.
     """
     resolved: list[ResponseMember] = []
     for member in members:
@@ -1465,16 +1466,25 @@ def _response_headers(
 
 
 def _no_content_headers(
-    typed: Struct | None, raw: RawHeaders | Mapping[str, str] | None
+    typed: Struct | None, raw: RawHeaders | Mapping[str, str] | None, status: int
 ) -> list[tuple[bytes, bytes]]:
-    """Header pairs for a 204: unlike every other response kind, ``content-type`` and
-    ``content-length`` are never emitted (RFC 9110 §15.3.5), whatever ``typed``/``raw``
-    supply."""
-    return [
+    """Header pairs for a bodyless response.
+
+    At 204/304/1xx neither ``content-type`` nor ``content-length`` may appear at all
+    (RFC 9110 §15.3.5, §15.4.5), whatever ``typed``/``raw`` supply. At any other status —
+    reachable through ``NoContent(status_code=...)`` — that exemption does not apply, and
+    the body is still empty, so ``content-length: 0`` is emitted to frame it rather than
+    leaving the framing for the server to guess at."""
+    forbids_content = status in (204, 304) or 100 <= status < 200
+    dropped = {"content-length", "content-type"} if forbids_content else {"content-length"}
+    headers = [
         (key.encode("latin-1"), value.encode("latin-1"))
         for key, value in _header_items(typed, raw)
-        if key.lower() not in ("content-type", "content-length")
+        if key.lower() not in dropped
     ]
+    if not forbids_content:
+        headers.append((b"content-length", b"0"))
+    return headers
 
 
 async def _send_payload(
@@ -1685,7 +1695,14 @@ class _JSONResponseSender:
     _reverser: _Reverser
 
     async def __call__(
-        self, scope: Scope, receive: Receive, send: Send, result: JSONResponse[Any, Any]
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+        # Also the sender for Created / Accepted, which are deliberately *not* JSONResponse
+        # subclasses (see Created) — they are named here rather than left to the `_Sender`
+        # alias's Any, which would quietly say something untrue on two of the three paths.
+        result: "JSONResponse[Any, Any] | Created[Any, Any] | Accepted[Any, Any]",
     ) -> None:
         _ = receive
         status = result.status_code if result.status_code is not None else self._status
@@ -1729,7 +1746,7 @@ class _NoContentSender:
     ) -> None:
         _ = receive
         status = result.status_code if result.status_code is not None else self._status
-        headers = _no_content_headers(result.headers, result.raw_headers)
+        headers = _no_content_headers(result.headers, result.raw_headers, status)
         headers += _link_header_pairs(self._reverser, scope, result.location, result.links)
         await send({"type": "http.response.start", "status": status, "headers": headers})
         await send({"type": "http.response.body", "body": b""})
@@ -2194,9 +2211,11 @@ class _UnionResponseSender:
     that need it).
 
     A result matching no member means the handler returned something its own annotation
-    forbids. Nothing has been sent at that point, so — unlike a mid-stream failure — it
-    can still become a proper response: it goes through the app's exception handlers,
-    which log the fault and answer 500, rather than escaping into the server.
+    forbids. Nothing has been sent at that point, so — unlike a mid-stream failure — it can
+    still become a proper response: it is logged here and then answered through the app's
+    exception handlers, rather than escaping into the server. Logging is done *before*
+    delegating because an app may register a handler for ``TypeError`` and turn this into
+    some ordinary 4xx; the framework fault must reach the operator either way.
     """
 
     _senders: tuple[tuple[type, _Sender], ...]
@@ -2207,14 +2226,12 @@ class _UnionResponseSender:
             if isinstance(result, response_type):
                 await sender(scope, receive, send, result)
                 return
-        await self._exceptions.send(
-            scope,
-            send,
-            TypeError(
-                f"handler returned {type(result).__name__}, which matches none of its "
-                f"declared union return types",
-            ),
+        message = (
+            f"handler returned {type(result).__name__}, which matches none of its "
+            f"declared union return types"
         )
+        logger.error("%s %s: %s", scope["method"], scope["path"], message)
+        await self._exceptions.send(scope, send, TypeError(message))
 
 
 def _union_sender(

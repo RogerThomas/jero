@@ -326,9 +326,11 @@ These pull against each other constantly; keep all three in mind on every change
   `JSONResponse[Widget | Other]` produce the identical document), differing media types
   side by side in `content` (the OpenAPI shape for `Accept` negotiation, which is what
   such a handler is doing), header maps unioned (response headers carry no `required`, so
-  merging asserts nothing new). A shared status is rejected only where the merge can't be
-  *said*: header Structs disagreeing on a wire name, or a member with no single Struct
-  body (bare wrapper / `list`). Those are document questions, so like the streaming
+  merging asserts nothing new). Members describing the *same* body dedupe rather than merge,
+  so `BytesResponse[A] | BytesResponse[B]` is one binary body with both header sets. A
+  shared status is rejected only where the merge can't be *said*: header Structs disagreeing
+  on a wire name, or bodies that differ at one media type and can't compose into an `anyOf`
+  (a `list[Struct]` array beside an object). Those are document questions, so like the streaming
   item-type checks they fire under `include_openapi`. Dispatch is an `isinstance` chain
   built at wiring, most-derived-first; a result matching no member goes through the
   exception handlers as a logged 500.

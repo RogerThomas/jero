@@ -10,7 +10,7 @@ dependency graph stays acyclic (``core`` imports *this* module, never the revers
 
 from collections.abc import Mapping, Sequence
 from functools import cache
-from types import UnionType
+from types import UnionType, get_original_bases
 from typing import Any, Literal, Union, cast, get_args, get_origin
 
 from msgspec import Struct, defstruct
@@ -131,6 +131,25 @@ _WRAPPER_NAMES: dict[ReturnKind, str] = {
 }
 
 
+def _wrapper_args(annotation: object) -> tuple[object, ...]:
+    """The type arguments a return annotation carries, following a *named subclass* up to the
+    parameterized base it bound.
+
+    ``class WidgetResponse(JSONResponse[Widget])`` is legal, type-checks, and is a natural way
+    for a project to name its response types — but it holds ``Widget`` on its original base
+    rather than on itself. Reading only ``get_args`` would see nothing and document an open
+    ``{}`` body, silently losing a schema the annotation does state. Recursive, so a subclass
+    of a subclass resolves too; the first base carrying arguments wins."""
+    args = get_args(annotation)
+    if args or not isinstance(annotation, type):
+        return args
+    for base in get_original_bases(annotation):
+        inherited = _wrapper_args(base)
+        if inherited:
+            return inherited
+    return ()
+
+
 def _item_payload(
     annotation: object, kind: ReturnKind, operation_id: str, *, allow_str: bool = False
 ) -> type[Struct] | UnionType | None:
@@ -141,7 +160,7 @@ def _item_payload(
     are tagged). ``None`` for an unparameterized wrapper — and for ``str`` where the
     wrapper's bound allows it (SSE) — each caller documents its bare fallback. Any other
     ``T`` fails loud: a typed return annotation must never silently lose its schema."""
-    args = get_args(annotation)
+    args = _wrapper_args(annotation)
     item = args[0] if args else None
     if item is None or (allow_str and item is str):
         return None
@@ -165,7 +184,7 @@ def _response_header_type(kind: ReturnKind, annotation: object) -> type[Struct] 
     Its position depends on the wrapper: ``Bytes``/``Streaming``/``NoContent`` take only
     ``H``; the rest take ``T`` then ``H`` (so ``H`` is the second arg, present only when
     both are given)."""
-    args = get_args(annotation)
+    args = _wrapper_args(annotation)
     if kind in ("bytes-response", "stream-bytes", "no-content"):
         candidate = args[0] if args else None
     elif kind in ("json-response", "stream-ndjson", "stream-sse", "created", "accepted"):
@@ -259,10 +278,12 @@ def _exception_entries(
         models = tuple(dict.fromkeys(_exception_docs_model(cls, adapter) for cls in classes))
         if len(models) == 1:
             responses.append(
-                ResponseEntry(status, description, "application/json", model=models[0])
+                ResponseEntry.single(status, description, "application/json", model=models[0])
             )
         else:
-            responses.append(ResponseEntry(status, description, "application/json", one_of=models))
+            responses.append(
+                ResponseEntry.single(status, description, "application/json", one_of=models)
+            )
     return responses
 
 
@@ -301,7 +322,7 @@ def _error_responses(
         statuses.append(401)
     statuses.append(500)
     return [
-        ResponseEntry(
+        ResponseEntry.single(
             status,
             _error_description(_STATUS_ERRORS[status]),
             "application/json",
@@ -315,11 +336,11 @@ def _entry_from_spec(spec: ResponseSpec) -> ResponseEntry:
     """A user-declared ``ResponseSpec`` (from meta) as an internal response entry: a body
     referencing ``model``, a schemaless body of an explicit ``content_type``, or no body."""
     if spec.model is not None:
-        return ResponseEntry(
+        return ResponseEntry.single(
             spec.status, spec.description, spec.content_type or "application/json", model=spec.model
         )
     if spec.content_type is not None:
-        return ResponseEntry(spec.status, spec.description, spec.content_type, schema={})
+        return ResponseEntry.single(spec.status, spec.description, spec.content_type, schema={})
     return ResponseEntry(spec.status, spec.description)
 
 
@@ -334,41 +355,47 @@ def _success_entry(
     if kind == "no-content":
         return ResponseEntry(status, description, headers=headers)
     if kind in ("bytes", "bytes-response", "stream-bytes"):
-        return ResponseEntry(status, description, "application/octet-stream", headers=headers)
+        return ResponseEntry.single(
+            status, description, "application/octet-stream", headers=headers
+        )
     if kind == "stream-ndjson":
         item = _item_payload(annotation, kind, operation_id)
         if item is None:  # bare NDJSONStreamingResponse (no [T]) -> any JSON object per line
-            return ResponseEntry(
+            return ResponseEntry.single(
                 status, description, "application/x-ndjson", schema={}, headers=headers
             )
-        return ResponseEntry(
+        return ResponseEntry.single(
             status, description, "application/x-ndjson", model=item, headers=headers
         )
     if kind == "stream-sse":
         item = _item_payload(annotation, kind, operation_id, allow_str=True)
         if item is None:  # SSEResponse[str] / bare -> the data is a plain string
-            return ResponseEntry(
+            return ResponseEntry.single(
                 status, description, "text/event-stream", schema={"type": "string"}, headers=headers
             )
-        return ResponseEntry(status, description, "text/event-stream", model=item, headers=headers)
+        return ResponseEntry.single(
+            status, description, "text/event-stream", model=item, headers=headers
+        )
     if kind in ("json-response", "created", "accepted"):
         item = _item_payload(annotation, kind, operation_id)
         if item is None:  # bare wrapper (no [T]) -> any JSON
-            return ResponseEntry(
+            return ResponseEntry.single(
                 status, description, "application/json", schema={}, headers=headers
             )
-        return ResponseEntry(status, description, "application/json", model=item, headers=headers)
+        return ResponseEntry.single(
+            status, description, "application/json", model=item, headers=headers
+        )
     # kind == "json": a Struct or list[Struct]
     item_ann, is_list = strip_list(annotation)
     if is_struct_type(item_ann):
-        return ResponseEntry(
+        return ResponseEntry.single(
             status,
             description,
             "application/json",
             model=cast("type[Struct]", item_ann),
             is_list=is_list,
         )
-    return ResponseEntry(status, description, "application/json", schema={})
+    return ResponseEntry.single(status, description, "application/json", schema={})
 
 
 def _merged_body_model(bodies: Sequence[ResponseBody], operation_id: str) -> UnionType:
@@ -443,7 +470,7 @@ def _merge_status_group(
             if len(unique) == 1
             else ResponseBody(media_type, model=_merged_body_model(unique, operation_id))
         )
-    return ResponseEntry.over_media_types(
+    return ResponseEntry(
         status,
         _STATUS_TEXT.get(status, "Successful response"),
         tuple(bodies),

@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import Generator
+from dataclasses import dataclass
 from enum import Enum
 from typing import cast
 from uuid import UUID
@@ -15,6 +16,7 @@ from jero import (
     BytesResponse,
     Created,
     Endpoint,
+    ExceptionResponse,
     JSONResponse,
     Location,
     NoContent,
@@ -338,7 +340,10 @@ def _fixed_status_client() -> Generator[TestClient]:
 def test_no_content_is_204_with_empty_body_and_no_content_headers(
     fixed_status_client: TestClient,
 ) -> None:
-    """NoContent sends 204, an empty body, no content-type/content-length, but Location."""
+    """NoContent sends 204, an empty body, no content-type/content-length, but Location.
+
+    A 204 is the case where omitting both content headers is what the spec requires, so
+    unlike the override above there is deliberately no ``content-length: 0`` here."""
     resp = fixed_status_client.get("/no-content")
     assert resp.status_code == 204
     assert resp.content == b""
@@ -364,9 +369,14 @@ def test_accepted_documents_and_sends_202_on_a_post(fixed_status_client: TestCli
 def test_status_code_overrides_no_contents_own_fixed_status(
     fixed_status_client: TestClient,
 ) -> None:
-    """status_code= still wins over NoContent's own fixed 204, as the escape hatch."""
+    """status_code= still wins over NoContent's own fixed 204, as the escape hatch — and the
+    empty body is then framed with ``content-length: 0``. Only 204/304/1xx may omit content
+    framing entirely; at any other status leaving it out would hand the framing to the
+    server to guess at."""
     resp = fixed_status_client.get("/no-content-override")
     assert resp.status_code == 200
+    assert resp.headers["content-length"] == "0"
+    assert resp.content == b""
 
 
 # --- Union returns: a handler answers with different success statuses ---
@@ -567,4 +577,34 @@ def test_union_result_matching_no_member_is_an_error(
         resp = unsubscripted_client.get("/lying-union")
     assert resp.status_code == 500
     assert resp.json()["type"] == "internal-server-error"
+    assert "matches none of its declared union return types" in caplog.text
+
+
+@dataclass
+class _TypeErrorHandler:
+    """An app-registered handler for TypeError — the framework's union breach is reported as
+    one, so a handler like this intercepts it."""
+
+    def handle_exception(self, exception: TypeError) -> ExceptionResponse[Echo, None]:
+        """Answer 400 rather than letting the default 500 through."""
+        return ExceptionResponse(status_code=400, json=Echo(body=str(exception)))
+
+
+class HandledBreachApp(BaseApp):
+    """App that handles TypeError, so the union breach never reaches the default 500."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(LyingUnionEndpoint())
+        self.add_exception_handler(_TypeErrorHandler())
+
+
+def test_union_breach_is_logged_even_when_the_app_handles_type_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The breach is logged by the sender *before* it is delegated, so registering a handler
+    for TypeError can change the response but can never hide the framework fault from the
+    operator."""
+    with TestClient(HandledBreachApp()) as client, caplog.at_level(logging.ERROR, logger="jero"):
+        resp = client.get("/lying-union")
+    assert resp.status_code == 400  # the app's handler won, as it should
     assert "matches none of its declared union return types" in caplog.text
