@@ -11,7 +11,7 @@ dependency graph stays acyclic (``core`` imports *this* module, never the revers
 from collections.abc import Mapping, Sequence
 from functools import cache
 from types import UnionType, get_original_bases
-from typing import Any, Literal, TypeVar, Union, cast, get_args, get_origin
+from typing import Any, Generic, Literal, TypeVar, Union, cast, get_args, get_origin
 
 from msgspec import Struct, defstruct
 from msgspec.structs import fields as struct_fields
@@ -25,6 +25,7 @@ from jero._wiring_types import (
     WiringError,
     is_struct_type,
     strip_list,
+    substitute,
 )
 from jero.errors import (
     AuthenticationRequiredError,
@@ -140,55 +141,75 @@ def _is_generic(annotation: object) -> bool:
 
 
 def _bound_only(args: tuple[object, ...]) -> tuple[object, ...]:
-    """``args`` with every still-generic position blanked to ``None``, so a class's own
-    parameters never read as a caller's types."""
+    """``args`` with every still-generic position blanked to ``None``, so a parameter nothing
+    ever bound never reads as a stated type."""
     return tuple(None if _is_generic(arg) else arg for arg in args)
 
 
-def _wrapper_args(annotation: object) -> tuple[object, ...]:
-    """The type arguments a return annotation carries, following a *named subclass* up to the
-    parameterized base it bound.
+def _param_bindings(
+    params: tuple[TypeVar, ...], supplied: tuple[object, ...]
+) -> dict[TypeVar, object]:
+    """Each of a class's type parameters mapped to what an annotation binds it to: the argument
+    supplied at that position, else the parameter's own default. A parameter with neither is
+    left out, so substitution leaves its TypeVar in place and the caller can see that the
+    annotation stated nothing there."""
+    bindings: dict[TypeVar, object] = {}
+    for index, param in enumerate(params):
+        if index < len(supplied):
+            bindings[param] = supplied[index]
+        elif param.has_default():
+            bindings[param] = param.__default__
+    return bindings
 
-    ``class WidgetResponse(JSONResponse[Widget])`` is legal, type-checks, and is a natural way
-    for a project to name its response types — but it holds ``Widget`` on its original base
-    rather than on itself. Reading only ``get_args`` would see nothing and document an open
-    ``{}`` body, silently losing a schema the annotation does state. Recursive, so a subclass
-    of a subclass resolves too; the first base to bind an argument wins.
 
-    Only arguments found by *walking bases* are filtered through :func:`_bound_only`. A
-    wrapper's own original bases restate its parameters — ``JSONResponse``'s are
-    ``BaseResponse[H]`` and ``Generic[T, H]``, ``SSEResponse``'s is
-    ``_StreamingResponse[T | ServerSentEvent[T], H]`` — so a bare ``-> JSONResponse`` must
-    resolve to ``()``, letting :func:`_item_payload` see that no body type was named, rather
-    than being handed ``H`` and reporting the *header* TypeVar as a bad body type. Blanking
-    per position rather than rejecting the whole base keeps a partially bound subclass working:
-    ``class Paged[H](JSONResponse[Item, H])`` still yields ``Item`` for the body. Arguments
-    written *directly* in the annotation are returned as-is, so a TypeVar left unresolved
-    there — an endpoint generic in its own response type — still fails loud."""
-    args = get_args(annotation)
-    if args or not isinstance(annotation, type):
-        return args
-    for base in get_original_bases(annotation):
-        inherited = _bound_only(_wrapper_args(base))
-        if any(arg is not None for arg in inherited):
-            return inherited
+def _resolve_args(annotation: object, target: type) -> tuple[object, ...]:
+    """The arguments ``annotation`` supplies to ``target``, in ``target``'s own parameter order.
+
+    Walks up the original bases substituting each level's bindings into the next, so an
+    intermediate generic cannot shift the positions. ``class ApiResponse[T](JSONResponse[T,
+    TraceHeaders])`` then ``class WidgetResponse(ApiResponse[Item])`` resolves to
+    ``(Item, TraceHeaders)`` — reading the nearest base's arguments as if they were the
+    wrapper's own would give ``(Item,)`` and quietly drop the header type. ``()`` when
+    ``target`` is not in the chain at all."""
+    origin = get_origin(annotation) or annotation
+    if not isinstance(origin, type):
+        return ()
+    params: tuple[TypeVar, ...] = getattr(origin, "__type_params__", ())
+    bindings = _param_bindings(params, get_args(annotation))
+    if origin is target:
+        return tuple(bindings.get(param) for param in params)
+    for base in get_original_bases(origin):
+        if (get_origin(base) or base) is Generic:
+            continue  # a bare parameter list, carrying no inheritance to follow
+        resolved = _resolve_args(substitute(base, bindings), target)
+        if resolved:
+            return resolved
     return ()
 
 
-def _item_defaults(annotation: object) -> bool:
-    """Whether the wrapper declares its item parameter ``T`` *with a default*, so omitting it
-    still states a type. ``SSEResponse``'s ``T: Struct | str = str`` does — a bare
-    ``SSEResponse`` documents a string. ``JSONResponse``'s ``T: Struct`` does not, so a bare
-    ``JSONResponse`` states nothing and is rejected rather than documented as an open body."""
-    origin = get_origin(annotation) or annotation
-    if not isinstance(origin, type):
-        return False
-    params: tuple[TypeVar, ...] = getattr(origin, "__type_params__", ())
-    return bool(params) and params[0].has_default()
+def _wrapper_args(annotation: object, wrapper: type | None) -> tuple[object, ...]:
+    """The type arguments a return annotation states for its ``wrapper``'s ``(T, H)``, resolved
+    through however many named subclasses sit in between and blanked wherever nothing was
+    stated.
+
+    ``class WidgetResponse(JSONResponse[Widget])`` is legal, type-checks, and is a natural way
+    for a project to name its response types — but it holds ``Widget`` on its original base
+    rather than on itself, so reading only ``get_args`` would see nothing and lose a schema the
+    annotation does state. Resolution targets ``wrapper`` and stops there, which is also why a
+    wrapper's own bases are never mistaken for bound arguments: a bare ``-> JSONResponse``
+    resolves ``T`` to nothing rather than to ``BaseResponse[H]``'s ``H``."""
+    if wrapper is None:
+        return ()
+    return _bound_only(_resolve_args(annotation, wrapper))
 
 
 def _item_payload(
-    annotation: object, kind: ReturnKind, operation_id: str, *, allow_str: bool = False
+    annotation: object,
+    kind: ReturnKind,
+    wrapper: type | None,
+    operation_id: str,
+    *,
+    allow_str: bool = False,
 ) -> type[Struct] | UnionType | None:
     """The streamed/enveloped item type — the *first* type arg (``T`` in ``Wrapper[T, H]``,
     positional so a non-Struct ``T`` is never mistaken for the later header type ``H``) —
@@ -196,13 +217,14 @@ def _item_payload(
     (msgspec schemas a union directly: ``anyOf``, plus a ``discriminator`` when the members
     are tagged).
 
-    ``None`` only where the wrapper still states a type without the argument: ``str`` where
-    the bound allows it, and an omitted ``T`` that *defaults* (SSE, both cases). Omitting a
-    ``T`` that has no default fails loud, as does any other ``T`` — a return annotation is
-    where the response schema comes from, so it must never silently lose one."""
-    args = _wrapper_args(annotation)
+    ``None`` only where the wrapper states a type without an explicit argument: ``str`` where
+    the bound allows it, which covers both an explicit ``SSEResponse[str]`` and a bare
+    ``SSEResponse`` (whose ``T`` defaults to ``str``). A ``T`` nothing bound at all fails loud,
+    as does any other ``T`` — a return annotation is where the response schema comes from, so
+    it must never silently lose one."""
+    args = _wrapper_args(annotation, wrapper)
     item = args[0] if args else None
-    if item is None and not _item_defaults(annotation):
+    if item is None:
         name = _WRAPPER_NAMES[kind]
         raise WiringError(
             f"{operation_id}: {name} must name its body type — write {name}[YourStruct]. "
@@ -225,12 +247,14 @@ def _item_payload(
     )
 
 
-def _response_header_type(kind: ReturnKind, annotation: object) -> type[Struct] | None:
+def _response_header_type(
+    kind: ReturnKind, annotation: object, wrapper: type | None
+) -> type[Struct] | None:
     """The typed response-header Struct ``H`` from a response wrapper's annotation, if any.
     Its position depends on the wrapper: ``Bytes``/``Streaming``/``NoContent`` take only
     ``H``; the rest take ``T`` then ``H`` (so ``H`` is the second arg, present only when
     both are given)."""
-    args = _wrapper_args(annotation)
+    args = _wrapper_args(annotation, wrapper)
     if kind in ("bytes-response", "stream-bytes", "no-content"):
         candidate = args[0] if args else None
     elif kind in ("json-response", "stream-ndjson", "stream-sse", "created", "accepted"):
@@ -391,12 +415,12 @@ def _entry_from_spec(spec: ResponseSpec) -> ResponseEntry:
 
 
 def _success_entry(
-    kind: ReturnKind, status: int, annotation: object, operation_id: str
+    kind: ReturnKind, status: int, annotation: object, wrapper: type | None, operation_id: str
 ) -> ResponseEntry:
     """The documented response for one return kind — a union's member, or the sole
     kind/annotation/status of a non-union return."""
     description = _STATUS_TEXT.get(status, "Successful response")
-    header_type = _response_header_type(kind, annotation)
+    header_type = _response_header_type(kind, annotation, wrapper)
     headers = () if header_type is None else (header_type,)
     if kind == "no-content":
         return ResponseEntry(status, description, headers=headers)
@@ -405,12 +429,12 @@ def _success_entry(
             status, description, "application/octet-stream", headers=headers
         )
     if kind == "stream-ndjson":
-        item = _item_payload(annotation, kind, operation_id)
+        item = _item_payload(annotation, kind, wrapper, operation_id)
         return ResponseEntry.single(
             status, description, "application/x-ndjson", model=item, headers=headers
         )
     if kind == "stream-sse":
-        item = _item_payload(annotation, kind, operation_id, allow_str=True)
+        item = _item_payload(annotation, kind, wrapper, operation_id, allow_str=True)
         if item is None:  # SSEResponse[str] / bare -> the data is a plain string
             return ResponseEntry.single(
                 status, description, "text/event-stream", schema={"type": "string"}, headers=headers
@@ -419,7 +443,7 @@ def _success_entry(
             status, description, "text/event-stream", model=item, headers=headers
         )
     if kind in ("json-response", "created", "accepted"):
-        item = _item_payload(annotation, kind, operation_id)
+        item = _item_payload(annotation, kind, wrapper, operation_id)
         return ResponseEntry.single(
             status, description, "application/json", model=item, headers=headers
         )
@@ -522,11 +546,19 @@ def _success_entries(status: int, sources: Sources, operation_id: str) -> list[R
     several members at one status merged into the single response OpenAPI allows there."""
     if sources.return_kind != "union":
         return [
-            _success_entry(sources.return_kind, status, sources.return_annotation, operation_id)
+            _success_entry(
+                sources.return_kind,
+                status,
+                sources.return_annotation,
+                sources.return_wrapper,
+                operation_id,
+            )
         ]
     by_status: dict[int, list[ResponseEntry]] = {}
     for member in sources.return_members:
-        entry = _success_entry(member.kind, member.status, member.annotation, operation_id)
+        entry = _success_entry(
+            member.kind, member.status, member.annotation, member.wrapper, operation_id
+        )
         by_status.setdefault(member.status, []).append(entry)
     return [
         group[0] if len(group) == 1 else _merge_status_group(group, member_status, operation_id)

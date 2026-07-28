@@ -9,8 +9,9 @@ build the spec) can import them without importing each other. Keeping the contra
 below both modules is what makes the dependency graph acyclic.
 """
 
-from collections.abc import Sequence
-from typing import Literal, get_args, get_origin
+from collections.abc import Mapping, Sequence
+from types import UnionType
+from typing import Literal, TypeAliasType, TypeVar, Union, cast, get_args, get_origin
 
 from msgspec import Struct
 from msgspec.json import Decoder
@@ -65,6 +66,54 @@ def strip_list(ann: object) -> tuple[object, bool]:
     if len(args) != 1:
         return ann, False
     return args[0], True
+
+
+def substitute(ann: object, bindings: Mapping[TypeVar, object]) -> object:
+    """``ann`` with every bound type parameter replaced by what it is bound to, recursively:
+    ``JSONResponse[T, TraceHeaders]`` under ``{T: Item}`` becomes
+    ``JSONResponse[Item, TraceHeaders]``. Unbound parameters are left as they are.
+
+    Rebuilding a type expression means subscripting its origin — a type form to checkers, so it
+    goes through a cast and an ordinary mapping subscript. A union is composed with ``|`` rather
+    than subscripted, so that arm casts too."""
+    if isinstance(ann, TypeVar):
+        return bindings.get(ann, ann)
+    origin, args = get_origin(ann), get_args(ann)
+    if origin is None or not args:
+        return ann  # not a parameterized generic, so nothing to substitute into
+    replaced = tuple(substitute(arg, bindings) for arg in args)
+    if replaced == args:
+        return ann
+    if origin in (Union, UnionType):
+        merged: type | UnionType = cast("type", replaced[0])
+        for arg in replaced[1:]:
+            merged = merged | cast("type", arg)
+        return merged
+    return cast(Mapping[tuple[object, ...], object], origin)[replaced]
+
+
+def unwrap_alias(ann: object) -> object:
+    """A PEP 695 ``type`` alias replaced by whatever it aliases, so every downstream check sees
+    the real annotation. ``type WidgetResponse = JSONResponse[Widget]`` is the spelling 3.13+
+    recommends for naming a response type, and it is the alternative jero points users at, so it
+    has to resolve rather than fail the return-kind check as an unrecognized object.
+
+    Recursive, so an alias of an alias resolves. A *generic* alias arrives as a subscripted
+    ``TypeAliasType`` — ``type Api[T] = JSONResponse[T, TraceHeaders]`` used as ``Api[Widget]`` —
+    so its arguments substitute into the aliased expression on the way through. Only ``TypeVar``
+    parameters are bound: a ``ParamSpec``/``TypeVarTuple`` names something no response annotation
+    can be, so it is left in place to fail the return-kind check like any other unusable type."""
+    if isinstance(ann, TypeAliasType):
+        return unwrap_alias(ann.__value__)
+    origin = get_origin(ann)
+    if isinstance(origin, TypeAliasType):
+        bindings = {
+            param: arg
+            for param, arg in zip(origin.__type_params__, get_args(ann), strict=False)
+            if isinstance(param, TypeVar)
+        }
+        return unwrap_alias(substitute(origin.__value__, bindings))
+    return ann
 
 
 class EndpointMeta(Struct):
@@ -154,13 +203,16 @@ class ResponseMember(Struct, frozen=True):
     """One resolved member of a union return annotation (``JSONResponse[Widget] |
     NoContent``): its concrete response class (for the runtime ``isinstance`` dispatch),
     the raw — possibly subscripted — annotation (for OpenAPI item/header derivation), its
-    resolved kind (never ``"union"``), and its effective status (the verb's default for a
-    plain ``JSONResponse``/``BytesResponse`` member, else the member type's fixed status)."""
+    resolved kind (never ``"union"``), its effective status (the verb's default for a
+    plain ``JSONResponse``/``BytesResponse`` member, else the member type's fixed status),
+    and the generic wrapper class its type arguments resolve against (``None`` for a plain
+    ``Struct``/``bytes`` member, which has no wrapper)."""
 
     response_type: type
     annotation: object
     kind: ReturnKind
     status: int
+    wrapper: type | None = None
 
 
 class Sources(Struct):
@@ -181,6 +233,10 @@ class Sources(Struct):
     raw_headers: bool = False
     return_kind: ReturnKind = "json"
     return_annotation: object = None  # the raw return hint, kept for OpenAPI response derivation
+    # The generic response-wrapper class ``return_annotation``'s type arguments resolve against,
+    # so the OpenAPI layer can read (T, H) positionally without importing the wrapper classes
+    # (``core`` imports that module, never the reverse). None for a plain Struct/bytes return.
+    return_wrapper: type | None = None
     return_members: tuple[ResponseMember, ...] = ()  # populated iff return_kind == "union"
     arity: int = 0  # number of binding args the handler declares
 

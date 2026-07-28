@@ -535,6 +535,17 @@ class NoContentHeadersEndpoint(Endpoint, path="/no-content-headers"):
         return NoContent(headers=TraceHeaders(x_trace_id="trace"))
 
 
+class FramingHeadersEndpoint(Endpoint, path="/framing-headers"):
+    """A 204 whose raw headers try to supply the framing headers the status forbids."""
+
+    async def get(self) -> NoContent:
+        """Return 204, asking for content headers RFC 9110 does not allow at that status."""
+        return NoContent(
+            raw_headers={"content-type": "application/json", "content-length": "17"},
+            headers=None,
+        )
+
+
 class LyingUnionEndpoint(Endpoint, path="/lying-union"):
     """A handler that returns something its own union annotation does not allow."""
 
@@ -548,6 +559,7 @@ class HeaderedNoContentApp(BaseApp):
 
     async def wire(self) -> None:
         self.include_endpoint(NoContentHeadersEndpoint())
+        self.include_endpoint(FramingHeadersEndpoint())
         self.include_endpoint(LyingUnionEndpoint())
 
 
@@ -562,6 +574,20 @@ def test_no_content_carries_typed_headers(unsubscripted_client: TestClient) -> N
     resp = unsubscripted_client.get("/no-content-headers")
     assert resp.status_code == 204
     assert resp.headers["x-trace-id"] == "trace"
+    assert resp.content == b""
+    assert "content-type" not in resp.headers
+    assert "content-length" not in resp.headers
+
+
+def test_no_content_strips_framing_headers_it_is_handed(
+    unsubscripted_client: TestClient,
+) -> None:
+    """204 forbids ``content-type`` and ``content-length`` (RFC 9110 §15.3.5), so supplying them
+    through ``raw_headers`` drops them rather than emitting a framing claim the status disallows.
+    Stripping is the reason the bodyless header path exists, so it needs a case that hands it
+    something to strip — every other 204 test supplies nothing and would pass either way."""
+    resp = unsubscripted_client.get("/framing-headers")
+    assert resp.status_code == 204
     assert resp.content == b""
     assert "content-type" not in resp.headers
     assert "content-length" not in resp.headers

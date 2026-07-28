@@ -112,6 +112,7 @@ from jero._wiring_types import (
     WiringError,
     is_struct_type,
     strip_list,
+    unwrap_alias,
 )
 from jero.background import BackgroundTasks
 from jero.codecs import msgspec_encoder
@@ -933,6 +934,22 @@ def _return_kind(ann: object) -> ReturnKind | None:  # noqa: C901
     return None
 
 
+# The generic wrapper class each return kind's type arguments resolve against. Handed to the
+# OpenAPI layer through the wiring contracts so it can read a wrapper's ``(T, H)`` positionally
+# without importing these classes: ``core`` imports ``_openapi_wiring``, never the reverse. The
+# plain kinds (json, bytes) have no wrapper and are absent.
+_WRAPPER_TYPES: dict[ReturnKind, type] = {
+    "stream-bytes": StreamingResponse,
+    "stream-ndjson": NDJSONStreamingResponse,
+    "stream-sse": SSEResponse,
+    "no-content": NoContent,
+    "created": Created,
+    "accepted": Accepted,
+    "bytes-response": BytesResponse,
+    "json-response": JSONResponse,
+}
+
+
 # The status a return kind fixes regardless of the verb's own default; a kind absent here
 # (json, json-response, bytes, bytes-response, the streams) takes the verb's default status.
 _FIXED_STATUS: dict[ReturnKind, int] = {"no-content": 204, "created": 201, "accepted": 202}
@@ -985,7 +1002,8 @@ def _union_return_members(
     classes), so whether two of them happen to share a status is simply irrelevant here.
     """
     resolved: list[ResponseMember] = []
-    for member in members:
+    for aliased in members:
+        member = unwrap_alias(aliased)
         kind = _return_kind(member)
         if kind is None or kind not in _UNION_MEMBER_KINDS:
             raise WiringError(
@@ -994,7 +1012,9 @@ def _union_return_members(
                 f"Created, Accepted, JSONResponse, or BytesResponse); got {member!r}",
             )
         status = _effective_status(kind, verb_status)
-        resolved.append(ResponseMember(_dispatch_type(member), member, kind, status))
+        resolved.append(
+            ResponseMember(_dispatch_type(member), member, kind, status, _WRAPPER_TYPES.get(kind))
+        )
     return tuple(resolved)
 
 
@@ -1075,7 +1095,10 @@ def _bind_sources(  # noqa: C901
             f"{cls.__name__}.{name}: only one of 'json', 'content', or 'form' is allowed",
         )
 
-    return_hint = hints.get("return")
+    # A PEP 695 ``type`` alias is resolved to what it aliases before anything classifies it, and
+    # the resolved form is what Sources stores — so the OpenAPI layer derives its schema from the
+    # real annotation rather than from an opaque alias object.
+    return_hint = unwrap_alias(hints.get("return"))
     return_kind, return_members = _resolve_return(
         cls, name, http_method, verb.success_status, return_hint
     )
@@ -1093,6 +1116,7 @@ def _bind_sources(  # noqa: C901
         raw_headers=wants_raw_headers,
         return_kind=return_kind,
         return_annotation=return_hint,
+        return_wrapper=_WRAPPER_TYPES.get(return_kind),
         return_members=return_members,
         arity=arity,
     )
