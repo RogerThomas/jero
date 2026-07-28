@@ -1791,6 +1791,39 @@ class NamedJSONEndpoint(Endpoint, path="/named-json"):
         return NamedJSON(json=Item(id="id"), headers=RateHeaders(x_rate_limit=1))
 
 
+class NamedEnvelope[T: Struct](JSONResponse[T, RateHeaders]):
+    """A named response type that stays *generic*: it pins the headers and leaves the body
+    to the handler, so the annotation is written subscripted (``NamedEnvelope[Item]``)."""
+
+
+class NamedBodyless[H: Struct](NoContent[H]):
+    """The bodyless equivalent, generic in its header type."""
+
+
+class GenericSubclassEndpoint(Endpoint, path="/generic-subclass"):
+    """Returns a subscripted generic subclass of ``JSONResponse``."""
+
+    async def get(self) -> NamedEnvelope[Item]:
+        """Get one."""
+        return NamedEnvelope(json=Item(id="id"), headers=RateHeaders(x_rate_limit=1))
+
+
+class BranchParams(Struct):
+    """Selects which union branch ``GenericSubclassUnionEndpoint`` answers with."""
+
+    empty: bool = False
+
+
+class GenericSubclassUnionEndpoint(Endpoint, path="/generic-subclass-union"):
+    """Two subscripted generic subclasses as the members of a union return."""
+
+    async def get(self, params: BranchParams) -> NamedEnvelope[Item] | NamedBodyless[RateHeaders]:
+        """Get one, or nothing."""
+        if params.empty:
+            return NamedBodyless(headers=RateHeaders(x_rate_limit=2))
+        return NamedEnvelope(json=Item(id="id"), headers=RateHeaders(x_rate_limit=1))
+
+
 class NamedApp(BaseApp):
     """App wiring the named-response-type endpoints."""
 
@@ -1799,6 +1832,8 @@ class NamedApp(BaseApp):
         self.include_endpoint(NamedAcceptedEndpoint())
         self.include_endpoint(NamedStreamEndpoint())
         self.include_endpoint(NamedJSONEndpoint())
+        self.include_endpoint(GenericSubclassEndpoint())
+        self.include_endpoint(GenericSubclassUnionEndpoint())
         self.include_openapi(title="named", version="1")
 
 
@@ -1843,6 +1878,39 @@ def test_named_json_subclass_keeps_body_and_header_types(named_client: TestClien
     ok = named_client.get("/openapi.json").json()["paths"]["/named-json"]["get"]["responses"]["200"]
     assert ok["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/Item"}
     assert ok["headers"]["x-rate-limit"]["schema"] == {"type": "integer"}
+
+
+def test_generic_wrapper_subclass_is_a_recognized_return_type(named_client: TestClient) -> None:
+    """A named response type may stay generic and be written subscripted. The kind is resolved
+    from the *origin* by subclass, so ``NamedEnvelope[Item]`` classifies as the
+    ``JSONResponse`` it derives from rather than being rejected as an unknown return type,
+    and both parameters still resolve — the one the annotation supplies and the one the
+    subclass pins."""
+    ok = named_client.get("/openapi.json").json()["paths"]["/generic-subclass"]["get"]["responses"][
+        "200"
+    ]
+    assert ok["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/Item"}
+    assert ok["headers"]["x-rate-limit"]["schema"] == {"type": "integer"}
+    assert named_client.get("/generic-subclass").json() == {"id": "id"}
+
+
+def test_generic_wrapper_subclasses_work_as_union_members(named_client: TestClient) -> None:
+    """And as union members: each branch keeps the status its base fixes, documents what it
+    resolves, and dispatches at runtime on its origin."""
+    responses = named_client.get("/openapi.json").json()["paths"]["/generic-subclass-union"]["get"][
+        "responses"
+    ]
+    assert responses["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/Item"
+    }
+    assert responses["200"]["headers"]["x-rate-limit"]["schema"] == {"type": "integer"}
+    assert "content" not in responses["204"]
+    assert responses["204"]["headers"]["x-rate-limit"]["schema"] == {"type": "integer"}
+    body = named_client.get("/generic-subclass-union")
+    assert (body.status_code, body.json()) == (200, {"id": "id"})
+    empty = named_client.get("/generic-subclass-union", params={"empty": "true"})
+    assert (empty.status_code, empty.content) == (204, b"")
+    assert empty.headers["x-rate-limit"] == "2"
 
 
 # --- The other end of that resolution: a wrapper left unparameterized states no body type ---

@@ -250,6 +250,11 @@ name you chose appears nowhere in the spec, so pick whichever reads better in yo
 an alias when you only want the name, a subclass when it should also carry defaults. Aliases
 of aliases resolve, and either form works as a union member (`WidgetResponse | NoContent`).
 
+A subclass may stay generic the way the alias does — `class Envelope[T: Struct](JSONResponse[T,
+CacheHeaders])`, written `-> Envelope[Widget]`. It is classified by the wrapper it derives from,
+so it takes that wrapper's status and sender, and both type arguments resolve: the one the
+annotation supplies and the one the subclass pins.
+
 A wrapper still has to *say* what its body is: `-> JSONResponse` with no `[Widget]` anywhere in
 the chain fails at startup with `must name its body type`, since there would be no schema to
 derive. Like the other spec-shape checks below, it runs when `include_openapi` is enabled, which
@@ -301,6 +306,7 @@ class WidgetResource(Resource, path="/widgets"):
 class App(BaseApp):
     async def wire(self) -> None:
         self.include_resource(WidgetResource())
+        self.include_openapi(title="Widgets", version="1.0")
 
 
 app = App()

@@ -880,26 +880,41 @@ def _struct_annotation(cls: type, method: str, name: str, ann: object) -> type[S
     return ann
 
 
-def _return_kind(ann: object) -> ReturnKind | None:  # noqa: C901
+def _wrapper_kind(cls: type) -> ReturnKind | None:
+    """The return kind ``cls`` is a response wrapper for, or None if it is not one.
+
+    Resolved by subclass, so a user's own subclass of a wrapper classifies as the wrapper does.
+    The wrappers are flat siblings (none is a subclass of another), so this order is arbitrary;
+    the abstract bases are deliberately absent, leaving a bare ``BaseResponse`` unrecognized."""
+    if issubclass(cls, StreamingResponse):
+        return "stream-bytes"
+    if issubclass(cls, NDJSONStreamingResponse):
+        return "stream-ndjson"
+    if issubclass(cls, SSEResponse):
+        return "stream-sse"
+    if issubclass(cls, NoContent):
+        return "no-content"
+    if issubclass(cls, Created):
+        return "created"
+    if issubclass(cls, Accepted):
+        return "accepted"
+    if issubclass(cls, BytesResponse):
+        return "bytes-response"
+    if issubclass(cls, JSONResponse):
+        return "json-response"
+    return None
+
+
+def _return_kind(ann: object) -> ReturnKind | None:
+    origin = get_origin(ann)
+    # A subscripted annotation is classified by its origin, so ``JSONResponse[Widget]`` lands on
+    # the same kind as the bare class does — and so does a user's own generic subclass,
+    # ``class Envelope[T: Struct](JSONResponse[T, CacheHeaders])`` used as ``Envelope[Widget]``.
+    # The type arguments themselves are read later, by the OpenAPI layer.
+    wrapper = ann if isinstance(ann, type) else origin
+    if isinstance(wrapper, type) and (kind := _wrapper_kind(wrapper)) is not None:
+        return kind
     if isinstance(ann, type):
-        if issubclass(ann, StreamingResponse):
-            return "stream-bytes"
-        if issubclass(ann, NDJSONStreamingResponse):
-            return "stream-ndjson"
-        if issubclass(ann, SSEResponse):
-            return "stream-sse"
-        # The wrappers are all siblings under BaseResponse, so this order is arbitrary —
-        # except that BaseResponse itself must come last, being every one of their bases.
-        if issubclass(ann, NoContent):
-            return "no-content"
-        if issubclass(ann, Created):
-            return "created"
-        if issubclass(ann, Accepted):
-            return "accepted"
-        if issubclass(ann, BytesResponse):
-            return "bytes-response"
-        if issubclass(ann, JSONResponse):
-            return "json-response"
         if issubclass(ann, BaseResponse):
             return None  # the base is abstract; return a concrete subclass
         if issubclass(ann, Struct):
@@ -907,23 +922,6 @@ def _return_kind(ann: object) -> ReturnKind | None:  # noqa: C901
         if ann is bytes:
             return "bytes"
     args = get_args(ann)
-    origin = get_origin(ann)
-    if origin is StreamingResponse:
-        return "stream-bytes"
-    if origin is NDJSONStreamingResponse:
-        return "stream-ndjson"
-    if origin is SSEResponse:
-        return "stream-sse"
-    if origin is NoContent:
-        return "no-content"
-    if origin is Created:
-        return "created"
-    if origin is Accepted:
-        return "accepted"
-    if origin is BytesResponse:
-        return "bytes-response"
-    if origin is JSONResponse:
-        return "json-response"
     if (
         origin is list
         and len(args) == 1
