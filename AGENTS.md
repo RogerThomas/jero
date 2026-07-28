@@ -301,12 +301,13 @@ These pull against each other constantly; keep all three in mind on every change
   OpenAPI keys one response there, so they merge into it (bodies as one `anyOf`, header
   maps unioned — response headers carry no `required`, so merging asserts nothing new),
   which makes `Widget | Other` and `JSONResponse[Widget | Other]` produce the identical
-  document. A shared status is rejected only when the merge can't be *said*: different
-  media types (OpenAPI reads those as `Accept` negotiation, not a handler's choice),
-  header Structs disagreeing on a wire name, or a member with no single Struct body (bare
-  wrapper / `list`). Those are document questions, so they fire under `include_openapi`,
-  like the streaming item-type checks — `BaseApp`/`BaseFactory` lifecycle, in-process
-  `BackgroundTasks`, reverse-routed
+  document. Members that encode differently share a status too — `content` is keyed by
+  media type, so they sit side by side (the OpenAPI shape for `Accept` negotiation, which
+  is what such a handler is doing). A shared status is rejected only when the merge can't
+  be *said*: header Structs disagreeing on a wire name, or a member with no single Struct
+  body (bare wrapper / `list`). Those are document questions, so they fire under
+  `include_openapi`, like the streaming item-type checks — `BaseApp`/`BaseFactory`
+  lifecycle, in-process `BackgroundTasks`, reverse-routed
   `Location` / `Link` responses, typed Problem Details errors, structurally registered
   custom exception handlers, `TestClient`, the test suite. **OpenAPI 3.1**:
   `include_openapi` serves `/openapi.json` + a Scalar `/docs` UI, derived from the

@@ -388,8 +388,8 @@ class SpotlightEndpoint(Endpoint, path="/spotlight"):
         return JSONResponse(json=Echo(body="widget"))
 
 
-class OrderingEndpoint(Endpoint, path="/ordering"):
-    """A union whose members overlap by inheritance (Created subclasses JSONResponse)."""
+class WrapperUnionEndpoint(Endpoint, path="/wrapper-union"):
+    """A union of two wrappers whose fixed statuses differ (Created's 201 vs the verb's 200)."""
 
     async def get(self, params: VisibilityParams) -> JSONResponse[Echo] | Created[Echo]:
         """Return the Created branch or the plain JSONResponse branch, on request."""
@@ -433,7 +433,7 @@ class UnionApp(BaseApp):
 
     async def wire(self) -> None:
         self.include_endpoint(SpotlightEndpoint())
-        self.include_endpoint(OrderingEndpoint())
+        self.include_endpoint(WrapperUnionEndpoint())
         self.include_endpoint(PlainStructEndpoint())
         self.include_endpoint(PlainListEndpoint())
         self.include_endpoint(PlainBytesEndpoint())
@@ -459,19 +459,23 @@ def test_union_returns_the_no_content_branch(union_client: TestClient) -> None:
     assert resp.content == b""
 
 
-def test_union_dispatch_tries_the_more_derived_member_first(union_client: TestClient) -> None:
-    """A Created instance is sent as 201, not matched to the union's plain JSONResponse
-    member first (both are isinstance-compatible; Created must win)."""
-    resp = union_client.get("/ordering", params={"visible": "no"})
-    assert resp.status_code == 201
-    assert resp.json() == {"body": "made"}
+def test_created_and_accepted_are_siblings_of_json_response() -> None:
+    """Never subclasses. As a subclass, ``-> JSONResponse[T]`` would statically accept a
+    returned ``Created`` and then send the *verb's* status — an object whose type says 201
+    answering 200, with no type checker able to see it. Sibling makes that a type error."""
+    assert not issubclass(Created, JSONResponse)
+    assert not issubclass(Accepted, JSONResponse)
 
 
-def test_union_dispatch_still_sends_the_base_member(union_client: TestClient) -> None:
-    """The plain JSONResponse branch still sends 200 when that's what's returned."""
-    resp = union_client.get("/ordering", params={"visible": "yes"})
-    assert resp.status_code == 200
-    assert resp.json() == {"body": "found"}
+def test_union_dispatches_each_wrapper_to_its_own_status(union_client: TestClient) -> None:
+    """Each wrapper member sends the status its own type fixes: Created 201, plain
+    JSONResponse the verb's 200."""
+    made = union_client.get("/wrapper-union", params={"visible": "no"})
+    assert made.status_code == 201
+    assert made.json() == {"body": "made"}
+    found = union_client.get("/wrapper-union", params={"visible": "yes"})
+    assert found.status_code == 200
+    assert found.json() == {"body": "found"}
 
 
 @pytest.mark.parametrize(

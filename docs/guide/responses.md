@@ -268,15 +268,27 @@ What you gain over hand-merging into `JSONResponse[Widget | Archived, BothHeader
 that the type checker now enforces the *pairing* — a `Widget` can't be returned with
 `RateHeaders`.
 
+Members that encode *differently* share a status too. `content` is keyed by media type, so
+they sit side by side rather than merging — which is the OpenAPI shape for content
+negotiation, and reads correctly when that's what the handler is doing:
+
+```python
+class AcceptHeaders(Struct):
+    accept: str = "application/json"
+
+
+async def get(self, headers: AcceptHeaders) -> bytes | JSONResponse[Widget]:
+    if headers.accept == "application/octet-stream":
+        return b"..."
+    return JSONResponse(json=widget)
+```
+
+The 200 documents both `application/octet-stream` and `application/json`.
+
 ### What's rejected
 
 - A **streaming** member. Its sender owns the response lifecycle (disconnect handling,
   mid-stream failure) and can't be chosen after the handler has already returned.
-- Members at one status with **different media types** — `bytes | JSONResponse[Widget]`.
-  OpenAPI *can* key `application/octet-stream` and `application/json` under one status,
-  but there it means content negotiation: the client picks via `Accept`. A union return
-  means the handler picked. Documenting the second as the first would state something the
-  operation doesn't do, so give them distinct statuses.
 - Members at one status that **disagree on a header** — two `H` Structs describing the
   same wire name with different types. One status, one header map, no way to say both.
 - Members at one status where one has **no single Struct body** to merge — a bare

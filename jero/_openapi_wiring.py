@@ -375,17 +375,17 @@ def _merged_body_model(bodies: Sequence[ResponseBody], operation_id: str) -> Uni
     """The ``A | B`` body for several members sharing one status *and* media type, so they
     document as one ``anyOf`` (with msgspec's ``discriminator`` when the members are
     tagged) — identical to what those Structs produce inside ``JSONResponse[A | B]``."""
-    if any(body.model is None or body.is_list for body in bodies):
-        # A bare/unparameterized wrapper documents an open `{}` body, and a list documents an
-        # array; neither composes into an anyOf that still says anything useful.
-        raise WiringError(
-            f"{operation_id}: union return members sharing a status and media type must "
-            f"each declare a Struct body to merge into one anyOf; a bare wrapper or a "
-            f"list[Struct] member cannot be combined — give it its own status",
-        )
-    merged = bodies[0].model
-    for body in bodies[1:]:
-        merged = merged | body.model  # pyrefly: ignore  # Struct operands build a UnionType
+    merged: type[Struct] | UnionType | None = None
+    for body in bodies:
+        if body.model is None or body.is_list:
+            # A bare/unparameterized wrapper documents an open `{}` body, and a list
+            # documents an array; neither composes into an anyOf that still says anything.
+            raise WiringError(
+                f"{operation_id}: union return members sharing a status and media type must "
+                f"each declare a Struct body to merge into one anyOf; a bare wrapper or a "
+                f"list[Struct] member cannot be combined — give it its own status",
+            )
+        merged = body.model if merged is None else merged | body.model
     return cast("UnionType", merged)
 
 

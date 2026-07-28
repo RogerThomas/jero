@@ -265,13 +265,27 @@ class NoContent[H: Struct | None = None](BaseResponse[H]):
 
 
 @dataclass(kw_only=True, slots=True)
-class Created[T: Struct, H: Struct | None = None](JSONResponse[T, H]):
-    """201 + a JSON body. Documents and sends 201 regardless of the verb's own default."""
+class Created[T: Struct, H: Struct | None = None](BaseResponse[H]):
+    """201 + a JSON body, whatever status the verb would otherwise default to.
+
+    Deliberately a *sibling* of :class:`JSONResponse` rather than a subclass — it promises
+    a status ``JSONResponse`` does not, so it is not substitutable for one. As a subclass,
+    ``-> JSONResponse[T]`` would statically accept a returned ``Created`` and then send the
+    verb's status: a 200 from an object whose type says 201, invisible to every type
+    checker. The repeated ``json`` field is the price of that being a type error instead.
+    """
+
+    json: T
 
 
 @dataclass(kw_only=True, slots=True)
-class Accepted[T: Struct, H: Struct | None = None](JSONResponse[T, H]):
-    """202 + a JSON body. Documents and sends 202 regardless of the verb's own default."""
+class Accepted[T: Struct, H: Struct | None = None](BaseResponse[H]):
+    """202 + a JSON body, whatever status the verb would otherwise default to.
+
+    A sibling of :class:`JSONResponse`, not a subclass, for the reason given on
+    :class:`Created`."""
+
+    json: T
 
 
 def _validate_meta(
@@ -870,7 +884,8 @@ def _return_kind(ann: object) -> ReturnKind | None:  # noqa: C901
             return "stream-ndjson"
         if issubclass(ann, SSEResponse):
             return "stream-sse"
-        # Created/Accepted subclass JSONResponse, so they must be checked first.
+        # The wrappers are all siblings under BaseResponse, so this order is arbitrary —
+        # except that BaseResponse itself must come last, being every one of their bases.
         if issubclass(ann, NoContent):
             return "no-content"
         if issubclass(ann, Created):
@@ -2203,11 +2218,13 @@ class _UnionResponseSender:
 def _union_sender(
     members: tuple[ResponseMember, ...], reverser: _Reverser, exceptions: _ExceptionHandlers
 ) -> _UnionResponseSender:
-    """Build the union sender's isinstance chain, most-derived-first: ``Created``/
-    ``Accepted`` subclass ``JSONResponse``, so a union of both must test them before the
-    base or a ``Created`` instance would send as a plain (incorrectly-200) ``JSONResponse``.
-    Single inheritance among the wrapper hierarchy makes ``__mro__`` length a correct,
-    hand-free ordering: a deeper subclass always has a longer mro."""
+    """Build the union sender's isinstance chain, most-derived-first.
+
+    jero's own wrappers are siblings, so nothing here depends on the order — but an
+    application may subclass one (``class WidgetResponse(JSONResponse[Widget])``) and union
+    it with its own base, and then the subclass has to be tested first or every instance
+    matches the base. ``__mro__`` length orders that correctly with nothing to hand-maintain:
+    a deeper subclass always has the longer mro. Wiring-time only; no per-request cost."""
     ordered = sorted(members, key=lambda member: len(member.response_type.__mro__), reverse=True)
     senders = tuple(
         (member.response_type, _result_sender(member.kind, member.status, reverser, exceptions))
