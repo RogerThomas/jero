@@ -291,8 +291,12 @@ These pull against each other constantly; keep all three in mind on every change
   (incl. typed `headers` and the opaque `raw_headers`), auth (required *and* optional),
   REST semantics,
   response kinds — generic `JSONResponse[T, H]` / `BytesResponse[H]` / streaming
-  `[T, H]` with typed response headers, `raw_headers`, and `status_code` overrides
-  — `BaseApp`/`BaseFactory` lifecycle, in-process `BackgroundTasks`, reverse-routed
+  `[T, H]` with typed response headers, `raw_headers`, and `status_code` overrides, plus
+  `NoContent[H]` / `Created[T, H]` / `Accepted[T, H]` (204/201/202 regardless of the
+  verb's own default; deliberately *siblings* of `JSONResponse`, never subclasses, so
+  returning one against a `-> JSONResponse[T]` annotation is a type error rather than a
+  silent wrong status) — `BaseApp`/`BaseFactory`
+  lifecycle, in-process `BackgroundTasks`, reverse-routed
   `Location` / `Link` responses, typed Problem Details errors, structurally registered
   custom exception handlers, `TestClient`, the test suite. **OpenAPI 3.1**:
   `include_openapi` serves `/openapi.json` + a Scalar `/docs` UI, derived from the
@@ -312,6 +316,24 @@ These pull against each other constantly; keep all three in mind on every change
   wire model). Class-level entries extend the operation's; same-status entries merge as
   a `oneOf`; precedence per status is derived < declared exceptions < explicit
   `ResponseSpec`; non-error entries are a wiring failure.
+- **Union returns (dynamic success status)**: a return annotation may be a union of
+  response types (`Widget | NoContent`), so one handler answers with different,
+  statically-typed success statuses, each documented as its own response entry. Any
+  non-streaming kind may be a member, plain `Struct`/`list[Struct]`/`bytes` included — a
+  member's status is the one it would have alone, so no wrapper is needed just to join a
+  union. Members **may** share a status, since OpenAPI keys one response there and they
+  merge into it: bodies of one media type as an `anyOf` (making `Widget | Other` and
+  `JSONResponse[Widget | Other]` produce the identical document), differing media types
+  side by side in `content` (the OpenAPI shape for `Accept` negotiation, which is what
+  such a handler is doing), header maps unioned (response headers carry no `required`, so
+  merging asserts nothing new). Members describing the *same* body dedupe rather than merge,
+  so `BytesResponse[A] | BytesResponse[B]` is one binary body with both header sets. A
+  shared status is rejected only where the merge can't be *said*: header Structs disagreeing
+  on a wire name, or bodies that differ at one media type and can't compose into an `anyOf`
+  (a `list[Struct]` array beside an object). Those are document questions, so like the streaming
+  item-type checks they fire under `include_openapi`. Dispatch is an `isinstance` chain
+  built at wiring, most-derived-first; a result matching no member goes through the
+  exception handlers as a logged 500.
 - **Performance (validated, 2026-07-16 run)**: fastest Python framework on all four
   scenarios (VUS=128, 1 dedicated core, granian+uvloop); Python order is jero →
   blacksheep → litestar → fastapi → flask everywhere. Authed write path

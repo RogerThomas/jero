@@ -6,20 +6,23 @@ returns, the docs-UI knobs, an apiKey scheme).
 """
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Generator
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, cast
+from typing import Annotated, Generic, TypeVar, cast
 
 import pytest
 from msgspec import Meta, Struct
 from openapi_spec_validator import validate
 
 from jero import (
+    Accepted,
     BaseApp,
     BaseHTTPError,
     BearerAuth,
+    BytesResponse,
+    Created,
     Endpoint,
     EndpointMeta,
     ErrorBodyAdapter,
@@ -28,6 +31,7 @@ from jero import (
     JSONResponse,
     ModelMeta,
     NDJSONStreamingResponse,
+    NoContent,
     NotFoundError,
     OperationMeta,
     ParameterizedHTTPError,
@@ -660,13 +664,47 @@ class PartialEndpoint(Endpoint, path="/partial"):
         return Item(id=json.name)
 
 
+class ExampledReturnEndpoint(Endpoint, path="/exampled-return"):
+    """Returns a fully-exampled model, singly and as a list."""
+
+    async def get(self) -> ExampledModel:
+        """Get one."""
+        return ExampledModel(name="Gadget", price_cents=1999)
+
+    async def post(self) -> list[ExampledModel]:
+        """Get many."""
+        return [ExampledModel(name="Gadget", price_cents=1999)]
+
+
 class ExamplesApp(BaseApp):
     """App exercising whole-model example composition."""
 
     async def wire(self) -> None:
         self.include_endpoint(ExampledEndpoint())
         self.include_endpoint(PartialEndpoint())
+        self.include_endpoint(ExampledReturnEndpoint())
         self.include_openapi(title="t", version="1")
+
+
+def test_response_model_examples_are_composed_at_the_media_type() -> None:
+    """A *response* body composes whole-object examples the same way a request body does —
+    and a list response's example is the whole array, not each object."""
+    with TestClient(ExamplesApp()) as client:
+        paths = client.get("/openapi.json").json()["paths"]["/exampled-return"]
+        single = paths["get"]["responses"]["200"]["content"]["application/json"]
+        assert single["examples"] == {
+            "example 1": {"value": {"name": "Gadget", "priceCents": 1999}},
+            "example 2": {"value": {"name": "Gizmo", "priceCents": 2999}},
+        }
+        listed = paths["post"]["responses"]["200"]["content"]["application/json"]
+        assert listed["examples"] == {
+            "example 1": {
+                "value": [
+                    {"name": "Gadget", "priceCents": 1999},
+                    {"name": "Gizmo", "priceCents": 2999},
+                ]
+            }
+        }
 
 
 def test_whole_model_examples_are_composed_at_the_media_type() -> None:
@@ -1573,6 +1611,1042 @@ def test_unsupported_item_type_fails_loud() -> None:
     DegradedStreamEndpoint.get.__annotations__["return"] = "NDJSONStreamingResponse[int]"
     with pytest.raises(RuntimeError, match="item type must be a Struct or a union of Structs"):
         TestClient(DegradedApp())
+
+
+# --- Dynamic success status: NoContent / Created / Accepted, and unions of them ---
+
+
+class NoContentOnlyEndpoint(Endpoint, path="/no-content-only"):
+    """Endpoint whose sole return is NoContent."""
+
+    async def get(self) -> NoContent:
+        """Return 204 with no body."""
+        return NoContent()
+
+
+class CreatedOnlyEndpoint(Endpoint, path="/created-only"):
+    """Endpoint whose sole return is Created (201, not the GET verb's 200 default)."""
+
+    async def get(self) -> Created[Item]:
+        """Return 201 with a JSON body."""
+        return Created(json=Item(id="id"))
+
+
+class DynamicStatusEndpoint(Endpoint, path="/dynamic"):
+    """Endpoint documenting a union of a plain JSONResponse and a NoContent."""
+
+    async def get(self) -> JSONResponse[Item] | NoContent:
+        """Return the item, or 204 when there's nothing to show."""
+        return NoContent()
+
+
+class PlainUnionEndpoint(Endpoint, path="/plain-union"):
+    """Endpoint documenting a union of a *bare* Struct and a NoContent."""
+
+    async def get(self) -> Item | NoContent:
+        """Return the item, or 204 when there's nothing to show."""
+        return NoContent()
+
+
+class PlainListUnionEndpoint(Endpoint, path="/plain-list-union"):
+    """Endpoint documenting a union of a bare list[Struct] and a NoContent."""
+
+    async def get(self) -> list[Item] | NoContent:
+        """Return the items, or 204 when there are none to show."""
+        return NoContent()
+
+
+class DynamicStatusApp(BaseApp):
+    """App wiring the dynamic-success-status endpoints."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(NoContentOnlyEndpoint())
+        self.include_endpoint(NoContentHeadersEndpoint())
+        self.include_endpoint(CreatedOnlyEndpoint())
+        self.include_endpoint(DynamicStatusEndpoint())
+        self.include_endpoint(PlainUnionEndpoint())
+        self.include_endpoint(PlainListUnionEndpoint())
+        self.include_openapi(title="dynamic", version="1")
+
+
+class NoContentHeaders(Struct):
+    """Typed *response* headers on a bodyless 204."""
+
+    x_trace_id: str
+
+
+class NoContentHeadersEndpoint(Endpoint, path="/no-content-headers"):
+    """A 204 carrying typed response headers."""
+
+    async def get(self) -> NoContent[NoContentHeaders]:
+        """Return 204 with a typed header."""
+        return NoContent(headers=NoContentHeaders(x_trace_id="trace"))
+
+
+def test_no_content_documents_typed_headers_without_a_body() -> None:
+    """``NoContent`` takes ``H`` in the *first* type-arg slot, unlike Created/Accepted which
+    take ``T`` then ``H`` — so its headers reach the document through a different branch of
+    ``_response_header_type`` and need their own assertion."""
+    with TestClient(DynamicStatusApp()) as client:
+        no_content = client.get("/openapi.json").json()["paths"]["/no-content-headers"]["get"][
+            "responses"
+        ]["204"]
+        assert no_content["headers"]["x-trace-id"]["schema"] == {"type": "string"}
+        assert "content" not in no_content
+
+
+def test_no_content_alone_documents_204_with_no_body() -> None:
+    """A sole NoContent return documents 204 with no content key at all."""
+    with TestClient(DynamicStatusApp()) as client:
+        responses = client.get("/openapi.json").json()["paths"]["/no-content-only"]["get"][
+            "responses"
+        ]
+        assert responses["204"]["description"] == "No content"
+        assert "content" not in responses["204"]
+
+
+def test_created_alone_documents_201_not_the_verb_default() -> None:
+    """A sole Created return documents 201, not GET's own 200 default."""
+    with TestClient(DynamicStatusApp()) as client:
+        responses = client.get("/openapi.json").json()["paths"]["/created-only"]["get"]["responses"]
+        assert "200" not in responses
+        assert responses["201"]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/Item"
+        }
+
+
+def test_union_return_documents_one_entry_per_member() -> None:
+    """A union return documents one response entry per member, at its own status."""
+    with TestClient(DynamicStatusApp()) as client:
+        document = client.get("/openapi.json").json()
+        validate(document)
+        responses = document["paths"]["/dynamic"]["get"]["responses"]
+        assert responses["200"]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/Item"
+        }
+        assert "content" not in responses["204"]
+
+
+def test_bare_struct_union_member_keeps_its_schema() -> None:
+    """A plain Struct member needs no wrapper and still documents its $ref at 200."""
+    with TestClient(DynamicStatusApp()) as client:
+        responses = client.get("/openapi.json").json()["paths"]["/plain-union"]["get"]["responses"]
+        assert responses["200"]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/Item"
+        }
+        assert "content" not in responses["204"]
+
+
+# --- A project's own named response types (bound subclasses of a wrapper) ---
+
+
+class NamedCreated(Created[Item]):
+    """An application naming its own response type by binding a wrapper's parameters."""
+
+
+class NamedAccepted(Accepted[Item]):
+    """The ``Accepted`` equivalent."""
+
+
+class NamedStream(NDJSONStreamingResponse[Item]):
+    """A named NDJSON stream type."""
+
+
+class NamedJSON(JSONResponse[Item, RateHeaders]):
+    """A named JSON response, binding both the body *and* the header type."""
+
+
+class NamedCreatedEndpoint(Endpoint, path="/named-created"):
+    """Returns a named subclass of ``Created``."""
+
+    async def get(self) -> NamedCreated:
+        """Get one."""
+        return NamedCreated(json=Item(id="id"))
+
+
+class NamedAcceptedEndpoint(Endpoint, path="/named-accepted"):
+    """Returns a named subclass of ``Accepted``."""
+
+    async def get(self) -> NamedAccepted:
+        """Get one."""
+        return NamedAccepted(json=Item(id="id"))
+
+
+class NamedStreamEndpoint(Endpoint, path="/named-stream"):
+    """Returns a named subclass of ``NDJSONStreamingResponse``."""
+
+    async def _chunks(self) -> AsyncIterator[Item]:
+        yield Item(id="id")
+
+    async def get(self) -> NamedStream:
+        """Stream items."""
+        return NamedStream(stream=self._chunks())
+
+
+class NamedJSONEndpoint(Endpoint, path="/named-json"):
+    """Returns a named subclass of ``JSONResponse`` carrying typed headers."""
+
+    async def get(self) -> NamedJSON:
+        """Get one."""
+        return NamedJSON(json=Item(id="id"), headers=RateHeaders(x_rate_limit=1))
+
+
+class NamedEnvelope[T: Struct](JSONResponse[T, RateHeaders]):
+    """A named response type that stays *generic*: it pins the headers and leaves the body
+    to the handler, so the annotation is written subscripted (``NamedEnvelope[Item]``)."""
+
+
+class NamedBodyless[H: Struct](NoContent[H]):
+    """The bodyless equivalent, generic in its header type."""
+
+
+class GenericSubclassEndpoint(Endpoint, path="/generic-subclass"):
+    """Returns a subscripted generic subclass of ``JSONResponse``."""
+
+    async def get(self) -> NamedEnvelope[Item]:
+        """Get one."""
+        return NamedEnvelope(json=Item(id="id"), headers=RateHeaders(x_rate_limit=1))
+
+
+class BranchParams(Struct):
+    """Selects which union branch ``GenericSubclassUnionEndpoint`` answers with."""
+
+    empty: bool = False
+
+
+class GenericSubclassUnionEndpoint(Endpoint, path="/generic-subclass-union"):
+    """Two subscripted generic subclasses as the members of a union return."""
+
+    async def get(self, params: BranchParams) -> NamedEnvelope[Item] | NamedBodyless[RateHeaders]:
+        """Get one, or nothing."""
+        if params.empty:
+            return NamedBodyless(headers=RateHeaders(x_rate_limit=2))
+        return NamedEnvelope(json=Item(id="id"), headers=RateHeaders(x_rate_limit=1))
+
+
+class NamedApp(BaseApp):
+    """App wiring the named-response-type endpoints."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(NamedCreatedEndpoint())
+        self.include_endpoint(NamedAcceptedEndpoint())
+        self.include_endpoint(NamedStreamEndpoint())
+        self.include_endpoint(NamedJSONEndpoint())
+        self.include_endpoint(GenericSubclassEndpoint())
+        self.include_endpoint(GenericSubclassUnionEndpoint())
+        self.include_openapi(title="named", version="1")
+
+
+@pytest.fixture(name="named_client")
+def _named_client() -> Generator[TestClient]:
+    with TestClient(NamedApp()) as client:
+        yield client
+
+
+@pytest.mark.parametrize(
+    ("path", "status"), [("/named-created", "201"), ("/named-accepted", "202")]
+)
+def test_named_wrapper_subclass_keeps_status_and_schema(
+    named_client: TestClient, path: str, status: str
+) -> None:
+    """A bound subclass carries its parameters on its *base*, not on itself, so the schema has
+    to be resolved through ``__orig_bases__`` — otherwise the body documents as an open ``{}``
+    and the annotation silently loses the model it does state. The fixed status survives too."""
+    responses = named_client.get("/openapi.json").json()["paths"][path]["get"]["responses"]
+    assert responses[status]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/Item"
+    }
+
+
+def test_named_wrapper_subclass_sends_its_fixed_status(named_client: TestClient) -> None:
+    """And at runtime the subclass answers with the status its base fixes."""
+    assert named_client.get("/named-created").status_code == 201
+    assert named_client.get("/named-accepted").status_code == 202
+
+
+def test_named_stream_subclass_keeps_its_item_schema(named_client: TestClient) -> None:
+    """The same resolution applies to a named streaming type."""
+    content = named_client.get("/openapi.json").json()["paths"]["/named-stream"]["get"][
+        "responses"
+    ]["200"]["content"]
+    assert content["application/x-ndjson"]["schema"] == {"$ref": "#/components/schemas/Item"}
+
+
+def test_named_json_subclass_keeps_body_and_header_types(named_client: TestClient) -> None:
+    """A subclass binding both parameters resolves both — the body model and the typed
+    response headers, which are read from a later argument slot."""
+    ok = named_client.get("/openapi.json").json()["paths"]["/named-json"]["get"]["responses"]["200"]
+    assert ok["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/Item"}
+    assert ok["headers"]["x-rate-limit"]["schema"] == {"type": "integer"}
+
+
+def test_generic_wrapper_subclass_is_a_recognized_return_type(named_client: TestClient) -> None:
+    """A named response type may stay generic and be written subscripted. The kind is resolved
+    from the *origin* by subclass, so ``NamedEnvelope[Item]`` classifies as the
+    ``JSONResponse`` it derives from rather than being rejected as an unknown return type,
+    and both parameters still resolve — the one the annotation supplies and the one the
+    subclass pins."""
+    ok = named_client.get("/openapi.json").json()["paths"]["/generic-subclass"]["get"]["responses"][
+        "200"
+    ]
+    assert ok["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/Item"}
+    assert ok["headers"]["x-rate-limit"]["schema"] == {"type": "integer"}
+    assert named_client.get("/generic-subclass").json() == {"id": "id"}
+
+
+def test_generic_wrapper_subclasses_work_as_union_members(named_client: TestClient) -> None:
+    """And as union members: each branch keeps the status its base fixes, documents what it
+    resolves, and dispatches at runtime on its origin."""
+    responses = named_client.get("/openapi.json").json()["paths"]["/generic-subclass-union"]["get"][
+        "responses"
+    ]
+    assert responses["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/Item"
+    }
+    assert responses["200"]["headers"]["x-rate-limit"]["schema"] == {"type": "integer"}
+    assert "content" not in responses["204"]
+    assert responses["204"]["headers"]["x-rate-limit"]["schema"] == {"type": "integer"}
+    body = named_client.get("/generic-subclass-union")
+    assert (body.status_code, body.json()) == (200, {"id": "id"})
+    empty = named_client.get("/generic-subclass-union", params={"empty": "true"})
+    assert (empty.status_code, empty.content) == (204, b"")
+    assert empty.headers["x-rate-limit"] == "2"
+
+
+# --- The other end of that resolution: a wrapper left unparameterized states no body type ---
+
+
+class BareSSEEndpoint(Endpoint, path="/bare-sse"):
+    """Returns an ``SSEResponse`` with no ``[T]`` — its ``T`` defaults to ``str``."""
+
+    async def _events(self) -> AsyncIterator[str]:
+        yield "tick"
+
+    async def get(self) -> SSEResponse:
+        """Get events."""
+        return SSEResponse(stream=self._events())
+
+
+class PagedJSON[H: Struct | None = None](JSONResponse[Item, H]):
+    """A named response type that binds only the *body*, leaving the header type open."""
+
+
+class PagedEndpoint(Endpoint, path="/paged"):
+    """Returns a partially bound subclass."""
+
+    async def get(self) -> PagedJSON:
+        """Get one."""
+        return PagedJSON(json=Item(id="id"))
+
+
+class BareApp(BaseApp):
+    """App wiring the unparameterized-wrapper endpoints."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(BareSSEEndpoint())
+        self.include_endpoint(PagedEndpoint())
+        self.include_openapi(title="bare", version="1")
+
+
+@pytest.fixture(name="bare_client")
+def _bare_client() -> Generator[TestClient]:
+    with TestClient(BareApp()) as client:
+        yield client
+
+
+def test_unparameterized_wrapper_documents_its_open_fallback(bare_client: TestClient) -> None:
+    """A wrapper whose ``T`` defaults, left unparameterized, documents that default rather than
+    failing to wire. Resolving a *named subclass* through its original bases must not reach for
+    a wrapper's own bases: those restate its type **parameters** rather than any caller's types,
+    and ``SSEResponse``'s is ``_StreamingResponse[T | ServerSentEvent[T], H]`` — a generic
+    *expression*, not a bare TypeVar. Reading it as bound would hand that expression to the
+    item-type check and reject a legal annotation at startup."""
+    ok = bare_client.get("/openapi.json").json()["paths"]["/bare-sse"]["get"]["responses"]["200"]
+    assert ok["content"]["text/event-stream"]["schema"] == {"type": "string"}
+
+
+def test_partially_bound_subclass_resolves_only_what_it_binds(bare_client: TestClient) -> None:
+    """Blanking unbound positions is per *position*, not per base: a subclass binding the body
+    and leaving the header type open still documents the body, and declares no headers."""
+    ok = bare_client.get("/openapi.json").json()["paths"]["/paged"]["get"]["responses"]["200"]
+    assert ok["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/Item"}
+    assert "headers" not in ok
+
+
+class UnparameterizedEndpoint(Endpoint, path="/unparameterized"):
+    """Returns a ``JSONResponse`` naming no body type at all — the annotation under test.
+
+    The suppression is the point, not a dodge: pyright independently rejects every spelling of
+    a bare wrapper whose ``T`` has no default, so the diagnostic *agrees* with the startup check
+    being asserted here. Written the way a user on a laxer checker would write it, so the
+    message they get is what the test pins."""
+
+    async def get(self) -> JSONResponse:  # pyright: ignore[reportMissingTypeArgument, reportUnknownParameterType]
+        """Get one."""
+        return JSONResponse(json=Item(id="id"))
+
+
+class UnparameterizedApp(BaseApp):
+    """App wiring the endpoint whose wrapper names no body type."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(UnparameterizedEndpoint())
+        self.include_openapi(title="unparameterized", version="1")
+
+
+class GenericBody[T: Struct](JSONResponse[T]):
+    """A project's response type left generic in its body."""
+
+
+class GenericBodyEndpoint(Endpoint, path="/generic-body"):
+    """Returns a response type whose body parameter nothing ever binds.
+
+    Suppressed for the same reason as :class:`UnparameterizedEndpoint`: the diagnostic agrees
+    with the check under test."""
+
+    async def get(self) -> GenericBody:  # pyright: ignore[reportMissingTypeArgument, reportUnknownParameterType]
+        """Get one."""
+        return GenericBody(json=Item(id="id"))
+
+
+class GenericBodyApp(BaseApp):
+    """App wiring the endpoint whose body parameter stays generic."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(GenericBodyEndpoint())
+        self.include_openapi(title="generic", version="1")
+
+
+def test_wrapper_naming_no_body_type_is_rejected() -> None:
+    """A wrapper whose ``T`` carries no default must be parameterized. Documenting an open
+    ``{}`` body instead would be the framework quietly dropping the one thing it exists to
+    derive from the annotation, so it fails loud at startup and names the fix. ``H`` defaults
+    and so stays optional, as does ``SSEResponse``'s ``T`` — those still wire bare."""
+    with pytest.raises(RuntimeError, match=r"JSONResponse must name its body type"):
+        TestClient(UnparameterizedApp())
+
+
+def test_body_parameter_left_generic_is_rejected() -> None:
+    """A parameter that survives resolution as a TypeVar states no more than an absent one, so
+    it takes the same loud rejection rather than being documented as whatever the TypeVar is."""
+    with pytest.raises(RuntimeError, match=r"JSONResponse must name its body type"):
+        TestClient(GenericBodyApp())
+
+
+# --- PEP 695 ``type`` aliases: the 3.13+ spelling for naming a response type ---
+
+
+type SimpleAlias = JSONResponse[Item, RateHeaders]
+type NestedAlias = SimpleAlias
+type ApiAlias[T: Struct] = JSONResponse[T, RateHeaders]
+type KindsAlias = Item | NoContent
+# A generic alias with a PEP 696 default on its *header* parameter, used partially applied.
+type DefaultedHeaders[T: Struct, H: Struct | None = RateHeaders] = JSONResponse[T, H]
+# Aliases standing in an argument position rather than naming the whole response.
+type HeaderAlias = RateHeaders
+type BodyAlias = Item
+
+
+class NestedAliasEndpoint(Endpoint, path="/nested-alias"):
+    """Returns an alias of an alias."""
+
+    async def get(self) -> NestedAlias:
+        """Get one."""
+        return JSONResponse(json=Item(id="id"), headers=RateHeaders(x_rate_limit=1))
+
+
+class GenericAliasEndpoint(Endpoint, path="/generic-alias"):
+    """Returns a subscripted *generic* alias."""
+
+    async def get(self) -> ApiAlias[Item]:
+        """Get one."""
+        return JSONResponse(json=Item(id="id"), headers=RateHeaders(x_rate_limit=1))
+
+
+class UnionAliasEndpoint(Endpoint, path="/union-alias"):
+    """Returns an alias whose value is itself a union of return kinds."""
+
+    async def get(self) -> KindsAlias:
+        """Get one, or nothing."""
+        return NoContent()
+
+
+class DefaultedHeadersEndpoint(Endpoint, path="/defaulted-headers"):
+    """Returns a partially applied generic alias whose header parameter has a default."""
+
+    async def get(self) -> DefaultedHeaders[Item]:
+        """Get one."""
+        return JSONResponse(json=Item(id="id"), headers=RateHeaders(x_rate_limit=1))
+
+
+class ArgumentAliasEndpoint(Endpoint, path="/argument-alias"):
+    """Returns a wrapper whose body *and* header arguments are both aliases."""
+
+    async def get(self) -> JSONResponse[BodyAlias, HeaderAlias]:
+        """Get one."""
+        return JSONResponse(json=Item(id="id"), headers=RateHeaders(x_rate_limit=1))
+
+
+class AliasMemberEndpoint(Endpoint, path="/alias-member"):
+    """Returns a union whose first member is an alias."""
+
+    async def get(self) -> SimpleAlias | NoContent:
+        """Get one, or nothing."""
+        return NoContent()
+
+
+class AliasApp(BaseApp):
+    """App wiring the ``type``-alias return annotations."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(NestedAliasEndpoint())
+        self.include_endpoint(GenericAliasEndpoint())
+        self.include_endpoint(UnionAliasEndpoint())
+        self.include_endpoint(DefaultedHeadersEndpoint())
+        self.include_endpoint(ArgumentAliasEndpoint())
+        self.include_endpoint(AliasMemberEndpoint())
+        self.include_openapi(title="alias", version="1")
+
+
+@pytest.fixture(name="alias_client")
+def _alias_client() -> Generator[TestClient]:
+    with TestClient(AliasApp()) as client:
+        yield client
+
+
+@pytest.mark.parametrize(
+    "path", ["/nested-alias", "/generic-alias", "/defaulted-headers", "/argument-alias"]
+)
+def test_type_alias_resolves_to_what_it_aliases(alias_client: TestClient, path: str) -> None:
+    """``type WidgetResponse = JSONResponse[Widget]`` is the spelling 3.13+ recommends for naming
+    a response type, so it has to resolve rather than read as an unrecognized object. Nested
+    aliases resolve through, and a *generic* alias substitutes its arguments into the aliased
+    expression — both the body and the header type survive.
+
+    ``/defaulted-headers`` is partially applied, so ``H`` comes from its PEP 696 default: a
+    parameter's default is part of what the annotation states, and reading only the supplied
+    positions would drop the header type *silently*, since an absent one documents as absent.
+    ``/argument-alias`` puts aliases in the argument positions rather than over the whole
+    response, which resolve on the same pass."""
+    ok = alias_client.get("/openapi.json").json()["paths"][path]["get"]["responses"]["200"]
+    assert ok["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/Item"}
+    assert ok["headers"]["x-rate-limit"]["schema"] == {"type": "integer"}
+
+
+@pytest.mark.parametrize("path", ["/union-alias", "/alias-member"])
+def test_type_alias_works_across_the_union_boundary(alias_client: TestClient, path: str) -> None:
+    """An alias resolves whether it *is* the union (``type Kinds = Item | NoContent``) or sits
+    inside one (``SimpleAlias | NoContent``) — the second needs unwrapping per member, since the
+    union is split before any member is classified."""
+    responses = alias_client.get("/openapi.json").json()["paths"][path]["get"]["responses"]
+    assert "application/json" in responses["200"]["content"]
+    assert "content" not in responses["204"]
+
+
+def test_type_alias_dispatches_at_runtime(alias_client: TestClient) -> None:
+    """And the resolved kinds drive dispatch, so the alias member answers with its own status."""
+    assert alias_client.get("/alias-member").status_code == 204
+    assert alias_client.get("/nested-alias").status_code == 200
+
+
+# --- An alias that resolves to a union, nested inside another union ---
+
+
+class StreamRow(Struct, tag=True):
+    """One arm of an aliased union, tagged so msgspec can discriminate it."""
+
+    a: int
+
+
+class StreamFooter(Struct, tag=True):
+    """The other arm."""
+
+    b: int
+
+
+type PairAlias = StreamRow | NoContent
+type RowPairAlias = StreamRow | StreamFooter
+
+
+class NestedUnionAliasEndpoint(Endpoint, path="/nested-union-alias"):
+    """Returns an alias-that-is-a-union as one member of a wider union."""
+
+    async def post(self) -> PairAlias | Created[StreamFooter]:
+        """Create one, or answer with an existing one, or nothing."""
+        return NoContent()
+
+
+class StreamItemAliasEndpoint(Endpoint, path="/stream-item-alias"):
+    """Streams an aliased item union."""
+
+    async def _rows(self) -> AsyncIterator[StreamRow | StreamFooter]:
+        yield StreamRow(a=1)
+        yield StreamFooter(b=2)
+
+    async def get(self) -> NDJSONStreamingResponse[RowPairAlias]:
+        """Stream them."""
+        return NDJSONStreamingResponse(stream=self._rows())
+
+
+class NestedUnionAliasApp(BaseApp):
+    """App wiring the nested-union-alias endpoints."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(NestedUnionAliasEndpoint())
+        self.include_endpoint(StreamItemAliasEndpoint())
+        self.include_openapi(title="nested-union", version="1")
+
+
+@pytest.fixture(name="nested_union_client")
+def _nested_union_client() -> Generator[TestClient]:
+    with TestClient(NestedUnionAliasApp()) as client:
+        yield client
+
+
+def test_alias_resolving_to_a_union_flattens_into_the_outer_union(
+    nested_union_client: TestClient,
+) -> None:
+    """Python flattens ``A | (B | C)`` as it builds the union, but not when the inner union hides
+    behind an alias — it stays one member. Resolving it has to splice its members in, or the
+    whole union reads as a single unrecognized return type."""
+    responses = nested_union_client.get("/openapi.json").json()["paths"]["/nested-union-alias"][
+        "post"
+    ]["responses"]
+    assert {"200", "201", "204"} <= set(responses)
+    assert nested_union_client.post("/nested-union-alias").status_code == 204
+
+
+def test_alias_in_a_streaming_item_position_resolves(nested_union_client: TestClient) -> None:
+    """An alias naming the streamed *item* union resolves too, rather than failing the item-type
+    check with a message that contradicts itself by naming the alias as the offending type."""
+    content = nested_union_client.get("/openapi.json").json()["paths"]["/stream-item-alias"]["get"][
+        "responses"
+    ]["200"]["content"]
+    assert content["application/x-ndjson"]["schema"]["anyOf"] == [
+        {"$ref": "#/components/schemas/StreamRow"},
+        {"$ref": "#/components/schemas/StreamFooter"},
+    ]
+
+
+# --- Resolution through an *intermediate* generic, where positions can shift ---
+
+
+class PageHeaders(Struct):
+    """A second response-header Struct, bound by an intermediate generic rather than by the
+    annotation."""
+
+    x_page: int
+
+
+class ApiResponse[T: Struct](JSONResponse[T, PageHeaders]):
+    """A house response type: generic in the body, with the header type pinned once."""
+
+
+class WidgetApiResponse(ApiResponse[Item]):
+    """The house type bound to a concrete body."""
+
+
+class RateLimitedPage(PagedJSON[RateHeaders]):
+    """A named subclass binding the ``H`` that ``PagedJSON`` left open."""
+
+
+class DefaultedJSON[T: Struct = Item, H: Struct | None = None](JSONResponse[T, H]):
+    """An intermediate generic whose body parameter carries a default."""
+
+
+class Primary(Struct, tag=True):
+    """The bound arm of an intermediate's union body (tagged, as msgspec requires of a
+    multi-Struct union)."""
+
+    id: str
+
+
+class Fallback(Struct, tag=True):
+    """The pinned arm of an intermediate's union body."""
+
+    reason: str
+
+
+class OrFallback[T: Struct](JSONResponse[T | Fallback]):
+    """An intermediate generic that binds its wrapper's body to a *union* mentioning ``T``."""
+
+
+class ItemOrFallback(OrFallback[Primary]):
+    """The union-bodied intermediate, bound."""
+
+
+class HouseEndpoint(Endpoint, path="/house"):
+    """Returns the house response type, whose header type is bound one level up."""
+
+    async def get(self) -> WidgetApiResponse:
+        """Get one."""
+        return WidgetApiResponse(json=Item(id="id"), headers=PageHeaders(x_page=1))
+
+
+class RateLimitedPageEndpoint(Endpoint, path="/rate-limited-page"):
+    """Returns a subclass that binds the header parameter an intermediate left open."""
+
+    async def get(self) -> RateLimitedPage:
+        """Get one."""
+        return RateLimitedPage(json=Item(id="id"), headers=RateHeaders(x_rate_limit=1))
+
+
+class DefaultedEndpoint(Endpoint, path="/defaulted"):
+    """Returns an unparameterized subclass whose body parameter defaults."""
+
+    async def get(self) -> DefaultedJSON:
+        """Get one."""
+        return DefaultedJSON(json=Item(id="id"))
+
+
+class HeaderedCreatedEndpoint(Endpoint, path="/headered-created"):
+    """A 201 carrying typed response headers, both parameters given directly."""
+
+    async def post(self) -> Created[Item, RateHeaders]:
+        """Create one."""
+        return Created(json=Item(id="id"), headers=RateHeaders(x_rate_limit=1))
+
+
+class HeaderedAcceptedEndpoint(Endpoint, path="/headered-accepted"):
+    """A 202 carrying typed response headers."""
+
+    async def post(self) -> Accepted[Item, RateHeaders]:
+        """Accept one."""
+        return Accepted(json=Item(id="id"), headers=RateHeaders(x_rate_limit=1))
+
+
+_OldT = TypeVar("_OldT", bound=Struct)
+
+
+class OldStyleApiResponse(Generic[_OldT], JSONResponse[_OldT, PageHeaders]):  # noqa: UP046
+    """The pre-PEP-695 spelling of a house response type, whose parameters live on
+    ``__parameters__`` rather than ``__type_params__``.
+
+    The ``UP046`` suppression is the subject, not a dodge: ruff is telling us to modernize this
+    to type parameters, which is precisely the spelling this test must *not* use."""
+
+
+class OldStyleBound(OldStyleApiResponse[Item]):
+    """The pre-695 house type, bound."""
+
+
+class OldStyleEndpoint(Endpoint, path="/old-style"):
+    """Returns a subclass of a pre-695 generic intermediate."""
+
+    async def get(self) -> OldStyleBound:
+        """Get one."""
+        return OldStyleBound(json=Item(id="id"), headers=PageHeaders(x_page=1))
+
+
+class OrFallbackEndpoint(Endpoint, path="/or-fallback"):
+    """Returns an intermediate whose body is a union mentioning its own parameter."""
+
+    async def get(self) -> ItemOrFallback:
+        """Get one."""
+        return ItemOrFallback(json=Primary(id="id"))
+
+
+class IntermediateApp(BaseApp):
+    """App wiring the endpoints whose type arguments resolve through an intermediate class."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(OldStyleEndpoint())
+        self.include_endpoint(OrFallbackEndpoint())
+        self.include_endpoint(HouseEndpoint())
+        self.include_endpoint(RateLimitedPageEndpoint())
+        self.include_endpoint(DefaultedEndpoint())
+        self.include_endpoint(HeaderedCreatedEndpoint())
+        self.include_endpoint(HeaderedAcceptedEndpoint())
+        self.include_openapi(title="intermediate", version="1")
+
+
+@pytest.fixture(name="intermediate_client")
+def _intermediate_client() -> Generator[TestClient]:
+    with TestClient(IntermediateApp()) as client:
+        yield client
+
+
+def test_intermediate_generic_keeps_the_header_type_it_pins(
+    intermediate_client: TestClient,
+) -> None:
+    """``class ApiResponse[T](JSONResponse[T, PageHeaders])`` binds ``H`` one level above the
+    annotation. Reading the nearest base's arguments as if they were the wrapper's own would
+    yield ``(Item,)`` — body right, header type silently dropped from the document while still
+    being sent on the wire. Each level's bindings have to substitute into the next."""
+    ok = intermediate_client.get("/openapi.json").json()["paths"]["/house"]["get"]["responses"][
+        "200"
+    ]
+    assert ok["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/Item"}
+    assert ok["headers"]["x-page"]["schema"] == {"type": "integer"}
+
+
+def test_intermediate_generic_does_not_shift_argument_positions(
+    intermediate_client: TestClient,
+) -> None:
+    """``PagedJSON[H]`` binds ``T`` and leaves ``H`` open, so a subclass supplying ``H`` supplies
+    it at *position 0* of ``PagedJSON``. Taking that tuple for the wrapper's ``(T, H)`` would
+    document the *header* Struct as the response body — the worst outcome available, since the
+    wire keeps sending the real body and nothing surfaces the disagreement."""
+    ok = intermediate_client.get("/openapi.json").json()["paths"]["/rate-limited-page"]["get"][
+        "responses"
+    ]["200"]
+    assert ok["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/Item"}
+    assert ok["headers"]["x-rate-limit"]["schema"] == {"type": "integer"}
+
+
+def test_pre_695_generic_intermediate_resolves(intermediate_client: TestClient) -> None:
+    """``class Api(Generic[T], JSONResponse[T, H])`` is still legal Python and type-checks, but
+    leaves ``__type_params__`` empty — its parameters live on ``__parameters__``. Reading only the
+    modern attribute would see the class as binding nothing and reject an annotation that does
+    state its types."""
+    ok = intermediate_client.get("/openapi.json").json()["paths"]["/old-style"]["get"]["responses"][
+        "200"
+    ]
+    assert ok["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/Item"}
+    assert ok["headers"]["x-page"]["schema"] == {"type": "integer"}
+
+
+def test_intermediate_generic_substitutes_into_a_union_body(
+    intermediate_client: TestClient,
+) -> None:
+    """Substitution has to reach *inside* a type expression, not just replace a bare parameter:
+    ``JSONResponse[T | Fallback]`` under ``{T: Item}`` is ``Item | Fallback``, which documents as
+    an ``anyOf``. Leaving the union alone would strand the TypeVar and reject a legal type."""
+    ok = intermediate_client.get("/openapi.json").json()["paths"]["/or-fallback"]["get"][
+        "responses"
+    ]["200"]
+    assert ok["content"]["application/json"]["schema"]["anyOf"] == [
+        {"$ref": "#/components/schemas/Primary"},
+        {"$ref": "#/components/schemas/Fallback"},
+    ]
+
+
+def test_defaulted_parameter_resolves_to_its_default(intermediate_client: TestClient) -> None:
+    """A parameter left off resolves to its declared default, so the body is documented rather
+    than treated as unstated. Skipping the loud check without also resolving the default would
+    fall through to the bodyless branch and document JSON as ``format: binary``."""
+    ok = intermediate_client.get("/openapi.json").json()["paths"]["/defaulted"]["get"]["responses"][
+        "200"
+    ]
+    assert ok["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/Item"}
+
+
+@pytest.mark.parametrize(
+    ("path", "status"), [("/headered-created", "201"), ("/headered-accepted", "202")]
+)
+def test_fixed_status_wrappers_document_their_typed_headers(
+    intermediate_client: TestClient, path: str, status: str
+) -> None:
+    """``Created``/``Accepted`` take ``T`` then ``H`` like ``JSONResponse``, so ``H`` is read from
+    the second position. Dropping either kind from that branch loses the headers silently."""
+    ok = intermediate_client.get("/openapi.json").json()["paths"][path]["post"]["responses"][status]
+    assert ok["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/Item"}
+    assert ok["headers"]["x-rate-limit"]["schema"] == {"type": "integer"}
+
+
+# --- Several union members at one status merge into the single response OpenAPI keys there
+
+
+class Tagged(Struct, tag=True):
+    """A tagged member of a shared-status body union."""
+
+    id: str
+
+
+class OtherTagged(Struct, tag=True):
+    """The second tagged member of a shared-status body union."""
+
+    code: int
+
+
+class CacheHeaders(Struct):
+    """Typed headers carried by one branch of a shared-status union. The other branch
+    reuses ``RateHeaders`` above — disjoint wire names, so the two maps merge."""
+
+    x_cache: str
+
+
+class ClashingHeaders(Struct):
+    """Headers that describe the same wire name as CacheHeaders with a different type."""
+
+    x_cache: int
+
+
+class MergedWrapperEndpoint(Endpoint, path="/merged"):
+    """Two wrapped members at 200, each with its own body and typed headers."""
+
+    async def get(
+        self,
+    ) -> JSONResponse[Tagged, CacheHeaders] | JSONResponse[OtherTagged, RateHeaders]:
+        """Return either branch; the document merges them into one 200."""
+        return JSONResponse(json=Tagged(id="id"), headers=CacheHeaders(x_cache="hit"))
+
+
+class MergedWrapperApp(BaseApp):
+    """App wiring the mergeable shared-status union."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(MergedWrapperEndpoint())
+        self.include_openapi(title="merged", version="1")
+
+
+def test_shared_status_wrappers_merge_bodies_and_headers() -> None:
+    """Two wrappers at one status document as one response: an anyOf body and the union of
+    their header maps (OpenAPI emits response headers without `required`, so nothing that
+    a single header Struct asserted is lost)."""
+    with TestClient(MergedWrapperApp()) as client:
+        document = client.get("/openapi.json").json()
+        validate(document)
+        ok = document["paths"]["/merged"]["get"]["responses"]["200"]
+        assert ok["content"]["application/json"]["schema"]["anyOf"] == [
+            {"$ref": "#/components/schemas/Tagged"},
+            {"$ref": "#/components/schemas/OtherTagged"},
+        ]
+        assert ok["headers"]["x-cache"]["schema"] == {"type": "string"}
+        assert ok["headers"]["x-rate-limit"]["schema"] == {"type": "integer"}
+
+
+class MergedBytesEndpoint(Endpoint, path="/merged-bytes"):
+    """Two bytes members at 200, differing only in their typed headers."""
+
+    async def get(
+        self,
+    ) -> BytesResponse[CacheHeaders] | BytesResponse[RateHeaders]:
+        """Return raw bytes with either header set."""
+        return BytesResponse(content=b"blob", headers=CacheHeaders(x_cache="hit"))
+
+
+class MergedBytesApp(BaseApp):
+    """App wiring the two-bytes-members union."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(MergedBytesEndpoint())
+        self.include_openapi(title="merged-bytes", version="1")
+
+
+def test_members_describing_the_same_body_dedupe_rather_than_merge() -> None:
+    """Two ``BytesResponse`` members render the identical binary schema, so the status gets
+    one body and both header sets — there is nothing to build an ``anyOf`` from, and needing
+    one would wrongly reject a response OpenAPI can state plainly. The JSON equivalent
+    (``JSONResponse[W, A] | JSONResponse[W, B]``) already worked because ``W | W`` collapses,
+    so this keeps the two media types consistent."""
+    with TestClient(MergedBytesApp()) as client:
+        document = client.get("/openapi.json").json()
+        validate(document)
+        ok = document["paths"]["/merged-bytes"]["get"]["responses"]["200"]
+        assert ok["content"] == {
+            "application/octet-stream": {"schema": {"type": "string", "format": "binary"}}
+        }
+        assert sorted(ok["headers"]) == ["x-cache", "x-rate-limit"]
+
+
+class ClashingHeaderEndpoint(Endpoint, path="/clashing"):
+    """Two members at 200 describing the same header wire name with different types."""
+
+    async def get(
+        self,
+    ) -> JSONResponse[Tagged, CacheHeaders] | JSONResponse[OtherTagged, ClashingHeaders]:
+        """Return either branch; the header maps cannot both be documented."""
+        return JSONResponse(json=Tagged(id="id"), headers=CacheHeaders(x_cache="hit"))
+
+
+class ClashingHeaderApp(BaseApp):
+    """App wiring the conflicting-header union."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(ClashingHeaderEndpoint())
+        self.include_openapi(title="clashing", version="1")
+
+
+def test_shared_status_members_disagreeing_on_a_header_fail_loud() -> None:
+    """One status has one header map, so two members cannot describe a name differently."""
+    with pytest.raises(RuntimeError, match="disagree on response header 'x-cache'"):
+        TestClient(ClashingHeaderApp())
+
+
+class AcceptHeaders(Struct):
+    """The request's Accept header, so the handler can negotiate on it."""
+
+    accept: str = "application/json"
+
+
+class MixedMediaEndpoint(Endpoint, path="/mixed-media"):
+    """Content negotiation: one status, two media types, chosen by the caller's Accept."""
+
+    async def get(self, headers: AcceptHeaders) -> bytes | JSONResponse[Tagged]:
+        """Return raw bytes or JSON, whichever the caller asked for."""
+        if headers.accept == "application/octet-stream":
+            return b"blob"
+        return JSONResponse(json=Tagged(id="id"))
+
+
+class MixedMediaApp(BaseApp):
+    """App wiring the mixed-media-type union."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(MixedMediaEndpoint())
+        self.include_openapi(title="mixed", version="1")
+
+
+def test_shared_status_members_document_both_media_types() -> None:
+    """``content`` is keyed by media type, so two members encoding differently sit side by
+    side under one status — the OpenAPI shape for a handler negotiating on Accept."""
+    with TestClient(MixedMediaApp()) as client:
+        document = client.get("/openapi.json").json()
+        validate(document)
+        content = document["paths"]["/mixed-media"]["get"]["responses"]["200"]["content"]
+        assert content["application/json"]["schema"] == {"$ref": "#/components/schemas/Tagged"}
+        assert content["application/octet-stream"]["schema"] == {
+            "type": "string",
+            "format": "binary",
+        }
+
+
+def test_shared_status_media_types_are_selected_by_accept() -> None:
+    """And at runtime the handler really does answer in the negotiated format."""
+    with TestClient(MixedMediaApp()) as client:
+        as_json = client.get("/mixed-media", headers={"accept": "application/json"})
+        assert as_json.headers["content-type"] == "application/json"
+        assert as_json.json() == {"type": "Tagged", "id": "id"}
+        as_bytes = client.get("/mixed-media", headers={"accept": "application/octet-stream"})
+        assert as_bytes.headers["content-type"] == "application/octet-stream"
+        assert as_bytes.content == b"blob"
+
+
+class UnmergeableEndpoint(Endpoint, path="/unmergeable"):
+    """Two members at 200 and application/json, one of them an array."""
+
+    async def get(self) -> list[Tagged] | OtherTagged:
+        """An array and an object cannot compose into a useful anyOf."""
+        return OtherTagged(code=1)
+
+
+class UnmergeableApp(BaseApp):
+    """App wiring the unmergeable shared-status union."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(UnmergeableEndpoint())
+        self.include_openapi(title="unmergeable", version="1")
+
+
+def test_shared_status_member_without_a_struct_body_fails_loud() -> None:
+    """Members sharing a status *and* media type merge into one anyOf, so each needs a
+    single Struct body; a list (an array) has nothing to contribute to one."""
+    with pytest.raises(RuntimeError, match="must each declare a Struct body"):
+        TestClient(UnmergeableApp())
+
+
+def test_bare_list_union_member_documents_an_array() -> None:
+    """A plain list[Struct] member documents an array of $refs at 200."""
+    with TestClient(DynamicStatusApp()) as client:
+        responses = client.get("/openapi.json").json()["paths"]["/plain-list-union"]["get"][
+            "responses"
+        ]
+        assert responses["200"]["content"]["application/json"]["schema"] == {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/Item"},
+        }
+        assert "content" not in responses["204"]
 
 
 # --- Declared exceptions (error classes -> response entries) ---
