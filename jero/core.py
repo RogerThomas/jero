@@ -1719,25 +1719,6 @@ class _NoContentSender:
         await send({"type": "http.response.body", "body": b""})
 
 
-@dataclass(slots=True)
-class _UnionResponseSender:
-    """Dispatches a union return by the runtime type of the result: the member senders
-    are pre-resolved at wiring, most-derived-first (``Created``/``Accepted`` subclass
-    ``JSONResponse``, so they must be tried before it — see ``_union_sender``)."""
-
-    _senders: tuple[tuple[type, "_Sender"], ...]
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send, result: object) -> None:
-        for response_type, sender in self._senders:
-            if isinstance(result, response_type):
-                await sender(scope, receive, send, result)
-                return
-        raise WiringError(
-            f"handler returned {type(result).__name__}, which matches none of its "
-            f"declared union return types",
-        )
-
-
 class _ExceptionHandlers:
     """App-local custom exception registry and response dispatcher."""
 
@@ -2189,6 +2170,36 @@ def _result_sender(
     return _JSONSender(status)
 
 
+@dataclass(slots=True)
+class _UnionResponseSender:
+    """Dispatches a union return by the runtime type of the result: the member senders
+    are pre-resolved at wiring, most-derived-first (``Created``/``Accepted`` subclass
+    ``JSONResponse``, so they must be tried before it — see ``_union_sender``).
+
+    A result matching no member means the handler returned something its own annotation
+    forbids. Nothing has been sent at that point, so — unlike a mid-stream failure — it
+    can still become a proper response: it goes through the app's exception handlers,
+    which log the fault and answer 500, rather than escaping into the server.
+    """
+
+    _senders: tuple[tuple[type, _Sender], ...]
+    _exceptions: _ExceptionHandlers
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send, result: object) -> None:
+        for response_type, sender in self._senders:
+            if isinstance(result, response_type):
+                await sender(scope, receive, send, result)
+                return
+        await self._exceptions.send(
+            scope,
+            send,
+            TypeError(
+                f"handler returned {type(result).__name__}, which matches none of its "
+                f"declared union return types",
+            ),
+        )
+
+
 def _union_sender(
     members: tuple[ResponseMember, ...], reverser: _Reverser, exceptions: _ExceptionHandlers
 ) -> _UnionResponseSender:
@@ -2202,7 +2213,7 @@ def _union_sender(
         (member.response_type, _result_sender(member.kind, member.status, reverser, exceptions))
         for member in ordered
     )
-    return _UnionResponseSender(senders)
+    return _UnionResponseSender(senders, exceptions)
 
 
 class _Route:

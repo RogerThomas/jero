@@ -1,7 +1,9 @@
 """Response kinds: bytes in, BytesResponse / JSONResponse out, camelCase."""
 
+import logging
 from collections.abc import Generator
 from enum import Enum
+from typing import cast
 from uuid import UUID
 
 import pytest
@@ -500,3 +502,65 @@ def test_plain_return_unions_still_take_the_no_content_branch(
     assert resp.status_code == 204
     assert resp.content == b""
     assert "content-type" not in resp.headers
+
+
+# --- Typed headers on a 204, and the unsubscripted wrappers ---
+
+
+class TraceHeaders(Struct):
+    """Typed headers carried by a bodyless 204."""
+
+    x_trace_id: str
+
+
+class NoContentHeadersEndpoint(Endpoint, path="/no-content-headers"):
+    """A 204 that still carries typed headers — RFC 9110 allows it."""
+
+    async def get(self) -> NoContent[TraceHeaders]:
+        """Return 204 with a typed header and no body."""
+        return NoContent(headers=TraceHeaders(x_trace_id="trace"))
+
+
+class LyingUnionEndpoint(Endpoint, path="/lying-union"):
+    """A handler that returns something its own union annotation does not allow."""
+
+    async def get(self) -> Echo | NoContent:
+        """Violate the declared return type, as a mistyped handler would."""
+        return cast("Echo", object())
+
+
+class HeaderedNoContentApp(BaseApp):
+    """App wiring the typed-header 204 and the contract-violating union."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(NoContentHeadersEndpoint())
+        self.include_endpoint(LyingUnionEndpoint())
+
+
+@pytest.fixture(name="unsubscripted_client")
+def _unsubscripted_client() -> Generator[TestClient]:
+    with TestClient(HeaderedNoContentApp()) as client:
+        yield client
+
+
+def test_no_content_carries_typed_headers(unsubscripted_client: TestClient) -> None:
+    """A 204 emits its typed headers while still sending no body and no content headers."""
+    resp = unsubscripted_client.get("/no-content-headers")
+    assert resp.status_code == 204
+    assert resp.headers["x-trace-id"] == "trace"
+    assert resp.content == b""
+    assert "content-type" not in resp.headers
+    assert "content-length" not in resp.headers
+
+
+def test_union_result_matching_no_member_is_an_error(
+    unsubscripted_client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A handler returning something outside its own union has no sender to dispatch to.
+    Nothing has been sent yet, so it becomes a proper 500 through the app's exception
+    handlers — logged for the operator, a clean Problem body for the client."""
+    with caplog.at_level(logging.ERROR, logger="jero"):
+        resp = unsubscripted_client.get("/lying-union")
+    assert resp.status_code == 500
+    assert resp.json()["type"] == "internal-server-error"
+    assert "matches none of its declared union return types" in caplog.text

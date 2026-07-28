@@ -44,6 +44,7 @@ from jero.openapi import (
     FormFieldSpec,
     OperationInput,
     ParamSpec,
+    ResponseBody,
     ResponseEntry,
     ResponseSpec,
     Tag,
@@ -370,22 +371,21 @@ def _success_entry(
     return ResponseEntry(status, description, "application/json", schema={})
 
 
-def _merged_body_model(entries: Sequence[ResponseEntry], operation_id: str) -> UnionType:
+def _merged_body_model(bodies: Sequence[ResponseBody], operation_id: str) -> UnionType:
     """The ``A | B`` body for several members sharing one status *and* media type, so they
     document as one ``anyOf`` (with msgspec's ``discriminator`` when the members are
     tagged) — identical to what those Structs produce inside ``JSONResponse[A | B]``."""
-    models = [entry.model for entry in entries]
-    if any(model is None or entry.is_list for model, entry in zip(models, entries, strict=True)):
+    if any(body.model is None or body.is_list for body in bodies):
         # A bare/unparameterized wrapper documents an open `{}` body, and a list documents an
         # array; neither composes into an anyOf that still says anything useful.
         raise WiringError(
-            f"{operation_id}: union return members sharing a status must each declare a "
-            f"Struct body to merge into one anyOf; a bare wrapper or a list[Struct] member "
-            f"cannot be combined — give it its own status",
+            f"{operation_id}: union return members sharing a status and media type must "
+            f"each declare a Struct body to merge into one anyOf; a bare wrapper or a "
+            f"list[Struct] member cannot be combined — give it its own status",
         )
-    merged = models[0]
-    for model in models[1:]:
-        merged = merged | model  # pyrefly: ignore  # Struct/union operands build a UnionType
+    merged = bodies[0].model
+    for body in bodies[1:]:
+        merged = merged | body.model  # pyrefly: ignore  # Struct operands build a UnionType
     return cast("UnionType", merged)
 
 
@@ -418,28 +418,26 @@ def _merge_status_group(
     entries: Sequence[ResponseEntry], status: int, operation_id: str
 ) -> ResponseEntry:
     """Several union members resolving to one status, as the single response OpenAPI keys
-    by that status: bodies of one media type merged into an ``anyOf``, header maps unioned.
-
-    Mixed media types are rejected. OpenAPI *can* hold them (``content`` is keyed by media
-    type), but there it means content negotiation — the client chooses via ``Accept`` —
-    whereas a union return means the handler chose. Documenting the second as the first
-    would state something the operation does not do.
+    by that status: header maps unioned, and bodies grouped by media type — several at one
+    media type merge into an ``anyOf``, while different media types sit side by side in
+    ``content`` (which is keyed by media type precisely so they can).
     """
-    media_types = {entry.content_type for entry in entries}
-    if len(media_types) > 1:
-        listed = ", ".join(sorted(str(media_type) for media_type in media_types))
-        raise WiringError(
-            f"{operation_id}: union return members sharing status {status} must share a "
-            f"media type, got {listed}; OpenAPI keys several media types under one status "
-            f"as content negotiation (the client picks via Accept), which is not what a "
-            f"union return does — give them distinct statuses",
-        )
-    return ResponseEntry(
+    by_media_type: dict[str, list[ResponseBody]] = {}
+    for entry in entries:
+        # A bodyless member (NoContent) contributes headers only; it has no media type.
+        for body in entry.bodies:
+            by_media_type.setdefault(body.content_type, []).append(body)
+    bodies = tuple(
+        group[0]
+        if len(group) == 1
+        else ResponseBody(media_type, model=_merged_body_model(group, operation_id))
+        for media_type, group in by_media_type.items()
+    )
+    return ResponseEntry.over_media_types(
         status,
         _STATUS_TEXT.get(status, "Successful response"),
-        entries[0].content_type,
-        model=_merged_body_model(entries, operation_id),
-        headers=_merged_header_types(entries, operation_id),
+        bodies,
+        _merged_header_types(entries, operation_id),
     )
 
 

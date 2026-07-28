@@ -14,6 +14,7 @@ no extra work here.
 """
 
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from types import UnionType
 from typing import Any, Literal, cast, get_args
 
@@ -235,6 +236,19 @@ class BodySpec:
 
 
 @dataclass(slots=True)
+class ResponseBody:
+    """One media type's body within a response: a ``model`` ($ref, or msgspec's ``anyOf``
+    for a union of Structs), a ``list`` of it, a ``one_of`` of several variants, or a
+    verbatim ``schema``."""
+
+    content_type: str
+    model: type[Struct] | UnionType | None = None
+    is_list: bool = False
+    schema: dict[str, Any] | None = None
+    one_of: tuple[type[Struct], ...] = ()
+
+
+@dataclass(slots=True)
 class ResponseEntry:
     """One documented response: a ``model`` ($ref — or, for a union of Structs, msgspec's
     ``anyOf`` with a ``discriminator`` when the members are tagged), a ``list`` of it, a
@@ -246,6 +260,10 @@ class ResponseEntry:
     contributing its own ``H`` (see ``_success_entries``). Every entry is emitted without
     ``required``, which OpenAPI reads as optional — so merging asserts nothing that a
     single Struct did not.
+
+    The body arguments describe *one* media type, which is what almost every response is.
+    ``content`` is keyed by media type though, so a status can carry several: build those
+    with :meth:`over_media_types`. Readers should use ``bodies``, which both paths fill.
     """
 
     status: int
@@ -256,6 +274,31 @@ class ResponseEntry:
     schema: dict[str, Any] | None = None
     headers: tuple[type[Struct], ...] = ()
     one_of: tuple[type[Struct], ...] = ()
+    # Every media type this response documents. Derived from the single-body arguments
+    # above, or replaced wholesale by over_media_types().
+    bodies: tuple["ResponseBody", ...] = dataclass_field(init=False, default=())
+
+    def __post_init__(self) -> None:
+        if self.content_type is not None:
+            self.bodies = (
+                ResponseBody(self.content_type, self.model, self.is_list, self.schema, self.one_of),
+            )
+
+    @classmethod
+    def over_media_types(
+        cls,
+        status: int,
+        description: str,
+        bodies: tuple["ResponseBody", ...],
+        headers: tuple[type[Struct], ...] = (),
+    ) -> "ResponseEntry":
+        """A response documenting several media types under one status — what a union
+        return whose members encode differently resolves to. OpenAPI reads a multi-media
+        response as content negotiation, which is what such a handler is doing when it
+        branches on ``Accept``."""
+        entry = cls(status, description, headers=headers)
+        entry.bodies = bodies
+        return entry
 
 
 @dataclass(slots=True)
@@ -287,18 +330,23 @@ def _ref_name(ref_schema: dict[str, Any]) -> str:
     return ref_schema["$ref"].rsplit("/", 1)[-1]
 
 
-def _response_payload_types(response: ResponseEntry) -> tuple[object, ...]:
-    """The types a response contributes to the schema pass: its ``one_of`` variants, or
-    its model — plus, when the model is a union, each member. ModelMeta
+def _body_payload_types(body: ResponseBody) -> tuple[object, ...]:
+    """The types one media type's body contributes to the schema pass: its ``one_of``
+    variants, or its model — plus, when the model is a union, each member. ModelMeta
     renames/descriptions are discovered per collected type, so a member reached only
     through a union must be collected itself."""
-    if response.one_of:
-        return response.one_of
-    if response.model is None:
+    if body.one_of:
+        return body.one_of
+    if body.model is None:
         return ()
-    if isinstance(response.model, UnionType):
-        return (response.model, *get_args(response.model))
-    return (response.model,)
+    if isinstance(body.model, UnionType):
+        return (body.model, *get_args(body.model))
+    return (body.model,)
+
+
+def _response_payload_types(response: ResponseEntry) -> tuple[object, ...]:
+    """Every type a response contributes to the schema pass, across all its media types."""
+    return tuple(payload for body in response.bodies for payload in _body_payload_types(body))
 
 
 def _collect_types(operations: tuple[OperationInput, ...]) -> list[object]:
@@ -620,27 +668,35 @@ def _response_headers(headers: tuple[type[Struct], ...], schemas: _Schemas) -> d
     return merged
 
 
+def _response_body(body: ResponseBody, schemas: _Schemas) -> dict[str, dict[str, Any]]:
+    """One media type's entry in a response's ``content`` map."""
+    examples = None
+    if body.schema is not None:
+        schema = body.schema
+    elif body.one_of:
+        # several declared errors share this status: alternatives, not an open union
+        schema = {"oneOf": [schemas.ref(variant) for variant in body.one_of]}
+    elif isinstance(body.model, UnionType):
+        # a union of Structs: msgspec's anyOf (+ discriminator when the members are tagged)
+        schema = schemas.schema_for(body.model)
+    elif body.model is not None:
+        schema = _array(schemas.ref(body.model)) if body.is_list else schemas.ref(body.model)
+        composed = schemas.model_examples(body.model)
+        if composed:
+            # a list response example is the whole array; a single response, each object
+            examples = _examples_map([composed] if body.is_list else composed)
+    else:
+        schema = _binary_schema()
+    return _content(body.content_type, schema, examples)
+
+
 def _response(entry: ResponseEntry, schemas: _Schemas) -> dict[str, Any]:
     response: dict[str, Any] = {"description": entry.description}
-    if entry.content_type is not None:
-        examples = None
-        if entry.schema is not None:
-            schema = entry.schema
-        elif entry.one_of:
-            # several declared errors share this status: alternatives, not an open union
-            schema = {"oneOf": [schemas.ref(variant) for variant in entry.one_of]}
-        elif isinstance(entry.model, UnionType):
-            # a union of Structs: msgspec's anyOf (+ discriminator when the members are tagged)
-            schema = schemas.schema_for(entry.model)
-        elif entry.model is not None:
-            schema = _array(schemas.ref(entry.model)) if entry.is_list else schemas.ref(entry.model)
-            composed = schemas.model_examples(entry.model)
-            if composed:
-                # a list response example is the whole array; a single response, each object
-                examples = _examples_map([composed] if entry.is_list else composed)
-        else:
-            schema = _binary_schema()
-        response["content"] = _content(entry.content_type, schema, examples)
+    content: dict[str, dict[str, Any]] = {}
+    for body in entry.bodies:
+        content |= _response_body(body, schemas)
+    if content:
+        response["content"] = content
     if entry.headers:
         response["headers"] = _response_headers(entry.headers, schemas)
     return response

@@ -662,13 +662,47 @@ class PartialEndpoint(Endpoint, path="/partial"):
         return Item(id=json.name)
 
 
+class ExampledReturnEndpoint(Endpoint, path="/exampled-return"):
+    """Returns a fully-exampled model, singly and as a list."""
+
+    async def get(self) -> ExampledModel:
+        """Get one."""
+        return ExampledModel(name="Gadget", price_cents=1999)
+
+    async def post(self) -> list[ExampledModel]:
+        """Get many."""
+        return [ExampledModel(name="Gadget", price_cents=1999)]
+
+
 class ExamplesApp(BaseApp):
     """App exercising whole-model example composition."""
 
     async def wire(self) -> None:
         self.include_endpoint(ExampledEndpoint())
         self.include_endpoint(PartialEndpoint())
+        self.include_endpoint(ExampledReturnEndpoint())
         self.include_openapi(title="t", version="1")
+
+
+def test_response_model_examples_are_composed_at_the_media_type() -> None:
+    """A *response* body composes whole-object examples the same way a request body does —
+    and a list response's example is the whole array, not each object."""
+    with TestClient(ExamplesApp()) as client:
+        paths = client.get("/openapi.json").json()["paths"]["/exampled-return"]
+        single = paths["get"]["responses"]["200"]["content"]["application/json"]
+        assert single["examples"] == {
+            "example 1": {"value": {"name": "Gadget", "priceCents": 1999}},
+            "example 2": {"value": {"name": "Gizmo", "priceCents": 2999}},
+        }
+        listed = paths["post"]["responses"]["200"]["content"]["application/json"]
+        assert listed["examples"] == {
+            "example 1": {
+                "value": [
+                    {"name": "Gadget", "priceCents": 1999},
+                    {"name": "Gizmo", "priceCents": 2999},
+                ]
+            }
+        }
 
 
 def test_whole_model_examples_are_composed_at_the_media_type() -> None:
@@ -1760,12 +1794,20 @@ def test_shared_status_members_disagreeing_on_a_header_fail_loud() -> None:
         TestClient(ClashingHeaderApp())
 
 
-class MixedMediaEndpoint(Endpoint, path="/mixed-media"):
-    """Two members at 200 whose bodies are different media types."""
+class AcceptHeaders(Struct):
+    """The request's Accept header, so the handler can negotiate on it."""
 
-    async def get(self) -> bytes | JSONResponse[Tagged]:
-        """Return raw bytes or JSON — representable in OpenAPI, but as negotiation."""
-        return b"blob"
+    accept: str = "application/json"
+
+
+class MixedMediaEndpoint(Endpoint, path="/mixed-media"):
+    """Content negotiation: one status, two media types, chosen by the caller's Accept."""
+
+    async def get(self, headers: AcceptHeaders) -> bytes | JSONResponse[Tagged]:
+        """Return raw bytes or JSON, whichever the caller asked for."""
+        if headers.accept == "application/octet-stream":
+            return b"blob"
+        return JSONResponse(json=Tagged(id="id"))
 
 
 class MixedMediaApp(BaseApp):
@@ -1776,11 +1818,52 @@ class MixedMediaApp(BaseApp):
         self.include_openapi(title="mixed", version="1")
 
 
-def test_shared_status_members_with_different_media_types_fail_loud() -> None:
-    """OpenAPI can key two media types under one status, but that means the *client* picks
-    via Accept — not what a union return does, so jero refuses to say it."""
-    with pytest.raises(RuntimeError, match="must share a media type"):
-        TestClient(MixedMediaApp())
+def test_shared_status_members_document_both_media_types() -> None:
+    """``content`` is keyed by media type, so two members encoding differently sit side by
+    side under one status — the OpenAPI shape for a handler negotiating on Accept."""
+    with TestClient(MixedMediaApp()) as client:
+        document = client.get("/openapi.json").json()
+        validate(document)
+        content = document["paths"]["/mixed-media"]["get"]["responses"]["200"]["content"]
+        assert content["application/json"]["schema"] == {"$ref": "#/components/schemas/Tagged"}
+        assert content["application/octet-stream"]["schema"] == {
+            "type": "string",
+            "format": "binary",
+        }
+
+
+def test_shared_status_media_types_are_selected_by_accept() -> None:
+    """And at runtime the handler really does answer in the negotiated format."""
+    with TestClient(MixedMediaApp()) as client:
+        as_json = client.get("/mixed-media", headers={"accept": "application/json"})
+        assert as_json.headers["content-type"] == "application/json"
+        assert as_json.json() == {"type": "Tagged", "id": "id"}
+        as_bytes = client.get("/mixed-media", headers={"accept": "application/octet-stream"})
+        assert as_bytes.headers["content-type"] == "application/octet-stream"
+        assert as_bytes.content == b"blob"
+
+
+class UnmergeableEndpoint(Endpoint, path="/unmergeable"):
+    """Two members at 200 and application/json, one of them an array."""
+
+    async def get(self) -> list[Tagged] | OtherTagged:
+        """An array and an object cannot compose into a useful anyOf."""
+        return OtherTagged(code=1)
+
+
+class UnmergeableApp(BaseApp):
+    """App wiring the unmergeable shared-status union."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(UnmergeableEndpoint())
+        self.include_openapi(title="unmergeable", version="1")
+
+
+def test_shared_status_member_without_a_struct_body_fails_loud() -> None:
+    """Members sharing a status *and* media type merge into one anyOf, so each needs a
+    single Struct body; a list (an array) has nothing to contribute to one."""
+    with pytest.raises(RuntimeError, match="must each declare a Struct body"):
+        TestClient(UnmergeableApp())
 
 
 def test_bare_list_union_member_documents_an_array() -> None:
