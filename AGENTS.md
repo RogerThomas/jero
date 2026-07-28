@@ -291,22 +291,11 @@ These pull against each other constantly; keep all three in mind on every change
   (incl. typed `headers` and the opaque `raw_headers`), auth (required *and* optional),
   REST semantics,
   response kinds — generic `JSONResponse[T, H]` / `BytesResponse[H]` / streaming
-  `[T, H]` with typed response headers, `raw_headers`, and `status_code` overrides;
+  `[T, H]` with typed response headers, `raw_headers`, and `status_code` overrides, plus
   `NoContent[H]` / `Created[T, H]` / `Accepted[T, H]` (204/201/202 regardless of the
-  verb's own default); a **union return** (`Widget | NoContent`) lets a handler answer
-  with different, statically-typed success statuses, each documented as its own OpenAPI
-  response entry. Any non-streaming return kind may be a union member, plain
-  `Struct`/`list[Struct]`/`bytes` included — a member's status is the one it would have
-  alone, so no wrapper is needed just to join a union. Members **may** share a status:
-  OpenAPI keys one response there, so they merge into it (bodies as one `anyOf`, header
-  maps unioned — response headers carry no `required`, so merging asserts nothing new),
-  which makes `Widget | Other` and `JSONResponse[Widget | Other]` produce the identical
-  document. Members that encode differently share a status too — `content` is keyed by
-  media type, so they sit side by side (the OpenAPI shape for `Accept` negotiation, which
-  is what such a handler is doing). A shared status is rejected only when the merge can't
-  be *said*: header Structs disagreeing on a wire name, or a member with no single Struct
-  body (bare wrapper / `list`). Those are document questions, so they fire under
-  `include_openapi`, like the streaming item-type checks — `BaseApp`/`BaseFactory`
+  verb's own default; deliberately *siblings* of `JSONResponse`, never subclasses, so
+  returning one against a `-> JSONResponse[T]` annotation is a type error rather than a
+  silent wrong status) — `BaseApp`/`BaseFactory`
   lifecycle, in-process `BackgroundTasks`, reverse-routed
   `Location` / `Link` responses, typed Problem Details errors, structurally registered
   custom exception handlers, `TestClient`, the test suite. **OpenAPI 3.1**:
@@ -327,6 +316,22 @@ These pull against each other constantly; keep all three in mind on every change
   wire model). Class-level entries extend the operation's; same-status entries merge as
   a `oneOf`; precedence per status is derived < declared exceptions < explicit
   `ResponseSpec`; non-error entries are a wiring failure.
+- **Union returns (dynamic success status)**: a return annotation may be a union of
+  response types (`Widget | NoContent`), so one handler answers with different,
+  statically-typed success statuses, each documented as its own response entry. Any
+  non-streaming kind may be a member, plain `Struct`/`list[Struct]`/`bytes` included — a
+  member's status is the one it would have alone, so no wrapper is needed just to join a
+  union. Members **may** share a status, since OpenAPI keys one response there and they
+  merge into it: bodies of one media type as an `anyOf` (making `Widget | Other` and
+  `JSONResponse[Widget | Other]` produce the identical document), differing media types
+  side by side in `content` (the OpenAPI shape for `Accept` negotiation, which is what
+  such a handler is doing), header maps unioned (response headers carry no `required`, so
+  merging asserts nothing new). A shared status is rejected only where the merge can't be
+  *said*: header Structs disagreeing on a wire name, or a member with no single Struct
+  body (bare wrapper / `list`). Those are document questions, so like the streaming
+  item-type checks they fire under `include_openapi`. Dispatch is an `isinstance` chain
+  built at wiring, most-derived-first; a result matching no member goes through the
+  exception handlers as a logged 500.
 - **Performance (validated, 2026-07-16 run)**: fastest Python framework on all four
   scenarios (VUS=128, 1 dedicated core, granian+uvloop); Python order is jero →
   blacksheep → litestar → fastapi → flask everywhere. Authed write path

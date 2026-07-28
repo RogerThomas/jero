@@ -20,6 +20,7 @@ from jero import (
     BaseApp,
     BaseHTTPError,
     BearerAuth,
+    BytesResponse,
     Created,
     Endpoint,
     EndpointMeta,
@@ -1659,11 +1660,38 @@ class DynamicStatusApp(BaseApp):
 
     async def wire(self) -> None:
         self.include_endpoint(NoContentOnlyEndpoint())
+        self.include_endpoint(NoContentHeadersEndpoint())
         self.include_endpoint(CreatedOnlyEndpoint())
         self.include_endpoint(DynamicStatusEndpoint())
         self.include_endpoint(PlainUnionEndpoint())
         self.include_endpoint(PlainListUnionEndpoint())
         self.include_openapi(title="dynamic", version="1")
+
+
+class NoContentHeaders(Struct):
+    """Typed *response* headers on a bodyless 204."""
+
+    x_trace_id: str
+
+
+class NoContentHeadersEndpoint(Endpoint, path="/no-content-headers"):
+    """A 204 carrying typed response headers."""
+
+    async def get(self) -> NoContent[NoContentHeaders]:
+        """Return 204 with a typed header."""
+        return NoContent(headers=NoContentHeaders(x_trace_id="trace"))
+
+
+def test_no_content_documents_typed_headers_without_a_body() -> None:
+    """``NoContent`` takes ``H`` in the *first* type-arg slot, unlike Created/Accepted which
+    take ``T`` then ``H`` — so its headers reach the document through a different branch of
+    ``_response_header_type`` and need their own assertion."""
+    with TestClient(DynamicStatusApp()) as client:
+        no_content = client.get("/openapi.json").json()["paths"]["/no-content-headers"]["get"][
+            "responses"
+        ]["204"]
+        assert no_content["headers"]["x-trace-id"]["schema"] == {"type": "string"}
+        assert "content" not in no_content
 
 
 def test_no_content_alone_documents_204_with_no_body() -> None:
@@ -1768,6 +1796,40 @@ def test_shared_status_wrappers_merge_bodies_and_headers() -> None:
         ]
         assert ok["headers"]["x-cache"]["schema"] == {"type": "string"}
         assert ok["headers"]["x-rate-limit"]["schema"] == {"type": "integer"}
+
+
+class MergedBytesEndpoint(Endpoint, path="/merged-bytes"):
+    """Two bytes members at 200, differing only in their typed headers."""
+
+    async def get(
+        self,
+    ) -> BytesResponse[CacheHeaders] | BytesResponse[RateHeaders]:
+        """Return raw bytes with either header set."""
+        return BytesResponse(content=b"blob", headers=CacheHeaders(x_cache="hit"))
+
+
+class MergedBytesApp(BaseApp):
+    """App wiring the two-bytes-members union."""
+
+    async def wire(self) -> None:
+        self.include_endpoint(MergedBytesEndpoint())
+        self.include_openapi(title="merged-bytes", version="1")
+
+
+def test_members_describing_the_same_body_dedupe_rather_than_merge() -> None:
+    """Two ``BytesResponse`` members render the identical binary schema, so the status gets
+    one body and both header sets — there is nothing to build an ``anyOf`` from, and needing
+    one would wrongly reject a response OpenAPI can state plainly. The JSON equivalent
+    (``JSONResponse[W, A] | JSONResponse[W, B]``) already worked because ``W | W`` collapses,
+    so this keeps the two media types consistent."""
+    with TestClient(MergedBytesApp()) as client:
+        document = client.get("/openapi.json").json()
+        validate(document)
+        ok = document["paths"]["/merged-bytes"]["get"]["responses"]["200"]
+        assert ok["content"] == {
+            "application/octet-stream": {"schema": {"type": "string", "format": "binary"}}
+        }
+        assert sorted(ok["headers"]) == ["x-cache", "x-rate-limit"]
 
 
 class ClashingHeaderEndpoint(Endpoint, path="/clashing"):

@@ -15,19 +15,23 @@ class WhoAmIEndpoint(Endpoint, path="/me"):
 
 class SpotlightEndpoint(Endpoint, path="/spotlight"):
     """Optionally-authenticated endpoint: everyone gets the spotlight widget, and a caller
-    who presented credentials gets it personalized — unless they're authenticated but not
-    permitted to see it, which is a 204, not a rejection (auth failure is only a 401 when
-    credentials themselves are the problem).
+    who presented credentials gets it personalized.
 
     Mounted behind ``OptionalTokenAuth`` (see ``demo_app.app``), whose ``-> User | None``
     return is what makes this route serve anonymous callers. Credentials that are *present
     but invalid* never reach here — jero still answers 401.
+
+    Also the demo of a **union return**: the annotation names two success statuses, and both
+    are derived into the OpenAPI document (200 with a ``Spotlight`` body, 204 with none).
     """
 
     async def get(self, user: User | None) -> Spotlight | NoContent:
         """Return the spotlight widget, personalized when authenticated, or 204 when the
-        caller is authenticated but not permitted to see it."""
+        caller may not see it."""
         if user is not None and not user.may_see_spotlight:
+            # A real app would probably raise ForbiddenError here — 403 is what "you may
+            # not see this" means. 204 stands in so this endpoint demonstrates a union
+            # return; don't read it as advice on which status to pick.
             return NoContent()
         return Spotlight(
             widget_id="spotlight", personalized_for=user.name if user is not None else None

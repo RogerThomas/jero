@@ -152,7 +152,8 @@ appended — so its repeats survive. `content-type` defaults per kind and
 ## Status codes
 
 Every wrapper carries `status_code: int | None`. Leave it `None` to use the verb's
-default (201 for `create`, else 200); set it to override:
+default (201 for `create`, else 200) — or, for the wrappers that fix a status of their own,
+that status ([below](#dynamic-success-status)). Set it to override either:
 
 ```python
 from msgspec import Struct
@@ -221,8 +222,8 @@ class WidgetPath(Struct):
 
 class WidgetResource(Resource, path="/widgets"):
     async def read_one(self, path: WidgetPath) -> Widget | NoContent:
-        if path.widget_id == "missing":
-            return NoContent()                             # 204, no body
+        if path.widget_id.startswith("draft-"):
+            return NoContent()                             # 204: exists, nothing to show
         return Widget(id=path.widget_id, name="gizmo")     # 200 + Widget
 
 
@@ -237,6 +238,11 @@ app = App()
 Both branches are documented: the spec's `200` response describes `Widget`, and its `204`
 has no body. Reach for a wrapper on a branch only when that branch needs one —
 `JSONResponse[Widget, Headers] | NoContent` to add typed headers to the 200, say.
+
+Note what the 204 branch is *not* for. A widget that doesn't exist is a `404`, which
+`read_one` already derives from having a `path` source — returning 204 for it would document
+two statuses meaning the same thing. A union of success wrappers is for outcomes the caller
+asked for; failures stay [errors you raise](rest.md).
 
 Each member's status is the one it would have on its own: a plain `Struct`,
 `list[Struct]`, `bytes`, `JSONResponse`, or `BytesResponse` takes the verb's default
@@ -291,14 +297,15 @@ The 200 documents both `application/octet-stream` and `application/json`.
   mid-stream failure) and can't be chosen after the handler has already returned.
 - Members at one status that **disagree on a header** — two `H` Structs describing the
   same wire name with different types. One status, one header map, no way to say both.
-- Members at one status where one has **no single Struct body** to merge — a bare
-  unparameterized wrapper (an open `{}` body) or a `list[Struct]` (an array). Neither
-  composes into an `anyOf` that still says anything useful.
+- Members at one status whose bodies **differ but can't compose** into an `anyOf` — a
+  `list[Struct]` (an array) beside a Struct (an object), say. Members describing the *same*
+  body are fine and simply dedupe: `BytesResponse[CacheHeaders] | BytesResponse[RateHeaders]`
+  is one binary body with both header sets.
 - `-> Widget | None`, with a pointed message: it's the natural typo for this feature.
   Return `NoContent`, not `None`, for a 204.
 
-The media-type, header, and body-merge checks are questions about the generated document,
-so they run when `include_openapi` is enabled — like the streaming item-type checks.
+The header and body-merge checks are questions about the generated document, so they run
+when `include_openapi` is enabled — like the streaming item-type checks.
 
 ## Errors
 

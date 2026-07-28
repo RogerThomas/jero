@@ -227,8 +227,9 @@ class BaseResponse[H: Struct | None = None]:
     When both are given, the typed ``headers`` are emitted first, then
     ``raw_headers`` is appended, so its repeats survive.
 
-    ``status_code`` overrides the verb's default status (201 for create, else 200)
-    when set.
+    ``status_code`` overrides the status this response would otherwise send — the verb's
+    default (201 for create, else 200), or the fixed status of a wrapper that has one
+    (:class:`NoContent` 204, :class:`Created` 201, :class:`Accepted` 202).
 
     ``location`` emits a ``Location`` header and ``links`` a single ``Link`` header,
     each reverse-routed to a mounted operation (see :mod:`jero.links`). The URLs are
@@ -946,7 +947,7 @@ def _effective_status(kind: ReturnKind, verb_status: int) -> int:
 # status, exactly as it does when it is a handler's sole return, so ``-> Widget | NoContent``
 # needs no wrapper. Only the streaming kinds are excluded: their senders own the response
 # lifecycle (disconnect handling, mid-stream failure) and cannot be chosen after the fact.
-_UNION_MEMBER_KINDS = frozenset(
+_UNION_MEMBER_KINDS: frozenset[ReturnKind] = frozenset(
     {"json", "bytes", "no-content", "created", "accepted", "json-response", "bytes-response"}
 )
 
@@ -2187,9 +2188,10 @@ def _result_sender(
 
 @dataclass(slots=True)
 class _UnionResponseSender:
-    """Dispatches a union return by the runtime type of the result: the member senders
-    are pre-resolved at wiring, most-derived-first (``Created``/``Accepted`` subclass
-    ``JSONResponse``, so they must be tried before it — see ``_union_sender``).
+    """Dispatches a union return by the runtime type of the result, against member senders
+    pre-resolved at wiring and ordered most-derived-first (see :func:`_union_sender` for why
+    that ordering is needed — note jero's own wrappers are *siblings*, so it is never them
+    that need it).
 
     A result matching no member means the handler returned something its own annotation
     forbids. Nothing has been sent at that point, so — unlike a mid-stream failure — it

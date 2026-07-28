@@ -427,16 +427,26 @@ def _merge_status_group(
         # A bodyless member (NoContent) contributes headers only; it has no media type.
         for body in entry.bodies:
             by_media_type.setdefault(body.content_type, []).append(body)
-    bodies = tuple(
-        group[0]
-        if len(group) == 1
-        else ResponseBody(media_type, model=_merged_body_model(group, operation_id))
-        for media_type, group in by_media_type.items()
-    )
+    bodies: list[ResponseBody] = []
+    for media_type, group in by_media_type.items():
+        # Two members can describe the *same* body: `BytesResponse[A] | BytesResponse[B]`
+        # differ only in their headers, and both render the one binary schema. Identical
+        # descriptions are a single response body, so dedupe before merging — otherwise a
+        # pair that needs no merge at all would be sent to _merged_body_model, which has
+        # nothing to build an anyOf from and would reject a perfectly sayable response.
+        unique: list[ResponseBody] = []
+        for body in group:
+            if body not in unique:
+                unique.append(body)
+        bodies.append(
+            unique[0]
+            if len(unique) == 1
+            else ResponseBody(media_type, model=_merged_body_model(unique, operation_id))
+        )
     return ResponseEntry.over_media_types(
         status,
         _STATUS_TEXT.get(status, "Successful response"),
-        bodies,
+        tuple(bodies),
         _merged_header_types(entries, operation_id),
     )
 
