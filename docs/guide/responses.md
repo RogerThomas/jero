@@ -186,6 +186,74 @@ app = App()
 `status_code` is available on `BytesResponse` and the [streaming responses](streaming.md)
 too.
 
+## Naming a response type
+
+`JSONResponse[Widget, CacheHeaders]` gets repetitive across a dozen handlers. Give it a name
+with a `type` alias, or by subclassing the wrapper. Both resolve to the same document:
+
+```python
+from dataclasses import dataclass, field
+
+from msgspec import Struct
+
+from jero import BaseApp, Endpoint, JSONResponse
+
+
+class Widget(Struct):
+    id: str
+    name: str
+
+
+class CacheHeaders(Struct):
+    cache_control: str = "no-store"
+
+
+type WidgetResponse = JSONResponse[Widget, CacheHeaders]      # an alias
+type Envelope[T: Struct] = JSONResponse[T, CacheHeaders]      # generic: pin H, vary T
+
+
+@dataclass(kw_only=True, slots=True)
+class Cached(JSONResponse[Widget, CacheHeaders]):             # or a subclass
+    """Same document, plus a default so callers need not pass the headers."""
+
+    headers: CacheHeaders = field(default_factory=CacheHeaders)
+
+
+class Aliased(Endpoint, path="/aliased"):
+    async def get(self) -> WidgetResponse:
+        return JSONResponse(json=Widget(id="w1", name="gizmo"), headers=CacheHeaders())
+
+
+class Enveloped(Endpoint, path="/enveloped"):
+    async def get(self) -> Envelope[Widget]:
+        return JSONResponse(json=Widget(id="w1", name="gizmo"), headers=CacheHeaders())
+
+
+class Subclassed(Endpoint, path="/subclassed"):
+    async def get(self) -> Cached:
+        return Cached(json=Widget(id="w1", name="gizmo"))
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        self.include_endpoint(Aliased())
+        self.include_endpoint(Enveloped())
+        self.include_endpoint(Subclassed())
+        self.include_openapi(title="Widgets", version="1.0")
+
+
+app = App()
+```
+
+All three document one 200 whose schema refs `Widget`, with `cache-control` in `headers`. The
+name you chose appears nowhere in the spec, so pick whichever reads better in your code:
+an alias when you only want the name, a subclass when it should also carry defaults. Aliases
+of aliases resolve, and either form works as a union member (`WidgetResponse | NoContent`).
+
+A wrapper still has to *say* what its body is: `-> JSONResponse` with no `[Widget]` anywhere in
+the chain fails at startup with `must name its body type`, since there would be no schema to
+derive. `SSEResponse` is the exception, its `T` defaulting to `str`.
+
 ## Dynamic success status
 
 A handler can answer with **different** success statuses depending on what it finds,
