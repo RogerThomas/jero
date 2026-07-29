@@ -29,7 +29,7 @@ class Factory(BaseFactory):
 
     async def create_widget_service(self) -> WidgetService:
         """Build a WidgetService with a client opened on the app's stack."""
-        client = await self.aenter(niquests.AsyncSession())
+        client = await self._aenter(niquests.AsyncSession())
         return WidgetService(client, self._settings.widget_base_url, self._settings.widget_api_key)
 
     def create_upstream_response_error_handler(self) -> UpstreamResponseErrorHandler:
@@ -43,5 +43,5 @@ class Factory(BaseFactory):
 
     async def create_question_service(self) -> QuestionService:
         """Build a QuestionService with an OpenAI client opened on the app's stack."""
-        client = await self.aenter(AsyncOpenAI(api_key=self._settings.openai_api_key))
+        client = await self._aenter(AsyncOpenAI(api_key=self._settings.openai_api_key))
         return QuestionService(client, self._settings.openai_model)

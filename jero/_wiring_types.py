@@ -266,7 +266,7 @@ class Sources(Struct):
 
 class OperationSpec(Struct):
     """One captured operation, all the inputs the OpenAPI document needs. Built at wiring
-    time (in ``BaseApp._include``) and translated to an ``OperationInput`` at ``_finalize``."""
+    time (in ``BaseApp.__include``) and translated to an ``OperationInput`` at ``__finalize``."""
 
     path: str  # OpenAPI path template, e.g. "/widgets/{widgetId}"
     method: str  # lowercase HTTP verb

@@ -1,6 +1,6 @@
 # Authentication
 
-Auth is an object you pass to `include_resource` / `include_endpoint`. It implements
+Auth is an object you pass to `_include_resource` / `_include_endpoint`. It implements
 one method:
 
 ```python
@@ -110,8 +110,8 @@ class WhoAmIEndpoint(Endpoint, path="/me"):
 class App(BaseApp):
     async def wire(self) -> None:
         auth = TokenAuth({"token": User(id="user-id", name="user-name")})
-        self.include_endpoint(WhoAmIEndpoint(), auth=auth)
-        self.include_endpoint(HealthEndpoint())   # no auth
+        self._include_endpoint(WhoAmIEndpoint(), auth=auth)
+        self._include_endpoint(HealthEndpoint())   # no auth
 
 
 app = App()
@@ -211,8 +211,8 @@ class SpotlightEndpoint(Endpoint, path="/spotlight"):
 class App(BaseApp):
     async def wire(self) -> None:
         users = {"token": User(id="user-id", name="user-name")}
-        self.include_endpoint(WhoAmIEndpoint(), auth=TokenAuth(users))
-        self.include_endpoint(SpotlightEndpoint(), auth=OptionalTokenAuth(users))
+        self._include_endpoint(WhoAmIEndpoint(), auth=TokenAuth(users))
+        self._include_endpoint(SpotlightEndpoint(), auth=OptionalTokenAuth(users))
 
 
 app = App()
@@ -251,7 +251,7 @@ The last cell is the important one. A handler that declares no `user` behind a g
 authenticator is fine — it just doesn't want the result, and the gate has already run:
 
 ```python
-self.include_resource(WidgetResource(...), auth=TokenAuth(users))
+self._include_resource(WidgetResource(...), auth=TokenAuth(users))
 
 async def read_many(self, params: Page) -> list[Widget]:   # no 'user' — still gated
     ...
@@ -297,5 +297,6 @@ class TokenAuth(BearerAuth[Credentials, User]):   # adds {"type": "http", "schem
 `BearerAuth` and `BasicAuth` are sugar over an optional
 `openapi_security: ClassVar[SecurityScheme]` attribute any authenticator can set; an
 authed route that declares nothing defaults to HTTP bearer. For a token in a header,
-query param, or cookie, set the attribute with `SecurityScheme.api_key(...)`. See
-[OpenAPI & docs](openapi.md#security-schemes).
+query param, or cookie, set the attribute with `SecurityScheme.api_key(...)`. The value
+must be a `SecurityScheme` (or absent / `None`) — anything else is a `WiringError` at
+startup. See [OpenAPI & docs](openapi.md#security-schemes).

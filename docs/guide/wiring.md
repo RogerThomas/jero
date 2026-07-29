@@ -14,20 +14,19 @@ services and register routes. It's linear `async` code — no `yield`, no magic:
 class App(BaseApp):
     async def wire(self) -> None:
         service = WidgetService(...)
-        self.include_resource(WidgetResource(service))
+        self._include_resource(WidgetResource(service))
 ```
 
 A resource's dependencies are constructor arguments you pass in. Want to share a
 service across resources? Build it once and pass it to each.
 
-> **Why `include_resource`, not `_include_resource`?** Technically they're private — you
-> only ever call them from *inside* your subclass. But a leading `_` reads as "keep out,"
-> which is wrong for the API you're meant to use. So the extension surface (`wire`,
-> `include_resource`, `include_endpoint`, `include_openapi`, `add_exception_handler`,
-> `enter`, `aenter`, `factory`) is named publicly:
-> looking off-limits for your main tool is the worse failure.
+> **One naming rule, everywhere.** A name's spelling tells you who may call it:
+> **public** is called from outside the class (or is the hook the framework calls on
+> you, like `wire`); **`_name`** is what *you* call from inside your own subclass
+> (`_include_*`, `_enter`, `_aenter`, `_factory`, `_create_background_tasks`);
+> **`__name`** is jero's own — you can neither call nor override it.
 
-## Lifecycle: `enter` / `aenter`
+## Lifecycle: `_enter` / `_aenter`
 
 Resources that must be opened and closed — HTTP clients, DB pools — are entered on the
 app's exit stacks. The app owns a sync
@@ -38,19 +37,19 @@ and closes everything in reverse order at shutdown, even if `wire` fails partway
 ```python
 class App(BaseApp):
     async def wire(self) -> None:
-        client = await self.aenter(niquests.AsyncSession())  # closed at shutdown
-        cache = self.enter(open_cache())                     # sync context manager
-        self.include_resource(WidgetResource(client, cache))
+        client = await self._aenter(niquests.AsyncSession())  # closed at shutdown
+        cache = self._enter(open_cache())                     # sync context manager
+        self._include_resource(WidgetResource(client, cache))
 ```
 
-`aenter(cm)` enters an async context manager; `enter(cm)` a sync one. Both return the
+`_aenter(cm)` enters an async context manager; `_enter(cm)` a sync one. Both return the
 opened resource and register it for teardown.
 
 ## Factories
 
 For anything real, group construction in a `BaseFactory`. Parameterize the app with it
 — `BaseApp[Factory]` — and jero builds the factory at startup, injecting the exit
-stacks. It's then `self.factory` inside `wire`:
+stacks. It's then `self._factory` inside `wire`:
 
 ```python
 from jero import BaseApp, BaseFactory
@@ -58,17 +57,17 @@ from jero import BaseApp, BaseFactory
 
 class Factory(BaseFactory):
     async def create_widget_service(self) -> WidgetService:
-        client = await self.aenter(niquests.AsyncSession(base_url="https://api.example.com"))
+        client = await self._aenter(niquests.AsyncSession(base_url="https://api.example.com"))
         return WidgetService(client)
 
 
 class App(BaseApp[Factory]):
     async def wire(self) -> None:
-        widget_service = await self.factory.create_widget_service()
-        self.include_resource(WidgetResource(widget_service))
+        widget_service = await self._factory.create_widget_service()
+        self._include_resource(WidgetResource(widget_service))
 ```
 
-The factory's `create_*` methods use the same `enter` / `aenter` helpers — anything
+The factory's `create_*` methods use the same `_enter` / `_aenter` helpers — anything
 they open is closed when the app shuts down. The split is a useful seam: the factory
 owns the I/O services (the things with lifecycle), while pure in-memory wiring (an auth
 token map, say) can live directly in `wire`.
@@ -96,7 +95,7 @@ class WidgetService:
 
 class Factory(BaseFactory):
     async def create_widget_service(self) -> WidgetService:
-        client = await self.aenter(niquests.AsyncSession())
+        client = await self._aenter(niquests.AsyncSession())
         return WidgetService(client)
 
 
@@ -104,7 +103,7 @@ async def main() -> None:
     async with Factory.open() as factory:
         widget_service = await factory.create_widget_service()
         ...  # the nightly job, the notebook cell, the script body
-    # everything opened via enter / aenter is closed here
+    # everything opened via _enter / _aenter is closed here
 
 
 asyncio.run(main())
@@ -162,7 +161,7 @@ class WidgetResource(Resource, path="/widgets"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_resource(WidgetResource())
+        self._include_resource(WidgetResource())
 
 
 app = App()

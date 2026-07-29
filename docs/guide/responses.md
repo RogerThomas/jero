@@ -43,8 +43,8 @@ class ExportEndpoint(Endpoint, path="/export"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_resource(WidgetResource())
-        self.include_endpoint(ExportEndpoint())
+        self._include_resource(WidgetResource())
+        self._include_endpoint(ExportEndpoint())
 
 
 app = App()
@@ -88,7 +88,7 @@ class WidgetResource(Resource, path="/widgets"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_resource(WidgetResource())
+        self._include_resource(WidgetResource())
 
 
 app = App()
@@ -177,7 +177,7 @@ class WidgetResource(Resource, path="/widgets"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_resource(WidgetResource())
+        self._include_resource(WidgetResource())
 
 
 app = App()
@@ -236,10 +236,10 @@ class Subclassed(Endpoint, path="/subclassed"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_endpoint(Aliased())
-        self.include_endpoint(Enveloped())
-        self.include_endpoint(Subclassed())
-        self.include_openapi(title="Widgets", version="1.0")
+        self._include_endpoint(Aliased())
+        self._include_endpoint(Enveloped())
+        self._include_endpoint(Subclassed())
+        self._include_openapi(title="Widgets", version="1.0")
 
 
 app = App()
@@ -257,7 +257,7 @@ annotation supplies and the one the subclass pins.
 
 A wrapper still has to *say* what its body is: `-> JSONResponse` with no `[Widget]` anywhere in
 the chain fails at startup with `must name its body type`, since there would be no schema to
-derive. Like the other spec-shape checks below, it runs when `include_openapi` is enabled, which
+derive. Like the other spec-shape checks below, it runs when `_include_openapi` is enabled, which
 is where the schema is actually needed. `SSEResponse` is the exception, its `T` defaulting
 to `str`.
 
@@ -305,8 +305,8 @@ class WidgetResource(Resource, path="/widgets"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_resource(WidgetResource())
-        self.include_openapi(title="Widgets", version="1.0")
+        self._include_resource(WidgetResource())
+        self._include_openapi(title="Widgets", version="1.0")
 
 
 app = App()
@@ -380,10 +380,10 @@ class Negotiated(Endpoint, path="/negotiated"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_endpoint(MergedBodies())
-        self.include_endpoint(MergedHeaders())
-        self.include_endpoint(Negotiated())
-        self.include_openapi(title="Widgets", version="1.0")
+        self._include_endpoint(MergedBodies())
+        self._include_endpoint(MergedHeaders())
+        self._include_endpoint(Negotiated())
+        self._include_openapi(title="Widgets", version="1.0")
 
 
 app = App()
@@ -419,7 +419,7 @@ what the handler is actually doing. Its 200 documents both `application/octet-st
   Return `NoContent`, not `None`, for a 204.
 
 The header and body-merge checks are questions about the generated document, so they run
-when `include_openapi` is enabled — like the streaming item-type checks.
+when `_include_openapi` is enabled — like the streaming item-type checks.
 
 ## Errors
 

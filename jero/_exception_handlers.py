@@ -1,7 +1,7 @@
 """Custom exception-handler contracts, compilation, and validation.
 
 A user registers an object with a ``handle_exception(self, exception: E) -> ...`` method
-via ``BaseApp.add_exception_handler``; this module turns that object into a validated,
+via ``BaseApp._include_exception_handler``; this module turns that object into a validated,
 ready-to-invoke :class:`CompiledExceptionHandler` (the exception type and the response
 shape are read from the concrete signature, once, at wiring time) and defines the public
 :class:`ExceptionResponse` / :class:`ExceptionHandler` surface. The *dispatch* half — the
@@ -48,7 +48,7 @@ class ExceptionResponse[T: Struct, H: Struct | None = None]:
 class ExceptionHandler[
     E: Exception,
 ](Protocol):
-    """Structural contract for an object registered with ``add_exception_handler``."""
+    """Structural contract for an object registered with ``_include_exception_handler``."""
 
     def handle_exception(self, exception: E) -> object:
         """Return a typed replacement response, or ``None`` to continue default handling."""

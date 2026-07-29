@@ -95,7 +95,7 @@ These pull against each other constantly; keep all three in mind on every change
   routes (health, webhooks, actions). One exact path per Endpoint; a different path is a
   different `Endpoint`.
 - **The path is declared on the class, not at wiring** — `class Widgets(Resource,
-  path="/widgets")`, read once at wiring; `include_resource(Widgets())` takes no
+  path="/widgets")`, read once at wiring; `_include_resource(Widgets())` takes no
   `path=`. The class is the single source of truth for its path (what URL reversal /
   `Link` / `Location` and the OpenAPI spec read). Optional OpenAPI metadata rides the
   same class kwargs: `meta` (all operations) and `meta_<op>` per operation, typed
@@ -135,7 +135,7 @@ These pull against each other constantly; keep all three in mind on every change
   schema is msgspec's `anyOf` + `discriminator`. Tags are strictly required only when
   the spec is built (untagged unions stream fine at runtime) but are recommended
   regardless — the tag is the client's discriminator. Untagged multi-Struct unions
-  (once `include_openapi` is wired) and any other `T` shape fail loud at startup —
+  (once `_include_openapi` is wired) and any other `T` shape fail loud at startup —
   never a silent `{}` schema.
 - **Response headers & status**: the wrappers carry a typed `headers` Struct (the
   header *type* is a parameter `H`; field names inverse-mangle `x_trace_id` →
@@ -162,7 +162,7 @@ These pull against each other constantly; keep all three in mind on every change
   Raise sites: kwargs (runtime-checked) or the blessed `@dataclass` tier whose declared
   fields ARE the params (generated, statically-typed `__init__`; validated on first
   raise). Nothing user-passed is ever mutated. An
-  **`ErrorBodyAdapter[B]`** (`include_error_adapter`, at most one) replaces the Problem
+  **`ErrorBodyAdapter[B]`** (`_include_error_adapter`, at most one) replaces the Problem
   family's rendering app-wide (house error formats) — framework built-ins and
   handler-translated errors included; `StructHTTPError`s render themselves; an adapter
   crash is contained (logged, Problem body sent). Define a
@@ -174,7 +174,7 @@ These pull against each other constantly; keep all three in mind on every change
   exception instance (`raise WidgetNotFoundError()`), never the exception class.
 - **Custom exception handlers**: hand-wire a structurally typed object with
   `handle_exception(exception: E) -> ErrorResponse1 | ErrorResponse2 | None` via
-  `add_exception_handler`; no base class or decorator. Returning `None` continues
+  `_include_exception_handler`; no base class or decorator. Returning `None` continues
   default handling (`HTTPError` serializes itself, anything else becomes the generic
   500); returning a declared `HTTPError` sends its Problem Details, while returning
   `ExceptionResponse` sends its required per-occurrence `status_code`, typed JSON
@@ -207,7 +207,7 @@ These pull against each other constantly; keep all three in mind on every change
   `wire` is abstract; subclass `BaseApp[Factory]`, linear async, no yield); a
   dependency is just a constructor argument. The one thing
   the language doesn't give you free — lifecycle — is what the framework adds:
-  open resources with `self.aenter` / `self.enter` (the app owns two exit
+  open resources with `self._aenter` / `self._enter` (the app owns two exit
   stacks, closed in reverse at shutdown, even on partial failure), and a
   `BaseFactory` (stacks injected) groups construction. Standalone (scripts, cron,
   notebooks): `async with Factory.open() as factory:` — a classmethod async CM that
@@ -215,15 +215,19 @@ These pull against each other constantly; keep all three in mind on every change
   reimplemented on top of it (one lifecycle code path). Past that there's nothing
   to "resolve." Per-request resources are an `async with` inside the handler.
   Do **not** add an injection/resolver system.
-  - **Naming**: the extension surface is intentionally **public** (`wire`,
-    `include_resource`, `include_endpoint`, `include_openapi`, `add_exception_handler`,
-    `enter`, `aenter`, `factory`). Technically
-    these are private (only called from inside a subclass), but a leading `_` reads as
-    "keep out" for the API users are meant to use, so they're public. Underscore is
-    reserved for genuine internals (`_include`, `_register`, `_make_factory`, the
-    exit-stack fields). Do **not** re-underscore the extension surface.
+  - **Naming**: one rule for the whole surface — a name's spelling tells you who may
+    call it. **public** = called from *outside* the class, or the hook the framework
+    calls on you (`wire`, `__init__`, `__call__`, `Factory.open()`, a factory's own
+    `create_*`). **`_name`** = the extension surface *you* call from inside your own
+    subclass (`_include_resource`, `_include_endpoint`, `_include_openapi`,
+    `_include_error_adapter`, `_include_exception_handler`, `_create_background_tasks`,
+    `_enter`, `_aenter`, `_factory`). **`__name`** = jero's own, name-mangled internals
+    (`__include`, `__register`, `__make_factory`, the exit-stack fields) — a subclass can
+    neither call nor override them. The constructor keyword stays `factory=` (an outside
+    caller injecting — how tests mock) while the property is `_factory`: same word, two
+    spellings, both correct under the rule. Do **not** re-publicize the extension surface.
 - **Background tasks**: `BackgroundTasks` is an in-process, fire-and-forget queue
-  (not durable). Build it in `wire` and open it with `aenter` (it's an async CM —
+  (not durable). Build it in `wire` and open it with `_aenter` (it's an async CM —
   worker starts at startup, drains at shutdown); `register(handler)` infers the item
   type from the handler's one Struct param; endpoints `await tasks.add(item)`. One
   handler per type (`allow_one_to_many=True` to fan out); `drain_timeout: float | None`
@@ -274,8 +278,8 @@ These pull against each other constantly; keep all three in mind on every change
 - `tests/` — pytest suite driven through `TestClient` against `demo_app/` (plus small
   local apps for focused cases).
 - `plans/` — design plans for not-yet-built work, fully designed with decisions locked,
-  staged for review before implementation. Currently `middleware.md`, `websockets.md`, and
-  `private-extension-surface.md` (the `_`/`__` naming rule for the extension surface).
+  staged for review before implementation. Currently `middleware.md` and `websockets.md`
+  (`public-surface.md` and `openapi-security-validation.md` are built).
 - `bugs/` — one markdown note per **not-yet-fixed** bug, tracked in `bugs/README.md`
   (the manifest). **Only write a note for a bug you're leaving unfixed for later** —
   if you fix a bug in the same change, *don't* add a note; the regression test is the
@@ -299,7 +303,7 @@ These pull against each other constantly; keep all three in mind on every change
   lifecycle, in-process `BackgroundTasks`, reverse-routed
   `Location` / `Link` responses, typed Problem Details errors, structurally registered
   custom exception handlers, `TestClient`, the test suite. **OpenAPI 3.1**:
-  `include_openapi` serves `/openapi.json` + a Scalar `/docs` UI, derived from the
+  `_include_openapi` serves `/openapi.json` + a Scalar `/docs` UI, derived from the
   wired types (sources, returns incl. generics, `msgspec.Meta`); `favicon=` (Path read
   once at wiring → precomputed `/favicon.ico` route + `<link>` in the default page;
   str → URL linked verbatim; bad file/suffix is a `WiringError`; the route is never
@@ -331,7 +335,7 @@ These pull against each other constantly; keep all three in mind on every change
   shared status is rejected only where the merge can't be *said*: header Structs disagreeing
   on a wire name, or bodies that differ at one media type and can't compose into an `anyOf`
   (a `list[Struct]` array beside an object). Those are document questions, so like the streaming
-  item-type checks they fire under `include_openapi`. Dispatch is an `isinstance` chain
+  item-type checks they fire under `_include_openapi`. Dispatch is an `isinstance` chain
   built at wiring, most-derived-first; a result matching no member goes through the
   exception handlers as a logged 500.
 - **Performance (validated, 2026-07-16 run)**: fastest Python framework on all four

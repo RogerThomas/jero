@@ -111,7 +111,7 @@ async def open_widget_store() -> AsyncIterator[WidgetStore]:
 
 class Factory(BaseFactory):
     async def create_widget_service(self) -> WidgetService:
-        store = await self.aenter(open_widget_store())
+        store = await self._aenter(open_widget_store())
         return WidgetService(store)
 
 
@@ -137,8 +137,8 @@ class WidgetResource(Resource, path="/widgets"):
 class App(BaseApp[Factory]):
     async def wire(self) -> None:
         auth = TokenAuth()
-        widget_service = await self.factory.create_widget_service()
-        self.include_resource(WidgetResource(widget_service), auth=auth)
+        widget_service = await self._factory.create_widget_service()
+        self._include_resource(WidgetResource(widget_service), auth=auth)
 
 
 app = App()

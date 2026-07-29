@@ -130,7 +130,7 @@ class _GreetingApp(BaseApp):
     """App mounting the greeting endpoint behind an anonymous-accepting authenticator."""
 
     async def wire(self) -> None:
-        self.include_endpoint(GreetingEndpoint(), auth=OptionalCallerAuth())
+        self._include_endpoint(GreetingEndpoint(), auth=OptionalCallerAuth())
 
 
 @pytest.fixture(name="greeting_client")
@@ -190,7 +190,7 @@ class _StrictApp(BaseApp):
     """App whose authenticator cannot see absent credentials."""
 
     async def wire(self) -> None:
-        self.include_endpoint(StrictEndpoint(), auth=RequiredCredsAuth())
+        self._include_endpoint(StrictEndpoint(), auth=RequiredCredsAuth())
 
 
 def test_unbindable_credentials_are_401_before_authenticate() -> None:
@@ -226,7 +226,7 @@ class _LyingApp(BaseApp):
     """App behind an authenticator that breaks its own contract."""
 
     async def wire(self) -> None:
-        self.include_endpoint(LyingEndpoint(), auth=LyingAuth())
+        self._include_endpoint(LyingEndpoint(), auth=LyingAuth())
 
 
 def test_none_from_a_gating_authenticator_is_rejected_not_bound() -> None:

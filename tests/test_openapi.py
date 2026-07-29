@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Generator
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Generic, TypeVar, cast
+from typing import Annotated, ClassVar, Generic, TypeVar, cast
 
 import pytest
 from msgspec import Meta, Struct
@@ -236,10 +236,10 @@ class OpenApp(BaseApp):
     """App with one open endpoint and one bytes endpoint."""
 
     async def wire(self) -> None:
-        self.include_endpoint(OpenEndpoint())
-        self.include_endpoint(BlobEndpoint())
-        self.include_endpoint(HeaderedEndpoint())
-        self.include_openapi(title="open", version="1")
+        self._include_endpoint(OpenEndpoint())
+        self._include_endpoint(BlobEndpoint())
+        self._include_endpoint(HeaderedEndpoint())
+        self._include_openapi(title="open", version="1")
 
 
 def test_unauthed_operation_has_no_security() -> None:
@@ -265,8 +265,8 @@ class DocsOffApp(BaseApp):
     """App that serves the spec JSON but not the UI."""
 
     async def wire(self) -> None:
-        self.include_endpoint(OpenEndpoint())
-        self.include_openapi(title="t", version="1", docs_path=None)
+        self._include_endpoint(OpenEndpoint())
+        self._include_openapi(title="t", version="1", docs_path=None)
 
 
 def test_typed_response_headers_are_documented() -> None:
@@ -315,8 +315,8 @@ class CustomDocsApp(BaseApp):
     """App that overrides the docs HTML."""
 
     async def wire(self) -> None:
-        self.include_endpoint(OpenEndpoint())
-        self.include_openapi(title="t", version="1", docs_html="<html>custom</html>")
+        self._include_endpoint(OpenEndpoint())
+        self._include_openapi(title="t", version="1", docs_html="<html>custom</html>")
 
 
 def test_custom_docs_html_is_served_verbatim() -> None:
@@ -369,16 +369,16 @@ class PlainAuthApp(BaseApp):
     """App whose auth declares no scheme (should default to bearer)."""
 
     async def wire(self) -> None:
-        self.include_endpoint(SecuredEndpoint(), auth=PlainAuth())
-        self.include_openapi(title="t", version="1")
+        self._include_endpoint(SecuredEndpoint(), auth=PlainAuth())
+        self._include_openapi(title="t", version="1")
 
 
 class ApiKeyApp(BaseApp):
     """App whose auth declares an apiKey scheme."""
 
     async def wire(self) -> None:
-        self.include_endpoint(SecuredEndpoint(), auth=ApiKeyAuth())
-        self.include_openapi(title="t", version="1")
+        self._include_endpoint(SecuredEndpoint(), auth=ApiKeyAuth())
+        self._include_openapi(title="t", version="1")
 
 
 def test_undeclared_auth_defaults_to_bearer() -> None:
@@ -399,6 +399,59 @@ def test_api_key_scheme_is_emitted() -> None:
             "name": "X-API-Key",
         }
         assert document["paths"]["/secured"]["get"]["security"] == [{"apiKeyAuth": []}]
+
+
+@dataclass
+class WrongTypeAuth:
+    """An authenticator whose openapi_security is not a SecurityScheme."""
+
+    openapi_security = "apiKey"
+
+    async def authenticate(self, headers: Credentials) -> Caller:
+        """Resolve a caller from the credentials."""
+        return Caller(id=headers.authorization)
+
+
+@dataclass
+class NoneSchemeAuth:
+    """An authenticator declaring an explicit None openapi_security."""
+
+    openapi_security: ClassVar[SecurityScheme | None] = None
+
+    async def authenticate(self, headers: Credentials) -> Caller:
+        """Resolve a caller from the credentials."""
+        return Caller(id=headers.authorization)
+
+
+class WrongTypeAuthApp(BaseApp):
+    """App whose auth declares openapi_security with the wrong type."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(SecuredEndpoint(), auth=WrongTypeAuth())
+        self._include_openapi(title="t", version="1")
+
+
+class NoneSchemeApp(BaseApp):
+    """App whose auth declares openapi_security as an explicit None."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(SecuredEndpoint(), auth=NoneSchemeAuth())
+        self._include_openapi(title="t", version="1")
+
+
+def test_wrong_typed_openapi_security_fails_startup() -> None:
+    """A present-but-not-SecurityScheme declaration fails loud at wiring."""
+    with pytest.raises(
+        RuntimeError, match="WrongTypeAuth: openapi_security must be SecurityScheme, got str"
+    ):
+        TestClient(WrongTypeAuthApp())
+
+
+def test_none_openapi_security_defaults_to_bearer() -> None:
+    """An explicit None declaration counts as absent and keeps the bearer default."""
+    with TestClient(NoneSchemeApp()) as client:
+        document = client.get("/openapi.json").json()
+        assert document["paths"]["/secured"]["get"]["security"] == [{"bearerAuth": []}]
 
 
 class OptionalCredentials(Struct):
@@ -430,8 +483,8 @@ class OptionalApiKeyApp(BaseApp):
     """App mounting an optionally-authed endpoint behind an apiKey scheme."""
 
     async def wire(self) -> None:
-        self.include_endpoint(OptionallySecuredEndpoint(), auth=OptionalApiKeyAuth())
-        self.include_openapi(title="t", version="1")
+        self._include_endpoint(OptionallySecuredEndpoint(), auth=OptionalApiKeyAuth())
+        self._include_openapi(title="t", version="1")
 
 
 def test_anonymous_alternative_pairs_with_any_scheme() -> None:
@@ -462,8 +515,8 @@ class DescribedApp(BaseApp):
     """App exercising OperationMeta summary/description/operation_id."""
 
     async def wire(self) -> None:
-        self.include_endpoint(DescribedEndpoint())
-        self.include_openapi(title="t", version="1")
+        self._include_endpoint(DescribedEndpoint())
+        self._include_openapi(title="t", version="1")
 
 
 class TaggedEndpoint(
@@ -498,8 +551,8 @@ class TaggedApp(BaseApp):
     """App exercising the tag cascade across operations (tags defined on the meta)."""
 
     async def wire(self) -> None:
-        self.include_endpoint(TaggedEndpoint())
-        self.include_openapi(title="t", version="1")
+        self._include_endpoint(TaggedEndpoint())
+        self._include_openapi(title="t", version="1")
 
 
 def test_list_op_tags_extend_class_tags() -> None:
@@ -568,8 +621,8 @@ class UploadApp(BaseApp):
     """App exercising multipart form documentation."""
 
     async def wire(self) -> None:
-        self.include_endpoint(UploadEndpoint())
-        self.include_openapi(title="t", version="1")
+        self._include_endpoint(UploadEndpoint())
+        self._include_openapi(title="t", version="1")
 
 
 def test_form_field_meta_and_payloads_are_documented() -> None:
@@ -607,11 +660,11 @@ class InfoEndpoint(Endpoint, path="/info"):
 
 
 class InfoApp(BaseApp):
-    """App exercising the description and servers knobs of include_openapi."""
+    """App exercising the description and servers knobs of _include_openapi."""
 
     async def wire(self) -> None:
-        self.include_endpoint(InfoEndpoint())
-        self.include_openapi(
+        self._include_endpoint(InfoEndpoint())
+        self._include_openapi(
             title="My API",
             version="2.0.0",
             description="A described API.",
@@ -620,7 +673,7 @@ class InfoApp(BaseApp):
 
 
 def test_info_description_and_servers_are_emitted() -> None:
-    """include_openapi's description and servers reach the document (and it stays valid)."""
+    """_include_openapi's description and servers reach the document (and it stays valid)."""
     with TestClient(InfoApp()) as client:
         document = client.get("/openapi.json").json()
         validate(document)
@@ -680,10 +733,10 @@ class ExamplesApp(BaseApp):
     """App exercising whole-model example composition."""
 
     async def wire(self) -> None:
-        self.include_endpoint(ExampledEndpoint())
-        self.include_endpoint(PartialEndpoint())
-        self.include_endpoint(ExampledReturnEndpoint())
-        self.include_openapi(title="t", version="1")
+        self._include_endpoint(ExampledEndpoint())
+        self._include_endpoint(PartialEndpoint())
+        self._include_endpoint(ExampledReturnEndpoint())
+        self._include_openapi(title="t", version="1")
 
 
 def test_response_model_examples_are_composed_at_the_media_type() -> None:
@@ -764,9 +817,9 @@ class InlineTagsApp(BaseApp):
     """A tag defined inline on one endpoint and referenced by name on another."""
 
     async def wire(self) -> None:
-        self.include_endpoint(OwnerEndpoint())
-        self.include_endpoint(RefEndpoint())
-        self.include_openapi(title="t", version="1")  # no central tags — meta defines them
+        self._include_endpoint(OwnerEndpoint())
+        self._include_endpoint(RefEndpoint())
+        self._include_openapi(title="t", version="1")  # no central tags — meta defines them
 
 
 def test_tag_defined_inline_is_referenced_by_name_elsewhere() -> None:
@@ -780,7 +833,7 @@ def test_tag_defined_inline_is_referenced_by_name_elsewhere() -> None:
 
 
 class AdminEndpoint(Endpoint, path="/admin", meta=EndpointMeta(tags=["admin"])):
-    """Uses 'admin' by name; the description and order come from include_openapi."""
+    """Uses 'admin' by name; the description and order come from _include_openapi."""
 
     async def get(self) -> Item:
         """Admin."""
@@ -791,8 +844,8 @@ class CentralTagsApp(BaseApp):
     """App pinning tag order/descriptions centrally; the endpoint references by name."""
 
     async def wire(self) -> None:
-        self.include_endpoint(AdminEndpoint())
-        self.include_openapi(
+        self._include_endpoint(AdminEndpoint())
+        self._include_openapi(
             title="t",
             version="1",
             tags=[
@@ -804,7 +857,7 @@ class CentralTagsApp(BaseApp):
 
 
 def test_central_tags_pin_order_and_describe_references() -> None:
-    """include_openapi(tags=...) sets section order and descriptions; a declared-but-unused
+    """_include_openapi(tags=...) sets section order and descriptions; a declared-but-unused
     tag is still emitted; an endpoint's name-only reference picks up the description."""
     with TestClient(CentralTagsApp()) as client:
         document = client.get("/openapi.json").json()
@@ -836,9 +889,9 @@ class ConflictTagApp(BaseApp):
     """Two endpoints give tag 'x' conflicting descriptions — a wiring error."""
 
     async def wire(self) -> None:
-        self.include_endpoint(ConflictEndpointA())
-        self.include_endpoint(ConflictEndpointB())
-        self.include_openapi(title="t", version="1")
+        self._include_endpoint(ConflictEndpointA())
+        self._include_endpoint(ConflictEndpointB())
+        self._include_openapi(title="t", version="1")
 
 
 def test_conflicting_tag_descriptions_is_a_wiring_error() -> None:
@@ -867,9 +920,9 @@ class RefThenDefineApp(BaseApp):
     """A name-only reference is wired before the description — order must not matter."""
 
     async def wire(self) -> None:
-        self.include_endpoint(EarlyRefEndpoint())
-        self.include_endpoint(LateDefEndpoint())
-        self.include_openapi(title="t", version="1")
+        self._include_endpoint(EarlyRefEndpoint())
+        self._include_endpoint(LateDefEndpoint())
+        self._include_openapi(title="t", version="1")
 
 
 def test_tag_description_set_after_a_reference_is_resolved() -> None:
@@ -900,9 +953,9 @@ class SharedTagApp(BaseApp):
     """Two endpoints share a name-only tag that no one describes or declares centrally."""
 
     async def wire(self) -> None:
-        self.include_endpoint(SharedAEndpoint())
-        self.include_endpoint(SharedBEndpoint())
-        self.include_openapi(title="t", version="1")
+        self._include_endpoint(SharedAEndpoint())
+        self._include_endpoint(SharedBEndpoint())
+        self._include_openapi(title="t", version="1")
 
 
 def test_shared_name_only_tag_is_emitted_once() -> None:
@@ -967,8 +1020,8 @@ class ConstrainedApp(BaseApp):
     """App exercising msgspec.Meta passthrough on a request/response model."""
 
     async def wire(self) -> None:
-        self.include_endpoint(ConstrainedEndpoint())
-        self.include_openapi(title="t", version="1")
+        self._include_endpoint(ConstrainedEndpoint())
+        self._include_openapi(title="t", version="1")
 
 
 def test_meta_constraints_survive_for_arbitrary_models() -> None:
@@ -1037,11 +1090,11 @@ class CoverageApp(BaseApp):
     """Exercises SSE-of-str (+headers), list responses, bytes body, header params."""
 
     async def wire(self) -> None:
-        self.include_endpoint(StrSSEEndpoint())
-        self.include_endpoint(ListItemsEndpoint())
-        self.include_endpoint(BytesBodyEndpoint())
-        self.include_endpoint(HeaderParamEndpoint())
-        self.include_openapi(title="t", version="1")
+        self._include_endpoint(StrSSEEndpoint())
+        self._include_endpoint(ListItemsEndpoint())
+        self._include_endpoint(BytesBodyEndpoint())
+        self._include_endpoint(HeaderParamEndpoint())
+        self._include_openapi(title="t", version="1")
 
 
 def test_sse_str_body_is_string_not_the_header_struct() -> None:
@@ -1102,8 +1155,8 @@ class IntraConflictApp(BaseApp):
     """A single meta describes one tag two different ways."""
 
     async def wire(self) -> None:
-        self.include_endpoint(IntraConflictEndpoint())
-        self.include_openapi(title="t", version="1")
+        self._include_endpoint(IntraConflictEndpoint())
+        self._include_openapi(title="t", version="1")
 
 
 def test_conflicting_tag_descriptions_within_one_meta_is_a_wiring_error() -> None:
@@ -1155,9 +1208,9 @@ class SchemeClashApp(BaseApp):
     """Two auths share scheme_name 'bearerAuth' but are different schemes."""
 
     async def wire(self) -> None:
-        self.include_endpoint(EndpointA(), auth=BearerOne())
-        self.include_endpoint(EndpointB(), auth=ClashAuth())
-        self.include_openapi(title="t", version="1")
+        self._include_endpoint(EndpointA(), auth=BearerOne())
+        self._include_endpoint(EndpointB(), auth=ClashAuth())
+        self._include_openapi(title="t", version="1")
 
 
 def test_clashing_security_scheme_names_is_a_wiring_error() -> None:
@@ -1184,8 +1237,8 @@ class CsvApp(BaseApp):
     """A meta response with a content_type but no model."""
 
     async def wire(self) -> None:
-        self.include_endpoint(CsvEndpoint())
-        self.include_openapi(title="t", version="1")
+        self._include_endpoint(CsvEndpoint())
+        self._include_openapi(title="t", version="1")
 
 
 def test_response_spec_content_type_without_model_is_schemaless_body() -> None:
@@ -1251,10 +1304,10 @@ class ModelMetaApp(BaseApp):
     """App exercising ModelMeta, the meta field, and docstring suppression."""
 
     async def wire(self) -> None:
-        self.include_endpoint(ModelMetaEndpoint())
-        self.include_endpoint(EnvelopeEndpoint())
-        self.include_endpoint(InheritingEndpoint())
-        self.include_openapi(title="t", version="1")
+        self._include_endpoint(ModelMetaEndpoint())
+        self._include_endpoint(EnvelopeEndpoint())
+        self._include_endpoint(InheritingEndpoint())
+        self._include_openapi(title="t", version="1")
 
 
 def test_model_description_comes_from_model_meta() -> None:
@@ -1324,8 +1377,8 @@ class NameApp(BaseApp):
     """App exercising ModelMeta(name=...)."""
 
     async def wire(self) -> None:
-        self.include_endpoint(NameEndpoint())
-        self.include_openapi(title="title", version="version")
+        self._include_endpoint(NameEndpoint())
+        self._include_openapi(title="title", version="version")
 
 
 def test_model_name_overrides_component_key() -> None:
@@ -1369,8 +1422,8 @@ class DupeNameApp(BaseApp):
     """App whose two models collide on ModelMeta(name=...)."""
 
     async def wire(self) -> None:
-        self.include_endpoint(DupeNameEndpoint())
-        self.include_openapi(title="title", version="version")
+        self._include_endpoint(DupeNameEndpoint())
+        self._include_openapi(title="title", version="version")
 
 
 def test_conflicting_model_names_is_a_wiring_error() -> None:
@@ -1404,8 +1457,8 @@ class ClassRespApp(BaseApp):
     """A class-level meta response that carries a body model."""
 
     async def wire(self) -> None:
-        self.include_resource(ClassRespResource())
-        self.include_openapi(title="title", version="version")
+        self._include_resource(ClassRespResource())
+        self._include_openapi(title="title", version="version")
 
 
 def test_class_meta_response_with_model() -> None:
@@ -1434,8 +1487,8 @@ class BytesStreamApp(BaseApp):
     """A bytes-stream response carrying typed headers."""
 
     async def wire(self) -> None:
-        self.include_endpoint(BytesStreamEndpoint())
-        self.include_openapi(title="title", version="version")
+        self._include_endpoint(BytesStreamEndpoint())
+        self._include_openapi(title="title", version="version")
 
 
 def test_bytes_stream_documents_octet_stream_and_headers() -> None:
@@ -1497,10 +1550,10 @@ class UnionPayloadApp(BaseApp):
     """Exercises union item types across NDJSON, SSE, and JSONResponse."""
 
     async def wire(self) -> None:
-        self.include_endpoint(MixedStreamEndpoint())
-        self.include_endpoint(MixedSSEEndpoint())
-        self.include_endpoint(MixedJSONEndpoint())
-        self.include_openapi(title="union", version="1")
+        self._include_endpoint(MixedStreamEndpoint())
+        self._include_endpoint(MixedSSEEndpoint())
+        self._include_endpoint(MixedJSONEndpoint())
+        self._include_openapi(title="union", version="1")
 
 
 def test_union_items_document_anyof_with_discriminator() -> None:
@@ -1564,8 +1617,8 @@ class RenamedUnionApp(BaseApp):
     """App exercising a ModelMeta rename inside a union payload."""
 
     async def wire(self) -> None:
-        self.include_endpoint(RenamedUnionEndpoint())
-        self.include_openapi(title="renamed", version="1")
+        self._include_endpoint(RenamedUnionEndpoint())
+        self._include_openapi(title="renamed", version="1")
 
 
 def test_union_member_rename_rewrites_refs_and_discriminator() -> None:
@@ -1600,8 +1653,8 @@ class DegradedApp(BaseApp):
     """App wiring the degraded endpoint with OpenAPI enabled."""
 
     async def wire(self) -> None:
-        self.include_endpoint(DegradedStreamEndpoint())
-        self.include_openapi(title="degraded", version="1")
+        self._include_endpoint(DegradedStreamEndpoint())
+        self._include_openapi(title="degraded", version="1")
 
 
 def test_unsupported_item_type_fails_loud() -> None:
@@ -1660,13 +1713,13 @@ class DynamicStatusApp(BaseApp):
     """App wiring the dynamic-success-status endpoints."""
 
     async def wire(self) -> None:
-        self.include_endpoint(NoContentOnlyEndpoint())
-        self.include_endpoint(NoContentHeadersEndpoint())
-        self.include_endpoint(CreatedOnlyEndpoint())
-        self.include_endpoint(DynamicStatusEndpoint())
-        self.include_endpoint(PlainUnionEndpoint())
-        self.include_endpoint(PlainListUnionEndpoint())
-        self.include_openapi(title="dynamic", version="1")
+        self._include_endpoint(NoContentOnlyEndpoint())
+        self._include_endpoint(NoContentHeadersEndpoint())
+        self._include_endpoint(CreatedOnlyEndpoint())
+        self._include_endpoint(DynamicStatusEndpoint())
+        self._include_endpoint(PlainUnionEndpoint())
+        self._include_endpoint(PlainListUnionEndpoint())
+        self._include_openapi(title="dynamic", version="1")
 
 
 class NoContentHeaders(Struct):
@@ -1828,13 +1881,13 @@ class NamedApp(BaseApp):
     """App wiring the named-response-type endpoints."""
 
     async def wire(self) -> None:
-        self.include_endpoint(NamedCreatedEndpoint())
-        self.include_endpoint(NamedAcceptedEndpoint())
-        self.include_endpoint(NamedStreamEndpoint())
-        self.include_endpoint(NamedJSONEndpoint())
-        self.include_endpoint(GenericSubclassEndpoint())
-        self.include_endpoint(GenericSubclassUnionEndpoint())
-        self.include_openapi(title="named", version="1")
+        self._include_endpoint(NamedCreatedEndpoint())
+        self._include_endpoint(NamedAcceptedEndpoint())
+        self._include_endpoint(NamedStreamEndpoint())
+        self._include_endpoint(NamedJSONEndpoint())
+        self._include_endpoint(GenericSubclassEndpoint())
+        self._include_endpoint(GenericSubclassUnionEndpoint())
+        self._include_openapi(title="named", version="1")
 
 
 @pytest.fixture(name="named_client")
@@ -1943,9 +1996,9 @@ class BareApp(BaseApp):
     """App wiring the unparameterized-wrapper endpoints."""
 
     async def wire(self) -> None:
-        self.include_endpoint(BareSSEEndpoint())
-        self.include_endpoint(PagedEndpoint())
-        self.include_openapi(title="bare", version="1")
+        self._include_endpoint(BareSSEEndpoint())
+        self._include_endpoint(PagedEndpoint())
+        self._include_openapi(title="bare", version="1")
 
 
 @pytest.fixture(name="bare_client")
@@ -1990,8 +2043,8 @@ class UnparameterizedApp(BaseApp):
     """App wiring the endpoint whose wrapper names no body type."""
 
     async def wire(self) -> None:
-        self.include_endpoint(UnparameterizedEndpoint())
-        self.include_openapi(title="unparameterized", version="1")
+        self._include_endpoint(UnparameterizedEndpoint())
+        self._include_openapi(title="unparameterized", version="1")
 
 
 class GenericBody[T: Struct](JSONResponse[T]):
@@ -2013,8 +2066,8 @@ class GenericBodyApp(BaseApp):
     """App wiring the endpoint whose body parameter stays generic."""
 
     async def wire(self) -> None:
-        self.include_endpoint(GenericBodyEndpoint())
-        self.include_openapi(title="generic", version="1")
+        self._include_endpoint(GenericBodyEndpoint())
+        self._include_openapi(title="generic", version="1")
 
 
 def test_wrapper_naming_no_body_type_is_rejected() -> None:
@@ -2099,13 +2152,13 @@ class AliasApp(BaseApp):
     """App wiring the ``type``-alias return annotations."""
 
     async def wire(self) -> None:
-        self.include_endpoint(NestedAliasEndpoint())
-        self.include_endpoint(GenericAliasEndpoint())
-        self.include_endpoint(UnionAliasEndpoint())
-        self.include_endpoint(DefaultedHeadersEndpoint())
-        self.include_endpoint(ArgumentAliasEndpoint())
-        self.include_endpoint(AliasMemberEndpoint())
-        self.include_openapi(title="alias", version="1")
+        self._include_endpoint(NestedAliasEndpoint())
+        self._include_endpoint(GenericAliasEndpoint())
+        self._include_endpoint(UnionAliasEndpoint())
+        self._include_endpoint(DefaultedHeadersEndpoint())
+        self._include_endpoint(ArgumentAliasEndpoint())
+        self._include_endpoint(AliasMemberEndpoint())
+        self._include_openapi(title="alias", version="1")
 
 
 @pytest.fixture(name="alias_client")
@@ -2192,9 +2245,9 @@ class NestedUnionAliasApp(BaseApp):
     """App wiring the nested-union-alias endpoints."""
 
     async def wire(self) -> None:
-        self.include_endpoint(NestedUnionAliasEndpoint())
-        self.include_endpoint(StreamItemAliasEndpoint())
-        self.include_openapi(title="nested-union", version="1")
+        self._include_endpoint(NestedUnionAliasEndpoint())
+        self._include_endpoint(StreamItemAliasEndpoint())
+        self._include_openapi(title="nested-union", version="1")
 
 
 @pytest.fixture(name="nested_union_client")
@@ -2350,14 +2403,14 @@ class IntermediateApp(BaseApp):
     """App wiring the endpoints whose type arguments resolve through an intermediate class."""
 
     async def wire(self) -> None:
-        self.include_endpoint(OldStyleEndpoint())
-        self.include_endpoint(OrFallbackEndpoint())
-        self.include_endpoint(HouseEndpoint())
-        self.include_endpoint(RateLimitedPageEndpoint())
-        self.include_endpoint(DefaultedEndpoint())
-        self.include_endpoint(HeaderedCreatedEndpoint())
-        self.include_endpoint(HeaderedAcceptedEndpoint())
-        self.include_openapi(title="intermediate", version="1")
+        self._include_endpoint(OldStyleEndpoint())
+        self._include_endpoint(OrFallbackEndpoint())
+        self._include_endpoint(HouseEndpoint())
+        self._include_endpoint(RateLimitedPageEndpoint())
+        self._include_endpoint(DefaultedEndpoint())
+        self._include_endpoint(HeaderedCreatedEndpoint())
+        self._include_endpoint(HeaderedAcceptedEndpoint())
+        self._include_openapi(title="intermediate", version="1")
 
 
 @pytest.fixture(name="intermediate_client")
@@ -2486,8 +2539,8 @@ class MergedWrapperApp(BaseApp):
     """App wiring the mergeable shared-status union."""
 
     async def wire(self) -> None:
-        self.include_endpoint(MergedWrapperEndpoint())
-        self.include_openapi(title="merged", version="1")
+        self._include_endpoint(MergedWrapperEndpoint())
+        self._include_openapi(title="merged", version="1")
 
 
 def test_shared_status_wrappers_merge_bodies_and_headers() -> None:
@@ -2520,8 +2573,8 @@ class MergedBytesApp(BaseApp):
     """App wiring the two-bytes-members union."""
 
     async def wire(self) -> None:
-        self.include_endpoint(MergedBytesEndpoint())
-        self.include_openapi(title="merged-bytes", version="1")
+        self._include_endpoint(MergedBytesEndpoint())
+        self._include_openapi(title="merged-bytes", version="1")
 
 
 def test_members_describing_the_same_body_dedupe_rather_than_merge() -> None:
@@ -2554,8 +2607,8 @@ class ClashingHeaderApp(BaseApp):
     """App wiring the conflicting-header union."""
 
     async def wire(self) -> None:
-        self.include_endpoint(ClashingHeaderEndpoint())
-        self.include_openapi(title="clashing", version="1")
+        self._include_endpoint(ClashingHeaderEndpoint())
+        self._include_openapi(title="clashing", version="1")
 
 
 def test_shared_status_members_disagreeing_on_a_header_fail_loud() -> None:
@@ -2584,8 +2637,8 @@ class MixedMediaApp(BaseApp):
     """App wiring the mixed-media-type union."""
 
     async def wire(self) -> None:
-        self.include_endpoint(MixedMediaEndpoint())
-        self.include_openapi(title="mixed", version="1")
+        self._include_endpoint(MixedMediaEndpoint())
+        self._include_openapi(title="mixed", version="1")
 
 
 def test_shared_status_members_document_both_media_types() -> None:
@@ -2625,8 +2678,8 @@ class UnmergeableApp(BaseApp):
     """App wiring the unmergeable shared-status union."""
 
     async def wire(self) -> None:
-        self.include_endpoint(UnmergeableEndpoint())
-        self.include_openapi(title="unmergeable", version="1")
+        self._include_endpoint(UnmergeableEndpoint())
+        self._include_openapi(title="unmergeable", version="1")
 
 
 def test_shared_status_member_without_a_struct_body_fails_loud() -> None:
@@ -2751,10 +2804,10 @@ class DeclaredErrorsApp(BaseApp):
     """App exercising exception declaration, merging, and precedence."""
 
     async def wire(self) -> None:
-        self.include_endpoint(DeclaredErrorsEndpoint())
-        self.include_endpoint(MergedStatusEndpoint())
-        self.include_endpoint(PrecedenceEndpoint())
-        self.include_openapi(title="declared", version="1")
+        self._include_endpoint(DeclaredErrorsEndpoint())
+        self._include_endpoint(MergedStatusEndpoint())
+        self._include_endpoint(PrecedenceEndpoint())
+        self._include_openapi(title="declared", version="1")
 
 
 def test_declared_exceptions_derive_and_cascade() -> None:
@@ -2831,8 +2884,8 @@ class BadDeclApp(BaseApp):
 
     async def wire(self) -> None:
         """Wire the invalid declaration with OpenAPI enabled."""
-        self.include_endpoint(BadDeclEndpoint())
-        self.include_openapi(title="bad", version="1")
+        self._include_endpoint(BadDeclEndpoint())
+        self._include_openapi(title="bad", version="1")
 
 
 def test_invalid_exceptions_entries_fail_at_wiring() -> None:
@@ -2878,9 +2931,9 @@ class AdaptedSpecApp(BaseApp):
     """App with the adapter registered and OpenAPI served."""
 
     async def wire(self) -> None:
-        self.include_error_adapter(SpecHouseAdapter())
-        self.include_endpoint(AdaptedSpecEndpoint())
-        self.include_openapi(title="adapted", version="1")
+        self._include_error_adapter(SpecHouseAdapter())
+        self._include_endpoint(AdaptedSpecEndpoint())
+        self._include_openapi(title="adapted", version="1")
 
 
 def test_adapter_switches_error_schemas_in_the_spec() -> None:
@@ -2916,8 +2969,8 @@ class FaviconApp(BaseApp):
 
     async def wire(self) -> None:
         """Serve the spec and docs with the configured favicon."""
-        self.include_endpoint(OpenEndpoint())
-        self.include_openapi(title="fav", version="1", favicon=self._favicon)
+        self._include_endpoint(OpenEndpoint())
+        self._include_openapi(title="fav", version="1", favicon=self._favicon)
 
 
 def test_favicon_path_is_served_and_linked(tmp_path: Path) -> None:
@@ -3002,8 +3055,8 @@ class PruneApp(BaseApp):
 
     async def wire(self) -> None:
         """Wire the docs and the endpoint."""
-        self.include_openapi(title="t", version="1")
-        self.include_endpoint(PruneEndpoint())
+        self._include_openapi(title="t", version="1")
+        self._include_endpoint(PruneEndpoint())
 
 
 def test_param_only_structs_are_not_emitted_as_components() -> None:
@@ -3043,8 +3096,8 @@ class SharedApp(BaseApp):
 
     async def wire(self) -> None:
         """Wire the docs and the endpoint."""
-        self.include_openapi(title="t", version="1")
-        self.include_endpoint(SharedEndpoint())
+        self._include_openapi(title="t", version="1")
+        self._include_endpoint(SharedEndpoint())
 
 
 def test_param_struct_also_used_as_a_body_is_kept() -> None:
@@ -3075,8 +3128,8 @@ class DocsConfigApp(BaseApp):
 
     async def wire(self) -> None:
         """Wire docs (with scalar_config) and the endpoint."""
-        self.include_openapi(title="t", version="1", scalar_config=ScalarConfig(hide_models=True))
-        self.include_endpoint(DocsConfigEndpoint())
+        self._include_openapi(title="t", version="1", scalar_config=ScalarConfig(hide_models=True))
+        self._include_endpoint(DocsConfigEndpoint())
 
 
 def test_scalar_config_forwarded_to_scalar_ui() -> None:
@@ -3132,8 +3185,8 @@ class TaggedStreamApp(BaseApp):
 
     async def wire(self) -> None:
         """Wire docs and the endpoint."""
-        self.include_openapi(title="t", version="1")
-        self.include_endpoint(TaggedStreamEndpoint())
+        self._include_openapi(title="t", version="1")
+        self._include_endpoint(TaggedStreamEndpoint())
 
 
 def test_param_prune_keeps_tagged_union_members_via_discriminator() -> None:

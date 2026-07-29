@@ -45,7 +45,7 @@ class App(BaseApp):
     """The benchmark app: one POST endpoint."""
 
     async def wire(self) -> None:
-        self.include_endpoint(MoviesEndpoint())
+        self._include_endpoint(MoviesEndpoint())
 
 
 _BODY = encode(

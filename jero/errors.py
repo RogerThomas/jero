@@ -718,7 +718,7 @@ class StructHTTPError[B: Struct](BaseHTTPError, _abstract=True):
 class ErrorBodyAdapter[B: Struct](ABC):
     """App-wide renderer for the Problem family: compose your own wire body from any
     ``HTTPError`` — the framework built-ins included — registered via
-    ``BaseApp.include_error_adapter``. ``StructHTTPError``\\ s render themselves, so every
+    ``BaseApp._include_error_adapter``. ``StructHTTPError``\\ s render themselves, so every
     error has exactly one renderer.
 
     ``status_field`` optionally names a field the framework *adds* (typed to the exact
@@ -736,7 +736,7 @@ class ErrorBodyAdapter[B: Struct](ABC):
         body_type = _resolve_struct_arg(cls, ErrorBodyAdapter)
         if body_type is None:
             # A generic intermediate (B still unbound) — concrete subclasses bind and
-            # validate; registering an unbound adapter fails at include_error_adapter.
+            # validate; registering an unbound adapter fails at _include_error_adapter.
             return
         cls.body_type = body_type
         cls.status_field = _validated_status_field(cls.status_field, body_type, "ErrorBodyAdapter")

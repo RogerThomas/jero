@@ -2,7 +2,7 @@
 
 Endpoints drop a ``Struct`` on a bounded queue; a single worker dispatches each item to
 the handler registered for its type. Built in ``wire`` via the factory and opened with
-``aenter`` (it is an async context manager), so the worker starts at startup and
+``_aenter`` (it is an async context manager), so the worker starts at startup and
 drains/stops at shutdown — riding the app's existing exit stack.
 
 Not durable: queued items live only in memory and are lost on crash or restart. For
@@ -50,8 +50,8 @@ class BackgroundTasks:
 
     Register one handler per ``Struct`` type (inferred from the handler's parameter);
     endpoints call :meth:`add` to enqueue an item, and a single serial worker dispatches
-    each to its handler. Build it with ``self.create_background_tasks(...)`` inside
-    ``wire`` (sugar for ``await self.aenter(BackgroundTasks(...))``) so the worker
+    each to its handler. Build it with ``self._create_background_tasks(...)`` inside
+    ``wire`` (sugar for ``await self._aenter(BackgroundTasks(...))``) so the worker
     starts at startup and drains/stops at shutdown.
 
     Create it *after* the resources its handlers use, so reverse-order shutdown drains
