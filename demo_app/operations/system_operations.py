@@ -2,7 +2,7 @@
 spotlight, health checks, a raw-form echo, and a cross-module ``from_ref`` link demo."""
 
 from demo_app.models import Health, RawForm, RawFormHeaders, Spotlight, User, Widget, WidgetPath
-from jero import Endpoint, EndpointMeta, JSONResponse, Link, RawHeaders, Tag
+from jero import Endpoint, EndpointMeta, JSONResponse, Link, NoContent, RawHeaders, Tag
 
 
 class WhoAmIEndpoint(Endpoint, path="/me"):
@@ -20,10 +20,19 @@ class SpotlightEndpoint(Endpoint, path="/spotlight"):
     Mounted behind ``OptionalTokenAuth`` (see ``demo_app.app``), whose ``-> User | None``
     return is what makes this route serve anonymous callers. Credentials that are *present
     but invalid* never reach here — jero still answers 401.
+
+    Also the demo of a **union return**: the annotation names two success statuses, and both
+    are derived into the OpenAPI document (200 with a ``Spotlight`` body, 204 with none).
     """
 
-    async def get(self, user: User | None) -> Spotlight:
-        """Return the spotlight widget, personalized when the caller is authenticated."""
+    async def get(self, user: User | None) -> Spotlight | NoContent:
+        """Return the spotlight widget, personalized when authenticated, or 204 when the
+        caller may not see it."""
+        if user is not None and not user.may_see_spotlight:
+            # A real app would probably raise ForbiddenError here — 403 is what "you may
+            # not see this" means. 204 stands in so this endpoint demonstrates a union
+            # return; don't read it as advice on which status to pick.
+            return NoContent()
         return Spotlight(
             widget_id="spotlight", personalized_for=user.name if user is not None else None
         )

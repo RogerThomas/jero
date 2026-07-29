@@ -16,7 +16,7 @@ def test_valid_token_injects_user(client: TestClient) -> None:
     """A valid token authenticates and the user is injected into the handler."""
     resp = client.get("/me", headers={"authorization": "Bearer token"})
     assert resp.status_code == 200
-    assert resp.json() == {"id": "user-id", "name": "user-name"}
+    assert resp.json() == {"id": "user-id", "name": "user-name", "maySeeSpotlight": True}
 
 
 def test_bad_token_is_401(client: TestClient) -> None:
@@ -59,6 +59,14 @@ def test_invalid_credentials_are_still_401(client: TestClient) -> None:
     resp = client.get("/spotlight", headers={"authorization": "Bearer wrong"})
     assert resp.status_code == 401
     assert resp.json() == {"type": "invalid-token", "title": "Invalid token", "status": 401}
+
+
+def test_authenticated_but_unpermitted_caller_gets_no_content(client: TestClient) -> None:
+    """An authenticated caller who may not see the spotlight gets 204, not a rejection —
+    auth failure is only a 401 when the credentials themselves are the problem."""
+    resp = client.get("/spotlight", headers={"authorization": "Bearer no-spotlight-token"})
+    assert resp.status_code == 204
+    assert resp.content == b""
 
 
 # --- A gating authenticator still gates handlers that ignore the user ---

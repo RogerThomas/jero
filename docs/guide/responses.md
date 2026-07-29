@@ -152,7 +152,8 @@ appended — so its repeats survive. `content-type` defaults per kind and
 ## Status codes
 
 Every wrapper carries `status_code: int | None`. Leave it `None` to use the verb's
-default (201 for `create`, else 200); set it to override:
+default (201 for `create`, else 200) — or, for the wrappers that fix a status of their own,
+that status ([below](#dynamic-success-status)). Set it to override either:
 
 ```python
 from msgspec import Struct
@@ -184,6 +185,241 @@ app = App()
 
 `status_code` is available on `BytesResponse` and the [streaming responses](streaming.md)
 too.
+
+## Naming a response type
+
+`JSONResponse[Widget, CacheHeaders]` gets repetitive across a dozen handlers. Give it a name
+with a `type` alias, or by subclassing the wrapper. Both resolve to the same document:
+
+```python
+from dataclasses import dataclass, field
+
+from msgspec import Struct
+
+from jero import BaseApp, Endpoint, JSONResponse
+
+
+class Widget(Struct):
+    id: str
+    name: str
+
+
+class CacheHeaders(Struct):
+    cache_control: str = "no-store"
+
+
+type WidgetResponse = JSONResponse[Widget, CacheHeaders]      # an alias
+type Envelope[T: Struct] = JSONResponse[T, CacheHeaders]      # generic: pin H, vary T
+
+
+@dataclass(kw_only=True, slots=True)
+class Cached(JSONResponse[Widget, CacheHeaders]):             # or a subclass
+    """Same document, plus a default so callers need not pass the headers."""
+
+    headers: CacheHeaders = field(default_factory=CacheHeaders)
+
+
+class Aliased(Endpoint, path="/aliased"):
+    async def get(self) -> WidgetResponse:
+        return JSONResponse(json=Widget(id="w1", name="gizmo"), headers=CacheHeaders())
+
+
+class Enveloped(Endpoint, path="/enveloped"):
+    async def get(self) -> Envelope[Widget]:
+        return JSONResponse(json=Widget(id="w1", name="gizmo"), headers=CacheHeaders())
+
+
+class Subclassed(Endpoint, path="/subclassed"):
+    async def get(self) -> Cached:
+        return Cached(json=Widget(id="w1", name="gizmo"))
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        self.include_endpoint(Aliased())
+        self.include_endpoint(Enveloped())
+        self.include_endpoint(Subclassed())
+        self.include_openapi(title="Widgets", version="1.0")
+
+
+app = App()
+```
+
+All three document one 200 whose schema refs `Widget`, with `cache-control` in `headers`. The
+name you chose appears nowhere in the spec, so pick whichever reads better in your code:
+an alias when you only want the name, a subclass when it should also carry defaults. Aliases
+of aliases resolve, and either form works as a union member (`WidgetResponse | NoContent`).
+
+A subclass may stay generic the way the alias does — `class Envelope[T: Struct](JSONResponse[T,
+CacheHeaders])`, written `-> Envelope[Widget]`. It is classified by the wrapper it derives from,
+so it takes that wrapper's status and sender, and both type arguments resolve: the one the
+annotation supplies and the one the subclass pins.
+
+A wrapper still has to *say* what its body is: `-> JSONResponse` with no `[Widget]` anywhere in
+the chain fails at startup with `must name its body type`, since there would be no schema to
+derive. Like the other spec-shape checks below, it runs when `include_openapi` is enabled, which
+is where the schema is actually needed. `SSEResponse` is the exception, its `T` defaulting
+to `str`.
+
+## Dynamic success status
+
+A handler can answer with **different** success statuses depending on what it finds,
+while both branches stay statically typed and both show up in the OpenAPI spec: return a
+**union of response wrappers**.
+
+Three wrappers exist for the success statuses REST actually uses beyond 200:
+
+- `NoContent[H: Struct | None = None]` — 204, no body. Still carries `headers`,
+  `raw_headers`, `location`, and `links` like any response (a 204 may legitimately carry
+  a `Location`); at 204 neither `content-type` nor `content-length` is sent, since the
+  status forbids them.
+- `Created[T: Struct, H: Struct | None = None]` — 201 + a JSON body, regardless of the
+  verb's own default.
+- `Accepted[T: Struct, H: Struct | None = None]` — 202 + a JSON body, regardless of the
+  verb's own default.
+
+Any return type from this page can be a union member, **plain returns included** — a bare
+`Struct` needs no wrapper just to sit beside a `NoContent`:
+
+```python
+from msgspec import Struct
+
+from jero import BaseApp, NoContent, Resource
+
+
+class Widget(Struct):
+    id: str
+    name: str
+
+
+class WidgetPath(Struct):
+    widget_id: str
+
+
+class WidgetResource(Resource, path="/widgets"):
+    async def read_one(self, path: WidgetPath) -> Widget | NoContent:
+        if path.widget_id.startswith("draft-"):
+            return NoContent()                             # 204: exists, nothing to show
+        return Widget(id=path.widget_id, name="gizmo")     # 200 + Widget
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        self.include_resource(WidgetResource())
+        self.include_openapi(title="Widgets", version="1.0")
+
+
+app = App()
+```
+
+Both branches are documented: the spec's `200` response describes `Widget`, and its `204`
+has no body. Reach for a wrapper on a branch only when that branch needs one —
+`JSONResponse[Widget, Headers] | NoContent` to add typed headers to the 200, say.
+
+Note what the 204 branch is *not* for. A widget that doesn't exist is a `404`, which
+`read_one` already derives from having a `path` source — returning 204 for it would document
+two statuses meaning the same thing. A union of success wrappers is for outcomes the caller
+asked for; failures stay [errors you raise](rest.md).
+
+Each member's status is the one it would have on its own: a plain `Struct`,
+`list[Struct]`, `bytes`, `JSONResponse`, or `BytesResponse` takes the verb's default
+(201 for `create`, else 200); `NoContent` / `Created` / `Accepted` take their own.
+
+### Members that share a status
+
+Members are free to land on the *same* status. OpenAPI keys one response per status, so
+they merge into it — bodies as one `anyOf`, header maps unioned, and differing media types
+side by side:
+
+```python
+from msgspec import Struct
+
+from jero import BaseApp, Endpoint, JSONResponse
+
+
+class Widget(Struct, tag=True):
+    id: str
+    name: str
+
+
+class Archived(Struct, tag=True):
+    id: str
+    archived_at: str
+
+
+class CacheHeaders(Struct):
+    cache_control: str = "no-store"
+
+
+class RateHeaders(Struct):
+    x_rate_limit: int = 100
+
+
+class AcceptHeaders(Struct):
+    accept: str = "application/json"
+
+
+class MergedBodies(Endpoint, path="/merged-bodies"):
+    async def get(self) -> Widget | Archived:                        # both 200
+        return Archived(id="widget-id", archived_at="2026-01-01")
+
+
+class MergedHeaders(Endpoint, path="/merged-headers"):
+    async def get(
+        self,
+    ) -> JSONResponse[Widget, CacheHeaders] | JSONResponse[Archived, RateHeaders]:
+        return JSONResponse(json=Widget(id="widget-id", name="gizmo"), headers=CacheHeaders())
+
+
+class Negotiated(Endpoint, path="/negotiated"):
+    async def get(self, headers: AcceptHeaders) -> bytes | JSONResponse[Widget]:
+        if headers.accept == "application/octet-stream":
+            return b"raw bytes"
+        return JSONResponse(json=Widget(id="widget-id", name="gizmo"))
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        self.include_endpoint(MergedBodies())
+        self.include_endpoint(MergedHeaders())
+        self.include_endpoint(Negotiated())
+        self.include_openapi(title="Widgets", version="1.0")
+
+
+app = App()
+```
+
+`MergedBodies` documents exactly what `JSONResponse[Widget | Archived]` documents: one 200
+whose schema is `anyOf: [Widget, Archived]`, with a `discriminator` because the members are
+tagged. The two spellings agree, so pick whichever reads better.
+
+`MergedHeaders` shows wrappers merging the same way, each carrying its own typed headers:
+the 200 gets both `cache-control` and `x-rate-limit`. Nothing is lost by merging — OpenAPI
+response headers are emitted without `required`, so a single header Struct was never
+asserting presence either. What you gain over hand-merging into
+`JSONResponse[Widget | Archived, BothHeaders]` is that the type checker now enforces the
+*pairing*: a `Widget` can't be returned with `RateHeaders`.
+
+`Negotiated` shows members that encode *differently*. `content` is keyed by media type, so
+they sit side by side rather than merging — the OpenAPI shape for content negotiation, and
+what the handler is actually doing. Its 200 documents both `application/octet-stream` and
+`application/json`.
+
+### What's rejected
+
+- A **streaming** member. Its sender owns the response lifecycle (disconnect handling,
+  mid-stream failure) and can't be chosen after the handler has already returned.
+- Members at one status that **disagree on a header** — two `H` Structs describing the
+  same wire name with different types. One status, one header map, no way to say both.
+- Members at one status whose bodies **differ but can't compose** into an `anyOf` — a
+  `list[Struct]` (an array) beside a Struct (an object), say. Members describing the *same*
+  body are fine and simply dedupe: `BytesResponse[CacheHeaders] | BytesResponse[RateHeaders]`
+  is one binary body with both header sets.
+- `-> Widget | None`, with a pointed message: it's the natural typo for this feature.
+  Return `NoContent`, not `None`, for a 204.
+
+The header and body-merge checks are questions about the generated document, so they run
+when `include_openapi` is enabled — like the streaming item-type checks.
 
 ## Errors
 

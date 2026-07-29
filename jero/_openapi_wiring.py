@@ -10,10 +10,11 @@ dependency graph stays acyclic (``core`` imports *this* module, never the revers
 
 from collections.abc import Mapping, Sequence
 from functools import cache
-from types import UnionType
-from typing import Any, Literal, Union, cast, get_args, get_origin
+from types import UnionType, get_original_bases
+from typing import Any, Generic, Literal, TypeVar, Union, cast, get_args, get_origin
 
 from msgspec import Struct, defstruct
+from msgspec.structs import fields as struct_fields
 
 from jero._wiring_types import (
     FormSpec,
@@ -23,7 +24,10 @@ from jero._wiring_types import (
     Sources,
     WiringError,
     is_struct_type,
+    param_bindings,
     strip_list,
+    substitute,
+    unwrap_alias,
 )
 from jero.errors import (
     AuthenticationRequiredError,
@@ -43,6 +47,7 @@ from jero.openapi import (
     FormFieldSpec,
     OperationInput,
     ParamSpec,
+    ResponseBody,
     ResponseEntry,
     ResponseSpec,
     Tag,
@@ -124,31 +129,115 @@ _WRAPPER_NAMES: dict[ReturnKind, str] = {
     "stream-ndjson": "NDJSONStreamingResponse",
     "stream-sse": "SSEResponse",
     "json-response": "JSONResponse",
+    "created": "Created",
+    "accepted": "Accepted",
 }
 
 
+def _is_generic(annotation: object) -> bool:
+    """Whether a type expression still mentions a type parameter anywhere — ``T``, but also
+    ``T | ServerSentEvent[T]``. Such an expression states no concrete type."""
+    if isinstance(annotation, TypeVar):
+        return True
+    return any(_is_generic(arg) for arg in get_args(annotation))
+
+
+def _bound_only(args: tuple[object, ...]) -> tuple[object, ...]:
+    """``args`` with every still-generic position blanked to ``None``, so a parameter nothing
+    ever bound never reads as a stated type."""
+    return tuple(None if _is_generic(arg) else arg for arg in args)
+
+
+def _type_params(origin: type) -> Sequence[object]:
+    """A class's own type parameters. ``__type_params__`` is the PEP 695 spelling and is empty
+    for a pre-695 ``class Api(Generic[T], JSONResponse[T, H])``, whose parameters live on
+    ``__parameters__`` instead — so fall back to it rather than reading such a class as binding
+    nothing and rejecting an annotation that does state its types. Both are empty once every
+    parameter is bound, so the fallback only ever adds genuinely open parameters."""
+    return getattr(origin, "__type_params__", ()) or getattr(origin, "__parameters__", ())
+
+
+def _resolve_args(annotation: object, target: type) -> tuple[object, ...]:
+    """The arguments ``annotation`` supplies to ``target``, in ``target``'s own parameter order.
+
+    Walks up the original bases substituting each level's bindings into the next, so an
+    intermediate generic cannot shift the positions. ``class ApiResponse[T](JSONResponse[T,
+    TraceHeaders])`` then ``class WidgetResponse(ApiResponse[Item])`` resolves to
+    ``(Item, TraceHeaders)`` — reading the nearest base's arguments as if they were the
+    wrapper's own would give ``(Item,)`` and quietly drop the header type. ``()`` when
+    ``target`` is not in the chain at all."""
+    origin = get_origin(annotation) or annotation
+    if not isinstance(origin, type):
+        return ()
+    params = _type_params(origin)
+    bindings = param_bindings(params, get_args(annotation))
+    if origin is target:
+        return tuple(
+            bindings.get(param) if isinstance(param, TypeVar) else None for param in params
+        )
+    for base in get_original_bases(origin):
+        if (get_origin(base) or base) is Generic:
+            continue  # a bare parameter list, carrying no inheritance to follow
+        resolved = _resolve_args(substitute(base, bindings), target)
+        if resolved:
+            return resolved
+    return ()
+
+
+def _wrapper_args(annotation: object, wrapper: type | None) -> tuple[object, ...]:
+    """The type arguments a return annotation states for its ``wrapper``'s ``(T, H)``, resolved
+    through however many named subclasses sit in between and blanked wherever nothing was
+    stated.
+
+    ``class WidgetResponse(JSONResponse[Widget])`` is legal, type-checks, and is a natural way
+    for a project to name its response types — but it holds ``Widget`` on its original base
+    rather than on itself, so reading only ``get_args`` would see nothing and lose a schema the
+    annotation does state. Resolution targets ``wrapper`` and stops there, which is also why a
+    wrapper's own bases are never mistaken for bound arguments: a bare ``-> JSONResponse``
+    resolves ``T`` to nothing rather than to ``BaseResponse[H]``'s ``H``."""
+    if wrapper is None:
+        return ()
+    resolved = tuple(unwrap_alias(arg) for arg in _resolve_args(annotation, wrapper))
+    return _bound_only(resolved)
+
+
 def _item_payload(
-    annotation: object, kind: ReturnKind, operation_id: str, *, allow_str: bool = False
+    annotation: object,
+    kind: ReturnKind,
+    wrapper: type | None,
+    operation_id: str,
+    *,
+    allow_str: bool = False,
 ) -> type[Struct] | UnionType | None:
     """The streamed/enveloped item type — the *first* type arg (``T`` in ``Wrapper[T, H]``,
     positional so a non-Struct ``T`` is never mistaken for the later header type ``H``) —
     as a schema payload: a Struct, or a union of Structs normalized to ``A | B`` form
     (msgspec schemas a union directly: ``anyOf``, plus a ``discriminator`` when the members
-    are tagged). ``None`` for an unparameterized wrapper — and for ``str`` where the
-    wrapper's bound allows it (SSE) — each caller documents its bare fallback. Any other
-    ``T`` fails loud: a typed return annotation must never silently lose its schema."""
-    args = get_args(annotation)
+    are tagged).
+
+    ``None`` only where the wrapper states a type without an explicit argument: ``str`` where
+    the bound allows it, which covers both an explicit ``SSEResponse[str]`` and a bare
+    ``SSEResponse`` (whose ``T`` defaults to ``str``). A ``T`` nothing bound at all fails loud,
+    as does any other ``T`` — a return annotation is where the response schema comes from, so
+    it must never silently lose one."""
+    args = _wrapper_args(annotation, wrapper)
     item = args[0] if args else None
-    if item is None or (allow_str and item is str):
+    if item is None:
+        name = _WRAPPER_NAMES[kind]
+        raise WiringError(
+            f"{operation_id}: {name} must name its body type — write {name}[YourStruct]. "
+            f"A bare {name} declares no schema, and the spec is derived from the annotation."
+        )
+    if allow_str and item is str:
         return None
     if is_struct_type(item):
         return cast("type[Struct]", item)
     if get_origin(item) in (Union, UnionType):
-        members = get_args(item)
+        members = tuple(unwrap_alias(member) for member in get_args(item))
         if all(is_struct_type(member) or (allow_str and member is str) for member in members):
-            union = members[0]
+            union: type | UnionType = cast("type", members[0])
             for member in members[1:]:
-                union = union | member
+                union = union | cast("type", member)
             return cast("UnionType", union)
     allowed = "a Struct, str, or a union of them" if allow_str else "a Struct or a union of Structs"
     raise WiringError(
@@ -156,14 +245,17 @@ def _item_payload(
     )
 
 
-def _response_header_type(kind: ReturnKind, annotation: object) -> type[Struct] | None:
+def _response_header_type(
+    kind: ReturnKind, annotation: object, wrapper: type | None
+) -> type[Struct] | None:
     """The typed response-header Struct ``H`` from a response wrapper's annotation, if any.
-    Its position depends on the wrapper: ``Bytes``/``Streaming`` take only ``H``; the rest
-    take ``T`` then ``H`` (so ``H`` is the second arg, present only when both are given)."""
-    args = get_args(annotation)
-    if kind in ("bytes-response", "stream-bytes"):
+    Its position depends on the wrapper: ``Bytes``/``Streaming``/``NoContent`` take only
+    ``H``; the rest take ``T`` then ``H`` (so ``H`` is the second arg, present only when
+    both are given)."""
+    args = _wrapper_args(annotation, wrapper)
+    if kind in ("bytes-response", "stream-bytes", "no-content"):
         candidate = args[0] if args else None
-    elif kind in ("json-response", "stream-ndjson", "stream-sse"):
+    elif kind in ("json-response", "stream-ndjson", "stream-sse", "created", "accepted"):
         candidate = args[1] if len(args) > 1 else None
     else:
         return None
@@ -254,10 +346,12 @@ def _exception_entries(
         models = tuple(dict.fromkeys(_exception_docs_model(cls, adapter) for cls in classes))
         if len(models) == 1:
             responses.append(
-                ResponseEntry(status, description, "application/json", model=models[0])
+                ResponseEntry.single(status, description, "application/json", model=models[0])
             )
         else:
-            responses.append(ResponseEntry(status, description, "application/json", one_of=models))
+            responses.append(
+                ResponseEntry.single(status, description, "application/json", one_of=models)
+            )
     return responses
 
 
@@ -296,7 +390,7 @@ def _error_responses(
         statuses.append(401)
     statuses.append(500)
     return [
-        ResponseEntry(
+        ResponseEntry.single(
             status,
             _error_description(_STATUS_ERRORS[status]),
             "application/json",
@@ -310,55 +404,164 @@ def _entry_from_spec(spec: ResponseSpec) -> ResponseEntry:
     """A user-declared ``ResponseSpec`` (from meta) as an internal response entry: a body
     referencing ``model``, a schemaless body of an explicit ``content_type``, or no body."""
     if spec.model is not None:
-        return ResponseEntry(
+        return ResponseEntry.single(
             spec.status, spec.description, spec.content_type or "application/json", model=spec.model
         )
     if spec.content_type is not None:
-        return ResponseEntry(spec.status, spec.description, spec.content_type, schema={})
+        return ResponseEntry.single(spec.status, spec.description, spec.content_type, schema={})
     return ResponseEntry(spec.status, spec.description)
 
 
-def _success_entry(status: int, sources: Sources, operation_id: str) -> ResponseEntry:
-    kind = sources.return_kind
-    annotation = sources.return_annotation
+def _success_entry(
+    kind: ReturnKind, status: int, annotation: object, wrapper: type | None, operation_id: str
+) -> ResponseEntry:
+    """The documented response for one return kind — a union's member, or the sole
+    kind/annotation/status of a non-union return."""
     description = _STATUS_TEXT.get(status, "Successful response")
-    headers = _response_header_type(kind, annotation)
+    header_type = _response_header_type(kind, annotation, wrapper)
+    headers = () if header_type is None else (header_type,)
+    if kind == "no-content":
+        return ResponseEntry(status, description, headers=headers)
     if kind in ("bytes", "bytes-response", "stream-bytes"):
-        return ResponseEntry(status, description, "application/octet-stream", headers=headers)
+        return ResponseEntry.single(
+            status, description, "application/octet-stream", headers=headers
+        )
     if kind == "stream-ndjson":
-        item = _item_payload(annotation, kind, operation_id)
-        if item is None:  # bare NDJSONStreamingResponse (no [T]) -> any JSON object per line
-            return ResponseEntry(
-                status, description, "application/x-ndjson", schema={}, headers=headers
-            )
-        return ResponseEntry(
+        item = _item_payload(annotation, kind, wrapper, operation_id)
+        return ResponseEntry.single(
             status, description, "application/x-ndjson", model=item, headers=headers
         )
     if kind == "stream-sse":
-        item = _item_payload(annotation, kind, operation_id, allow_str=True)
+        item = _item_payload(annotation, kind, wrapper, operation_id, allow_str=True)
         if item is None:  # SSEResponse[str] / bare -> the data is a plain string
-            return ResponseEntry(
+            return ResponseEntry.single(
                 status, description, "text/event-stream", schema={"type": "string"}, headers=headers
             )
-        return ResponseEntry(status, description, "text/event-stream", model=item, headers=headers)
-    if kind == "json-response":
-        item = _item_payload(annotation, kind, operation_id)
-        if item is None:  # bare JSONResponse (no [T]) -> any JSON
-            return ResponseEntry(
-                status, description, "application/json", schema={}, headers=headers
-            )
-        return ResponseEntry(status, description, "application/json", model=item, headers=headers)
+        return ResponseEntry.single(
+            status, description, "text/event-stream", model=item, headers=headers
+        )
+    if kind in ("json-response", "created", "accepted"):
+        item = _item_payload(annotation, kind, wrapper, operation_id)
+        return ResponseEntry.single(
+            status, description, "application/json", model=item, headers=headers
+        )
     # kind == "json": a Struct or list[Struct]
     item_ann, is_list = strip_list(annotation)
     if is_struct_type(item_ann):
-        return ResponseEntry(
+        return ResponseEntry.single(
             status,
             description,
             "application/json",
             model=cast("type[Struct]", item_ann),
             is_list=is_list,
         )
-    return ResponseEntry(status, description, "application/json", schema={})
+    return ResponseEntry.single(status, description, "application/json", schema={})
+
+
+def _merged_body_model(bodies: Sequence[ResponseBody], operation_id: str) -> UnionType:
+    """The ``A | B`` body for several members sharing one status *and* media type, so they
+    document as one ``anyOf`` (with msgspec's ``discriminator`` when the members are
+    tagged) — identical to what those Structs produce inside ``JSONResponse[A | B]``."""
+    merged: type[Struct] | UnionType | None = None
+    for body in bodies:
+        if body.model is None or body.is_list:
+            # An anyOf composes object schemas. A bodyless member has no schema to contribute,
+            # and a list documents an array; neither combines into one that still says anything.
+            raise WiringError(
+                f"{operation_id}: union return members sharing a status and media type must "
+                f"each declare a Struct body to merge into one anyOf; a bodyless or "
+                f"list[Struct] member cannot be combined — give it its own status",
+            )
+        merged = body.model if merged is None else merged | body.model
+    return cast("UnionType", merged)
+
+
+def _merged_header_types(
+    entries: Sequence[ResponseEntry], operation_id: str
+) -> tuple[type[Struct], ...]:
+    """Every member's ``H`` for one status, de-duplicated. A status has exactly one header
+    map, so two members describing the same wire name with *different* field types cannot
+    both be documented — that is a loud wiring failure rather than a silent last-wins."""
+    by_wire_name: dict[str, object] = {}
+    collected: dict[type[Struct], None] = {}
+    for entry in entries:
+        for header_type in entry.headers:
+            for field_info in struct_fields(header_type):
+                wire_name = field_info.name.replace("_", "-")
+                previous = by_wire_name.get(wire_name)
+                if previous is not None and previous != field_info.type:
+                    raise WiringError(
+                        f"{operation_id}: union return members sharing a status disagree on "
+                        f"response header {wire_name!r} ({previous!r} vs {field_info.type!r}); "
+                        f"one status has one header map, so give them distinct statuses or "
+                        f"one shared header Struct",
+                    )
+                by_wire_name[wire_name] = field_info.type
+            collected.setdefault(header_type, None)
+    return tuple(collected)
+
+
+def _merge_status_group(
+    entries: Sequence[ResponseEntry], status: int, operation_id: str
+) -> ResponseEntry:
+    """Several union members resolving to one status, as the single response OpenAPI keys
+    by that status: header maps unioned, and bodies grouped by media type — several at one
+    media type merge into an ``anyOf``, while different media types sit side by side in
+    ``content`` (which is keyed by media type precisely so they can).
+    """
+    by_media_type: dict[str, list[ResponseBody]] = {}
+    for entry in entries:
+        # A bodyless member (NoContent) contributes headers only; it has no media type.
+        for body in entry.bodies:
+            by_media_type.setdefault(body.content_type, []).append(body)
+    bodies: list[ResponseBody] = []
+    for media_type, group in by_media_type.items():
+        # Two members can describe the *same* body: `BytesResponse[A] | BytesResponse[B]`
+        # differ only in their headers, and both render the one binary schema. Identical
+        # descriptions are a single response body, so dedupe before merging — otherwise a
+        # pair that needs no merge at all would be sent to _merged_body_model, which has
+        # nothing to build an anyOf from and would reject a perfectly sayable response.
+        unique: list[ResponseBody] = []
+        for body in group:
+            if body not in unique:
+                unique.append(body)
+        bodies.append(
+            unique[0]
+            if len(unique) == 1
+            else ResponseBody(media_type, model=_merged_body_model(unique, operation_id))
+        )
+    return ResponseEntry(
+        status,
+        _STATUS_TEXT.get(status, "Successful response"),
+        tuple(bodies),
+        _merged_header_types(entries, operation_id),
+    )
+
+
+def _success_entries(status: int, sources: Sources, operation_id: str) -> list[ResponseEntry]:
+    """One documented response per success *status*: a non-union return contributes the one
+    it declared, and a union contributes one entry per status its members resolve to, with
+    several members at one status merged into the single response OpenAPI allows there."""
+    if sources.return_kind != "union":
+        return [
+            _success_entry(
+                sources.return_kind,
+                status,
+                sources.return_annotation,
+                sources.return_wrapper,
+                operation_id,
+            )
+        ]
+    by_status: dict[int, list[ResponseEntry]] = {}
+    for member in sources.return_members:
+        entry = _success_entry(
+            member.kind, member.status, member.annotation, member.wrapper, operation_id
+        )
+        by_status.setdefault(member.status, []).append(entry)
+    return [
+        group[0] if len(group) == 1 else _merge_status_group(group, member_status, operation_id)
+        for member_status, group in by_status.items()
+    ]
 
 
 def operation_input(
@@ -381,8 +584,8 @@ def operation_input(
     # Responses cascade by status: derived (lowest), then declared exceptions, then
     # explicit ResponseSpecs — class-meta before op-meta within each layer.
     responses: dict[int, ResponseEntry] = {}
-    success = _success_entry(spec.success_status, spec.sources, operation_id)
-    responses[success.status] = success
+    for entry in _success_entries(spec.success_status, spec.sources, operation_id):
+        responses[entry.status] = entry
     for entry in _error_responses(spec.sources, authed=spec.auth_mode is not None, adapter=adapter):
         responses[entry.status] = entry
     for entry in _exception_entries(spec, adapter, operation_id):

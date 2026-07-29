@@ -91,6 +91,7 @@ class User(Camel):
 
     id: str
     name: str
+    may_see_spotlight: bool = True
 
 
 class Health(Camel):

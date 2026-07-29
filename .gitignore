@@ -224,3 +224,5 @@ app
 
 # macOS
 .DS_Store
+
+.claude*

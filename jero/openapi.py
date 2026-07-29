@@ -235,20 +235,56 @@ class BodySpec:
 
 
 @dataclass(slots=True)
-class ResponseEntry:
-    """One documented response: a ``model`` ($ref — or, for a union of Structs, msgspec's
-    ``anyOf`` with a ``discriminator`` when the members are tagged), a ``list`` of it, a
-    ``one_of`` of several body variants (declared errors sharing a status), a verbatim
-    ``schema``, or no content. ``headers`` expands a Struct into response headers."""
+class ResponseBody:
+    """One media type's body within a response: a ``model`` ($ref, or msgspec's ``anyOf``
+    for a union of Structs), a ``list`` of it, a ``one_of`` of several variants, or a
+    verbatim ``schema``."""
 
-    status: int
-    description: str
-    content_type: str | None = None
+    content_type: str
     model: type[Struct] | UnionType | None = None
     is_list: bool = False
     schema: dict[str, Any] | None = None
-    headers: type[Struct] | None = None
     one_of: tuple[type[Struct], ...] = ()
+
+
+@dataclass(slots=True)
+class ResponseEntry:
+    """One documented response: its ``bodies`` and its response headers.
+
+    ``bodies`` holds one entry per media type. ``content`` is keyed by media type, so a
+    status may carry several — what a union return whose members encode differently resolves
+    to, and the OpenAPI shape for content negotiation. Empty means a response with no body.
+    Almost every response has exactly one, so build those with :meth:`single` rather than
+    assembling a tuple by hand.
+
+    ``headers`` is a *tuple* of Structs, expanded into one merged response-header map: a
+    status has exactly one such map, but several union return members can reach it, each
+    contributing its own ``H`` (see ``_success_entries``). Every entry is emitted without
+    ``required``, which OpenAPI reads as optional — so merging asserts nothing that a
+    single Struct did not.
+    """
+
+    status: int
+    description: str
+    bodies: tuple[ResponseBody, ...] = ()
+    headers: tuple[type[Struct], ...] = ()
+
+    @classmethod
+    def single(
+        cls,
+        status: int,
+        description: str,
+        content_type: str,
+        *,
+        model: type[Struct] | UnionType | None = None,
+        is_list: bool = False,
+        schema: dict[str, Any] | None = None,
+        one_of: tuple[type[Struct], ...] = (),
+        headers: tuple[type[Struct], ...] = (),
+    ) -> "ResponseEntry":
+        """A response documenting one media type — every response but a merged union return."""
+        body = ResponseBody(content_type, model, is_list, schema, one_of)
+        return cls(status, description, (body,), headers)
 
 
 @dataclass(slots=True)
@@ -280,18 +316,23 @@ def _ref_name(ref_schema: dict[str, Any]) -> str:
     return ref_schema["$ref"].rsplit("/", 1)[-1]
 
 
-def _response_payload_types(response: ResponseEntry) -> tuple[object, ...]:
-    """The types a response contributes to the schema pass: its ``one_of`` variants, or
-    its model — plus, when the model is a union, each member. ModelMeta
+def _body_payload_types(body: ResponseBody) -> tuple[object, ...]:
+    """The types one media type's body contributes to the schema pass: its ``one_of``
+    variants, or its model — plus, when the model is a union, each member. ModelMeta
     renames/descriptions are discovered per collected type, so a member reached only
     through a union must be collected itself."""
-    if response.one_of:
-        return response.one_of
-    if response.model is None:
+    if body.one_of:
+        return body.one_of
+    if body.model is None:
         return ()
-    if isinstance(response.model, UnionType):
-        return (response.model, *get_args(response.model))
-    return (response.model,)
+    if isinstance(body.model, UnionType):
+        return (body.model, *get_args(body.model))
+    return (body.model,)
+
+
+def _response_payload_types(response: ResponseEntry) -> tuple[object, ...]:
+    """Every type a response contributes to the schema pass, across all its media types."""
+    return tuple(payload for body in response.bodies for payload in _body_payload_types(body))
 
 
 def _collect_types(operations: tuple[OperationInput, ...]) -> list[object]:
@@ -313,8 +354,8 @@ def _collect_types(operations: tuple[OperationInput, ...]) -> list[object]:
         for response in op.responses:
             for payload in _response_payload_types(response):
                 seen.setdefault(payload, None)
-            if response.headers is not None:
-                seen.setdefault(response.headers, None)
+            for header_type in response.headers:
+                seen.setdefault(header_type, None)
     return list(seen)
 
 
@@ -598,36 +639,51 @@ def _request_body(body: BodySpec, schemas: _Schemas) -> dict[str, Any]:
     }
 
 
-def _response_headers(headers: type[Struct], schemas: _Schemas) -> dict[str, Any]:
-    props = schemas.properties(headers)
-    return {
-        field_info.name.replace("_", "-"): {"schema": props.get(field_info.encode_name, {})}
-        for field_info in struct_fields(headers)
-    }
+def _response_headers(headers: tuple[type[Struct], ...], schemas: _Schemas) -> dict[str, Any]:
+    """The merged response-header map for a status. Several Structs can reach one status
+    (union return members each carrying their own ``H``); ``_openapi_wiring`` has already
+    rejected any wire name they disagree on, so a later Struct only ever re-states a name
+    an earlier one described identically."""
+    merged: dict[str, Any] = {}
+    for header_type in headers:
+        props = schemas.properties(header_type)
+        for field_info in struct_fields(header_type):
+            merged[field_info.name.replace("_", "-")] = {
+                "schema": props.get(field_info.encode_name, {})
+            }
+    return merged
+
+
+def _response_body(body: ResponseBody, schemas: _Schemas) -> dict[str, dict[str, Any]]:
+    """One media type's entry in a response's ``content`` map."""
+    examples = None
+    if body.schema is not None:
+        schema = body.schema
+    elif body.one_of:
+        # several declared errors share this status: alternatives, not an open union
+        schema = {"oneOf": [schemas.ref(variant) for variant in body.one_of]}
+    elif isinstance(body.model, UnionType):
+        # a union of Structs: msgspec's anyOf (+ discriminator when the members are tagged)
+        schema = schemas.schema_for(body.model)
+    elif body.model is not None:
+        schema = _array(schemas.ref(body.model)) if body.is_list else schemas.ref(body.model)
+        composed = schemas.model_examples(body.model)
+        if composed:
+            # a list response example is the whole array; a single response, each object
+            examples = _examples_map([composed] if body.is_list else composed)
+    else:
+        schema = _binary_schema()
+    return _content(body.content_type, schema, examples)
 
 
 def _response(entry: ResponseEntry, schemas: _Schemas) -> dict[str, Any]:
     response: dict[str, Any] = {"description": entry.description}
-    if entry.content_type is not None:
-        examples = None
-        if entry.schema is not None:
-            schema = entry.schema
-        elif entry.one_of:
-            # several declared errors share this status: alternatives, not an open union
-            schema = {"oneOf": [schemas.ref(variant) for variant in entry.one_of]}
-        elif isinstance(entry.model, UnionType):
-            # a union of Structs: msgspec's anyOf (+ discriminator when the members are tagged)
-            schema = schemas.schema_for(entry.model)
-        elif entry.model is not None:
-            schema = _array(schemas.ref(entry.model)) if entry.is_list else schemas.ref(entry.model)
-            composed = schemas.model_examples(entry.model)
-            if composed:
-                # a list response example is the whole array; a single response, each object
-                examples = _examples_map([composed] if entry.is_list else composed)
-        else:
-            schema = _binary_schema()
-        response["content"] = _content(entry.content_type, schema, examples)
-    if entry.headers is not None:
+    content: dict[str, dict[str, Any]] = {}
+    for body in entry.bodies:
+        content |= _response_body(body, schemas)
+    if content:
+        response["content"] = content
+    if entry.headers:
         response["headers"] = _response_headers(entry.headers, schemas)
     return response
 

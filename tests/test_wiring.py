@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import pytest
 from msgspec import Struct
 
-from jero import Auth, BaseApp, Endpoint, Resource
+from jero import Auth, BaseApp, Endpoint, JSONResponse, NoContent, Resource, StreamingResponse
 from jero.testing import TestClient
 
 
@@ -119,6 +119,73 @@ def test_non_struct_return_type() -> None:
     """Wiring a handler with an unsupported return type fails at startup."""
     with pytest.raises(RuntimeError, match="must declare a return type"):
         TestClient(_ResourceApp(NonStructReturnResource()))
+
+
+# --- Union returns: a closed vocabulary of statically-typed response wrappers ---
+
+
+class UnionNoneResource(Resource, path="/x"):
+    """Resource whose handler unions its return with None instead of NoContent."""
+
+    async def read_many(self) -> JSONResponse[P] | None:  # the natural typo for a 204
+        """Handler illegally declaring '| None' instead of '| NoContent'."""
+        return JSONResponse(json=P(name="name"))
+
+
+class UnionNonWrapperResource(Resource, path="/x"):
+    """Resource whose union return includes a type that is no return kind at all."""
+
+    async def read_many(self) -> int | NoContent:  # int is not a return type, unioned or not
+        """Handler unioning an unsupported plain int with NoContent."""
+        return 0
+
+
+class UnionStreamingResource(Resource, path="/x"):
+    """Resource whose union return mixes a streaming wrapper with a buffered one."""
+
+    async def read_many(self) -> StreamingResponse | NoContent:  # out of scope
+        """Handler unioning a streaming response with a buffered one."""
+        return NoContent()
+
+
+class Q(Struct):
+    """A second minimal struct, for the shared-status body union."""
+
+    count: int
+
+
+class UnionSharedStatusStructsResource(Resource, path="/x"):
+    """Resource whose union return has two bare Structs at one status — legal."""
+
+    async def read_many(self) -> P | Q:
+        """Two bodies at 200; they document as one anyOf."""
+        return P(name="name")
+
+
+def test_union_return_with_none_is_rejected() -> None:
+    """A union return with '| None' names the fix: '| NoContent' for a 204."""
+    with pytest.raises(RuntimeError, match="did you mean"):
+        TestClient(_ResourceApp(UnionNoneResource()))
+
+
+def test_union_return_with_an_unsupported_member_is_rejected() -> None:
+    """A member that is no return kind at all fails, exactly as it would on its own."""
+    with pytest.raises(RuntimeError, match="must each be a recognized"):
+        TestClient(_ResourceApp(UnionNonWrapperResource()))
+
+
+def test_union_return_mixing_streaming_and_buffered_is_rejected() -> None:
+    """A streaming wrapper cannot join a union with a buffered one."""
+    with pytest.raises(RuntimeError, match="must each be a recognized"):
+        TestClient(_ResourceApp(UnionStreamingResource()))
+
+
+def test_union_return_with_two_members_at_one_status_is_allowed() -> None:
+    """Members may share a status — OpenAPI keys one response there and they merge into it.
+    Whether a given group *can* merge is a question about the document, so it is settled
+    where the document is built (see test_openapi), not by the runtime wiring."""
+    with TestClient(_ResourceApp(UnionSharedStatusStructsResource())) as client:
+        assert client.get("/x").status_code == 200
 
 
 def test_endpoint_path_must_be_exact() -> None:
