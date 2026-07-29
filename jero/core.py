@@ -492,7 +492,7 @@ class Auth[THeaders: Struct, TUser: Struct](Protocol):
     have absence reach ``authenticate`` and become your decision.
     """
 
-    def authenticate(self, headers: THeaders) -> TUser | None | Awaitable[TUser | None]:
+    def authenticate(self, headers: THeaders) -> TUser | Awaitable[TUser | None] | None:
         """Validate ``headers`` and return the user Struct; raise ``HTTPError`` to reject.
 
         Return ``None`` only to report that no credentials were presented (see the class
