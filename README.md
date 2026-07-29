@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/jero-logo-light.png" alt="jero" width="440">
+<img src="https://raw.githubusercontent.com/RogerThomas/jero/main/docs/assets/jero-logo-light.png" alt="jero" width="440">
 
 <p>
   <a href="https://pypi.org/project/jero/"><img src="https://img.shields.io/pypi/v/jero" alt="PyPI"></a>
@@ -198,7 +198,7 @@ framework in every scenario tested.** Each panel below is scaled to its own fast
 framework; the labels keep the absolute throughput:
 
 <p align="center">
-  <img src="docs/assets/bench-grid.svg" alt="Benchmark results: jero is the fastest Python framework across all four workloads" width="820">
+  <img src="https://raw.githubusercontent.com/RogerThomas/jero/main/docs/assets/bench-grid.svg" alt="Benchmark results: jero is the fastest Python framework across all four workloads" width="820">
 </p>
 
 On the pure framework hot path (a typed JSON `GET`):

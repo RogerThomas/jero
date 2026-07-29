@@ -16,6 +16,8 @@ tasks:
       - uv sync --all-groups
       - uv run prek install
 
+  upgrade-deps: uv lock --upgrade
+
   check:
     desc: 'Run code quality tools: lock check + prek (ruff, pyrefly, deptry, pylint)'
     cmds:
