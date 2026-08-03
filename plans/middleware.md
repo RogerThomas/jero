@@ -4,6 +4,9 @@ Status: **designed, benchmarked, not built.** The mechanism was validated with
 in-process spikes (numbers below); the protocol shape and scoping decisions are
 locked. Build in the staged order at the bottom.
 
+Note: member spellings here (`add_middleware`, `include_cors`) predate the
+`public-surface.md` naming rule — final spellings follow that rule at build time.
+
 ## Goal
 
 Give users a way to hang cross-cutting behavior on the request path without
