@@ -352,6 +352,28 @@ def test_off_as_app_default_is_a_wiring_error() -> None:
         TestClient(OffDefaultApp())
 
 
+def test_head_preflight_rides_get() -> None:
+    """A preflight requesting HEAD is answered by the GET route's policy — routing
+    auto-serves HEAD from GET, so the default policy must not deny it."""
+    with TestClient(WildcardApp()) as client:
+        response = client.options(
+            "/ping",
+            headers={"origin": "https://app.example", "access-control-request-method": "HEAD"},
+        )
+
+    assert response.headers["access-control-allow-origin"] == "*"
+
+
+def test_openapi_routes_carry_the_app_default(client: TestClient) -> None:
+    """/openapi.json and /docs are covered by the app-wide policy, so a hosted tool on
+    another origin can fetch the spec."""
+    spec = client.get("/openapi.json")
+    docs = client.get("/docs")
+
+    assert spec.headers["access-control-allow-origin"] == "*"
+    assert docs.headers["access-control-allow-origin"] == "*"
+
+
 def test_demo_app_inherits_wildcard_default(client: TestClient) -> None:
     """The demo app registers a wildcard default; open routes inherit it."""
     response = client.get("/healthz")

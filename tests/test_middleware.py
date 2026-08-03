@@ -109,6 +109,18 @@ class GateMiddleware:
         return None
 
 
+class WideGateMiddleware:
+    """Declares more verbs than any one include serves — reusable across includes."""
+
+    intercept_methods: ClassVar[tuple[HTTPMethod, ...]] = ("GET", "POST", "DELETE")
+
+    def intercept(self, request: Request[GateHeaders]) -> JSONResponse[Refusal] | None:
+        """Refuse gated callers on whichever verbs the include serves."""
+        if request.headers.x_gate == "block":
+            return JSONResponse(json=Refusal(reason="blocked"), status_code=403)
+        return None
+
+
 class AsyncNoContentMiddleware:
     """An async intercept returning a fixed-status wrapper."""
 
@@ -214,6 +226,21 @@ class _MiddlewareApp(BaseApp):
             self._include_middleware(middleware)
         self._include_endpoint(PingEndpoint(), middleware=self._scoped)
         self._include_endpoint(MissingEndpoint())
+
+
+class _DocsApp(BaseApp):
+    """Global middleware + the OpenAPI include, to prove the docs routes are covered."""
+
+    def __init__(self, observer: Observer) -> None:
+        self._observer = observer
+        super().__init__()
+
+    async def wire(self) -> None:
+        """Register global middleware, one route, and the docs."""
+        self._include_middleware(SecurityMiddleware())
+        self._include_middleware(self._observer)
+        self._include_endpoint(PingEndpoint())
+        self._include_openapi(title="t", version="0")
 
 
 # --- response_headers: the constant tier ---
@@ -424,6 +451,22 @@ def test_failing_observe_is_swallowed() -> None:
     assert response.json() == {"ok": True}
 
 
+def test_global_middleware_covers_the_docs_routes() -> None:
+    """The OpenAPI/docs routes register like any include: global headers land on them
+    and global observes see them."""
+    observer = Observer()
+    with TestClient(_DocsApp(observer)) as client:
+        spec = client.get("/openapi.json")
+        docs = client.get("/docs")
+
+    assert spec.headers["x-frame-options"] == "DENY"
+    assert docs.headers["x-frame-options"] == "DENY"
+    assert [(path, status) for path, status, _, _ in observer.seen] == [
+        ("/openapi.json", 200),
+        ("/docs", 200),
+    ]
+
+
 # --- composition with CORS ---
 
 
@@ -460,12 +503,23 @@ class InterceptlessMethods:
 
 
 class OptionsScopedIntercept:
-    """OPTIONS can never reach include-scoped middleware."""
+    """OPTIONS can never reach include-scoped middleware — even beside a live verb."""
 
-    intercept_methods: ClassVar[tuple[HTTPMethod, ...]] = ("OPTIONS",)
+    intercept_methods: ClassVar[tuple[HTTPMethod, ...]] = ("GET", "OPTIONS")
 
     def intercept(self, request: Request) -> Refusal | None:
         """Never reachable when scoped."""
+        _ = request
+        raise NotImplementedError()
+
+
+class DeleteOnlyIntercept:
+    """No overlap with the include's verbs at all."""
+
+    intercept_methods: ClassVar[tuple[HTTPMethod, ...]] = ("DELETE",)
+
+    def intercept(self, request: Request) -> Refusal | None:
+        """Never reachable on a GET/POST include."""
         _ = request
         raise NotImplementedError()
 
@@ -528,10 +582,26 @@ def test_methods_without_intercept_is_a_wiring_error() -> None:
         TestClient(_MiddlewareApp(global_middleware=(InterceptlessMethods(),)))
 
 
-def test_scoped_intercept_that_can_never_run_is_a_wiring_error() -> None:
-    """OPTIONS-scoped middleware on an include is unreachable — fail loud."""
+def test_scoped_intercept_with_no_overlap_is_a_wiring_error() -> None:
+    """A scoped intercept none of the include's verbs can trigger — fail loud."""
     with pytest.raises(RuntimeError, match="can never run"):
+        TestClient(_MiddlewareApp(scoped=(DeleteOnlyIntercept(),)))
+
+
+def test_options_in_scoped_intercept_is_a_wiring_error() -> None:
+    """OPTIONS never reaches scoped middleware, so the entry is dead on any include —
+    rejected even when a sibling verb overlaps."""
+    with pytest.raises(RuntimeError, match="OPTIONS never reaches"):
         TestClient(_MiddlewareApp(scoped=(OptionsScopedIntercept(),)))
+
+
+def test_partial_verb_overlap_is_legal() -> None:
+    """One middleware class declaring several verbs is reusable on an include serving
+    only some of them — the overlapping verbs run, the rest simply don't apply."""
+    with TestClient(_MiddlewareApp(scoped=(WideGateMiddleware(),))) as client:
+        blocked = client.get("/ping", headers={"x-gate": "block"})
+
+    assert blocked.status_code == 403
 
 
 def test_sender_owned_header_is_a_wiring_error() -> None:

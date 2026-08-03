@@ -260,8 +260,14 @@ class CompiledCORS:
     ) -> list[tuple[bytes, bytes]] | None:
         """The CORS half of a preflight answer for one covered route, or ``None`` when
         this policy does not allow the requested method or origin (the plain 204 with
-        ``Allow`` still goes out; the browser blocks the cross-origin call)."""
-        if requested not in self._allowed_methods:
+        ``Allow`` still goes out; the browser blocks the cross-origin call).
+
+        A requested ``HEAD`` rides ``GET`` here, exactly as routing auto-serves HEAD
+        from GET handlers — a policy allowing GET would otherwise deny the preflight
+        for a HEAD the route happily answers. An explicit ``HEAD`` entry also works."""
+        if requested not in self._allowed_methods and not (
+            requested == "HEAD" and "GET" in self._allowed_methods
+        ):
             return None
         if self.dynamic is None:
             return list(self._preflight_block)

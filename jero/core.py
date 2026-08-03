@@ -1767,9 +1767,11 @@ class _RouteTail:
                 )
         return pairs
 
-    def error_extra(self, scope: Scope) -> list[tuple[bytes, bytes]] | None:
-        """The full tail for an error response (constant pairs + contained dynamic),
-        or ``None`` when the tail is empty — the shape ``_send_json`` expects."""
+    def contained_extra(self, scope: Scope) -> list[tuple[bytes, bytes]] | None:
+        """The full tail as extra pairs (constants + *contained* dynamic hooks), or
+        ``None`` when the tail is empty — the shape ``_send_json`` expects. For
+        responses where a hook failure must not replace the response: the error
+        funnel, and the framework's own routes (the docs/spec pages)."""
         if not self.active:
             return None
         return list(self.pairs) + self.collect_contained(scope)
@@ -1783,7 +1785,7 @@ class _IncludeRecord:
     ``_include_cors``) never matters."""
 
     tail: _RouteTail
-    routes: list[tuple[HTTPMethod, "_Route"]]
+    routes: list[tuple[HTTPMethod, _Handler]]
     cors: CompiledCORS | None  # explicit per-include policy; None = inherit the app default
     cors_off: bool  # True when cors=CORS.OFF opted this include out
     middleware: tuple[CompiledMiddleware, ...]  # include-scoped, in the order passed
@@ -1986,7 +1988,7 @@ class _ExceptionHandlers:
     async def _send_default(
         self, scope: Scope, send: Send, exception: Exception, tail: _RouteTail
     ) -> None:
-        extra = tail.error_extra(scope)
+        extra = tail.contained_extra(scope)
         if isinstance(exception, BaseHTTPError):
             await _send_json(send, exception.status, self.encode_error(exception), extra)
             return
@@ -2496,7 +2498,13 @@ class _Route:
         become a proper error response — the same funnel as a handler failure (custom
         handlers get their shot, then the generic 500 problem). A ``WiringError``
         surfacing at send time (e.g. a Link to an unmounted operation) is a programming
-        error and stays loud instead."""
+        error and stays loud instead.
+
+        Accepted edge: if ``send`` itself fails *after* the response started (a
+        transport error mid-send), the funnel's own send fails the same way and
+        propagates to the server — exactly where such an error ended up before this
+        guard existed. Tracking started-ness would cost a wrapper on every request to
+        tidy a case the server already owns."""
         try:
             await self._send_result(scope, receive, send, result)
         except WiringError:
@@ -2714,7 +2722,7 @@ class _CoveredRoute:
     scope), run the scoped intercepts for the wire method (first response wins, before
     auth and binding), dispatch, then let the observe hooks see the captured outcome."""
 
-    _route: "_Route"
+    _route: _Handler
     _mw: _RouteMiddleware
     _exceptions: _ExceptionHandlers
     _tail: _RouteTail
@@ -2761,31 +2769,37 @@ def _camel(name: str) -> str:
     return head + "".join(part.title() for part in rest)
 
 
-def _json_doc_handler(config: "_OpenAPIConfig") -> _Handler:
+def _json_doc_handler(config: "_OpenAPIConfig", tail: _RouteTail) -> _Handler:
     """A handler serving the cached OpenAPI document. The payload is filled in at
     ``__finalize`` (after wiring), so the route can be registered before the document
-    exists — the closure reads ``config.payload`` at request time."""
+    exists — the closure reads ``config.payload`` at request time. ``tail`` carries the
+    app-default CORS pairs and middleware headers onto the response (contained: a hook
+    failure on a framework route is logged and skipped, never a 500 docs page)."""
 
     async def handler(
         scope: Scope, receive: Receive, send: Send, path_values: dict[str, str]
     ) -> None:
-        _ = (scope, receive, path_values)
-        await _send_json(send, 200, config.payload)
+        _ = (receive, path_values)
+        await _send_json(send, 200, config.payload, tail.contained_extra(scope))
 
     return handler
 
 
-def _static_bytes_handler(body: bytes, content_type: bytes) -> _Handler:
-    """A handler serving a precomputed byte payload (the docs UI page, the favicon)."""
+def _static_bytes_handler(body: bytes, content_type: bytes, tail: _RouteTail) -> _Handler:
+    """A handler serving a precomputed byte payload (the docs UI page, the favicon).
+    ``tail`` as on :func:`_json_doc_handler`."""
 
     async def handler(
         scope: Scope, receive: Receive, send: Send, path_values: dict[str, str]
     ) -> None:
-        _ = (scope, receive, path_values)
+        _ = (receive, path_values)
         headers = [
             (b"content-type", content_type),
             (b"content-length", str(len(body)).encode()),
         ]
+        extra = tail.contained_extra(scope)
+        if extra is not None:
+            headers += extra
         await send({"type": "http.response.start", "status": 200, "headers": headers})
         await send({"type": "http.response.body", "body": body})
 
@@ -3399,27 +3413,35 @@ class BaseApp[FactoryT = None](ABC):
             openapi_path=openapi_path,
             docs_path=docs_path,
         )
+        # The framework routes register through an include record like any other
+        # include, so they are covered by the app's CORS default and middleware (a
+        # cross-origin tool must be able to fetch the spec; a global security-headers
+        # middleware must decorate the docs page). They just never appear in the
+        # generated document.
+        tail = _RouteTail()
+        record = _IncludeRecord(tail=tail, routes=[], cors=None, cors_off=False, middleware=())
         favicon_href: str | None = None
         if isinstance(favicon, Path):
             body, content_type = _favicon_payload(favicon)
-            self.__register(
-                "GET", _parse_template("/favicon.ico"), _static_bytes_handler(body, content_type)
-            )
+            favicon_handler = _static_bytes_handler(body, content_type, tail)
+            self.__register("GET", _parse_template("/favicon.ico"), favicon_handler)
+            record.routes.append(("GET", favicon_handler))
             favicon_href = "/favicon.ico"
         elif favicon is not None:
             favicon_href = favicon
-        self.__register("GET", _parse_template(openapi_path), _json_doc_handler(self.__openapi))
+        doc_handler = _json_doc_handler(self.__openapi, tail)
+        self.__register("GET", _parse_template(openapi_path), doc_handler)
+        record.routes.append(("GET", doc_handler))
         if docs_path is not None:
             page = (
                 docs_html
                 if docs_html is not None
                 else _scalar_html(title, openapi_path, favicon_href, scalar_config)
             )
-            self.__register(
-                "GET",
-                _parse_template(docs_path),
-                _static_bytes_handler(page.encode(), b"text/html; charset=utf-8"),
-            )
+            page_handler = _static_bytes_handler(page.encode(), b"text/html; charset=utf-8", tail)
+            self.__register("GET", _parse_template(docs_path), page_handler)
+            record.routes.append(("GET", page_handler))
+        self.__includes.append(record)
 
     async def _create_background_tasks(
         self,
@@ -3605,17 +3627,30 @@ class BaseApp[FactoryT = None](ABC):
     @staticmethod
     def __check_scoped_intercepts(record: _IncludeRecord) -> None:
         """A scoped intercept none of the include's wire methods can ever trigger is a
-        dead registration — fail loud rather than silently never running."""
+        dead registration — fail loud rather than silently never running.
+
+        A *partial* overlap stays legal: one middleware class declaring
+        ``("GET", "POST")`` is reusable across a GET-only and a POST-only include, each
+        picking up the verbs it serves. The exception is ``OPTIONS``, which is answered
+        before routing on every path — an OPTIONS entry is dead on *any* include, so it
+        is rejected outright rather than left to overlap luck."""
         served = {method for method, _ in record.routes}
         if "GET" in served:
             served.add("HEAD")
         for mw in record.middleware:
-            if mw.intercept is not None and not served.intersection(mw.intercept_methods):
+            if mw.intercept is None:
+                continue
+            if "OPTIONS" in mw.intercept_methods:
+                raise WiringError(
+                    f"{mw.owner}.intercept declares OPTIONS in intercept_methods, but "
+                    f"OPTIONS never reaches include-scoped middleware — intercept it "
+                    f"globally via _include_middleware",
+                )
+            if not served.intersection(mw.intercept_methods):
                 raise WiringError(
                     f"{mw.owner}.intercept can never run on this include: it declares "
                     f"intercept_methods {mw.intercept_methods!r} but the include serves "
-                    f"{', '.join(sorted(served))}. (OPTIONS never reaches scoped "
-                    f"middleware — intercept it globally via _include_middleware.)",
+                    f"{', '.join(sorted(served))}",
                 )
 
     def __swap_handler(self, old: _Handler, new: _Handler) -> None:
@@ -3634,7 +3669,7 @@ class BaseApp[FactoryT = None](ABC):
         self,
         record: _IncludeRecord,
         verb: HTTPMethod,
-        route: "_Route",
+        route: _Handler,
         scoped_runners: Sequence[tuple[CompiledMiddleware, _InterceptRunner]],
         observes: tuple[ObserveHook, ...],
         *,
@@ -3785,7 +3820,7 @@ class BaseApp[FactoryT = None](ABC):
                 send,
                 error.status,
                 self.__exceptions.encode_error(error),
-                self.__app_tail.error_extra(scope),
+                self.__app_tail.contained_extra(scope),
             )
         elif method == "OPTIONS":
             headers = [(b"allow", allow)]
@@ -3797,7 +3832,7 @@ class BaseApp[FactoryT = None](ABC):
             await send({"type": "http.response.body", "body": b""})
         else:
             error = MethodNotAllowedError()
-            extra = self.__app_tail.error_extra(scope)
+            extra = self.__app_tail.contained_extra(scope)
             await _send_json(
                 send,
                 error.status,

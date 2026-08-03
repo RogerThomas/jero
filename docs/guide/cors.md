@@ -120,8 +120,12 @@ is pure opt-in, and includes can still opt in individually with their own `cors=
   pairs on them. Unrouted 404s carry the app default only.
 - **Allow-list responses always carry `Vary: Origin`** — even when the origin didn't
   match — so shared caches never serve one origin's response to another.
-- **`HEAD` is its own method** in `allow_methods`, even though routing serves it from
-  `GET` handlers.
+- **`HEAD` rides `GET`.** A preflight requesting `HEAD` is answered by the `GET`
+  route's policy and allowed whenever `GET` is — mirroring how routing auto-serves
+  HEAD from GET handlers. Listing `HEAD` explicitly in `allow_methods` also works.
+- **The docs routes are covered too.** `/openapi.json`, `/docs`, and the favicon
+  carry the app-default policy (and global middleware headers), so a hosted tool on
+  another origin can fetch the spec.
 
 CORS is the first consumer of the compiled middleware machinery — the
 [middleware guide](middleware.md) shows the same tiers as a user-facing protocol,
