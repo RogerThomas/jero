@@ -1,11 +1,18 @@
 # Plan: Compiled middleware (and CORS as its first consumer)
 
-Status: **designed, benchmarked, not built.** The mechanism was validated with
-in-process spikes (numbers below); the protocol shape and scoping decisions are
-locked. Build in the staged order at the bottom.
+Status: **built (2026-08-03), all stages green.** Final spellings per the
+`public-surface.md` rule and the acronym convention: `add_middleware` →
+`_include_middleware`, `include_cors` → `_include_cors`, `HttpMethod` → `HTTPMethod`
+(matching `HTTPError` / `JSONResponse`). `Request`'s `H` gained a PEP 696 default
+(`NoHeaders`, exported) so hooks that bind nothing annotate a bare `Request`. The OPEN
+items below were resolved as: (1) `duration` measures to response-start, captured from
+the `http.response.start` message; (2) `response_headers` (method) does not receive the
+status, and is sync-only — it runs inline in sender header assembly; (3) duplicate
+header keys between two middlewares' *constant* pairs are a `WiringError`; dynamic
+pairs append per HTTP semantics.
 
-Note: member spellings here (`add_middleware`, `include_cors`) predate the
-`public-surface.md` naming rule — final spellings follow that rule at build time.
+Note: member spellings below (`add_middleware`, `include_cors`) predate the
+`public-surface.md` naming rule — kept as designed; see the status line for what built.
 
 ## Goal
 

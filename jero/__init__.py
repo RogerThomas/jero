@@ -1,5 +1,6 @@
 """jero — an opinionated, msgspec-first ASGI micro-framework."""
 
+from jero._middleware import CORS, HTTPMethod, NoHeaders, Request
 from jero.background import BackgroundTasks
 from jero.codecs import msgspec_decoder, msgspec_encoder
 from jero.core import (
@@ -51,6 +52,7 @@ from jero.streaming import NDJSONStreamingResponse, ServerSentEvent, SSEResponse
 from jero.structs import Struct
 
 __all__ = [
+    "CORS",
     "Accepted",
     "Auth",
     "AuthenticationRequiredError",
@@ -74,6 +76,7 @@ __all__ = [
     "FormPart",
     "GoneError",
     "HTTPError",
+    "HTTPMethod",
     "InternalServerError",
     "JSONResponse",
     "Link",
@@ -83,12 +86,14 @@ __all__ = [
     "ModelMeta",
     "NDJSONStreamingResponse",
     "NoContent",
+    "NoHeaders",
     "NotFoundError",
     "OperationMeta",
     "ParameterizedHTTPError",
     "ParameterizedProblem",
     "Problem",
     "RawHeaders",
+    "Request",
     "Resource",
     "ResourceMeta",
     "ResponseSpec",

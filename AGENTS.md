@@ -220,12 +220,40 @@ These pull against each other constantly; keep all three in mind on every change
     calls on you (`wire`, `__init__`, `__call__`, `Factory.open()`, a factory's own
     `create_*`). **`_name`** = the extension surface *you* call from inside your own
     subclass (`_include_resource`, `_include_endpoint`, `_include_openapi`,
-    `_include_error_adapter`, `_include_exception_handler`, `_create_background_tasks`,
+    `_include_error_adapter`, `_include_exception_handler`, `_include_cors`,
+    `_include_middleware`, `_create_background_tasks`,
     `_enter`, `_aenter`, `_factory`). **`__name`** = jero's own, name-mangled internals
     (`__include`, `__register`, `__make_factory`, the exit-stack fields) — a subclass can
     neither call nor override them. The constructor keyword stays `factory=` (an outside
     caller injecting — how tests mock) while the property is `_factory`: same word, two
     spellings, both correct under the rule. Do **not** re-publicize the extension surface.
+- **Middleware**: never an ASGI app wrapper (the onion shape is rejected — measured ~1.3×
+  per layer on the hot path). A middleware is a structurally typed object whose hooks are
+  introspected and compiled at wiring (the exception-handler pattern), registered
+  app-wide with `_include_middleware` or include-scoped via the `middleware=` keyword
+  (scope is deployment policy, so it lives at the mount, not on the class). Hooks:
+  `response_headers` as a Struct attribute (constant pairs baked into covered routes at
+  `__finalize` — free) or as a sync method `(request: Request[H]) -> HeadersStruct | None`
+  (merged onto every covered response as it leaves, error/problem bodies included);
+  `intercept(request) -> Response | None` + class-level `intercept_methods` (answer
+  instead of routing — global intercepts run *pre-routing*, scoped ones post-resolve,
+  both *pre-auth*; scoping sees the wire method, so HEAD is its own entry; sync or
+  async); `observe(request, status, duration)` (post-response, exceptions swallowed).
+  `Request[H]`'s `headers` binds via a compiled scanner for just the fields `H` names
+  (`H` defaults to `NoHeaders`). The capability boundary is deliberate: middleware can
+  answer, add headers, and watch — never rewrite a body/status (that's granian/proxy
+  territory) and never pass state to handlers (bind the header, or carry it on `user`).
+  Uncovered routes are untouched (covered ones get a `_CoveredRoute` wrapper swapped
+  into the routing tables at `__finalize`); middleware may not emit
+  `content-type`/`content-length`, and duplicate *constant* header names across
+  middlewares fail wiring loud.
+- **CORS** is a built-in on the same machinery: `_include_cors(CORS(...))` sets the
+  app-wide default; per-include `cors=` overrides, `CORS.OFF` opts out, omitted
+  inherits; no default + no `cors=` = no CORS. `"*"` compiles to constant pairs (free);
+  an origin allow-list compiles to a frozenset lookup + origin echo + constant
+  `Vary: Origin`. Preflights ride the cold OPTIONS branch, answered per (path,
+  requested method); error responses carry the failing route's pairs, unrouted 404s
+  the app default; `allow_credentials=True` with `"*"` is a `WiringError`.
 - **Background tasks**: `BackgroundTasks` is an in-process, fire-and-forget queue
   (not durable). Build it in `wire` and open it with `_aenter` (it's an async CM —
   worker starts at startup, drains at shutdown); `register(handler)` infers the item
@@ -245,6 +273,11 @@ These pull against each other constantly; keep all three in mind on every change
 ## Layout
 
 - `jero/core.py` — the framework (routing, binding, response senders, lifecycle).
+  `jero/_middleware.py` — the sender-free middleware half (public `Request` /
+  `HTTPMethod` / `NoHeaders` / `CORS`, `CompiledMiddleware` / `CompiledCORS`, the
+  header scanners); the dispatch half (hook runners, the per-route header-tail seam in
+  the senders, `_CoveredRoute`, observe capture) lives in `core`, mirroring the
+  `_exception_handlers` split.
   `jero/_wiring_types.py` — the resolved wiring contracts (`Sources`, `FormSpec`,
   `OperationSpec`, the `*Meta` types, `is_struct_type`/`strip_list`), all msgspec Structs; a leaf depending
   only on msgspec + `jero.openapi`. `jero/openapi.py` — the dependency-free OpenAPI 3.1
@@ -278,8 +311,8 @@ These pull against each other constantly; keep all three in mind on every change
 - `tests/` — pytest suite driven through `TestClient` against `demo_app/` (plus small
   local apps for focused cases).
 - `plans/` — design plans for not-yet-built work, fully designed with decisions locked,
-  staged for review before implementation. Currently `middleware.md` and `websockets.md`
-  (`public-surface.md` and `openapi-security-validation.md` are built).
+  staged for review before implementation. Currently `websockets.md` (`middleware.md`,
+  `public-surface.md`, and `openapi-security-validation.md` are built).
 - `bugs/` — one markdown note per **not-yet-fixed** bug, tracked in `bugs/README.md`
   (the manifest). **Only write a note for a bug you're leaving unfixed for later** —
   if you fix a bug in the same change, *don't* add a note; the regression test is the
@@ -302,7 +335,9 @@ These pull against each other constantly; keep all three in mind on every change
   silent wrong status) — `BaseApp`/`BaseFactory`
   lifecycle, in-process `BackgroundTasks`, reverse-routed
   `Location` / `Link` responses, typed Problem Details errors, structurally registered
-  custom exception handlers, `TestClient`, the test suite. **OpenAPI 3.1**:
+  custom exception handlers, `TestClient`, the test suite; compiled middleware
+  (`_include_middleware` / `middleware=`, the four hook tiers) with built-in CORS
+  (`_include_cors` / `cors=` / `CORS.OFF`) as its first consumer. **OpenAPI 3.1**:
   `_include_openapi` serves `/openapi.json` + a Scalar `/docs` UI, derived from the
   wired types (sources, returns incl. generics, `msgspec.Meta`); `favicon=` (Path read
   once at wiring → precomputed `/favicon.ico` route + `<link>` in the default page;

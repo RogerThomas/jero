@@ -19,7 +19,7 @@ from demo_app.operations.system_operations import (
     WhoAmIEndpoint,
 )
 from demo_app.operations.widget_operations import WidgetResource
-from jero import BaseApp
+from jero import CORS, BaseApp
 
 
 class DemoApp(BaseApp[Factory]):
@@ -45,6 +45,9 @@ class DemoApp(BaseApp[Factory]):
         # an anonymous caller binds user=None. A bad token is still a 401.
         optional_token_auth = OptionalTokenAuth(users)
         self._include_exception_handler(upstream_response_error_handler)
+        # Serve browser callers from any origin (the wildcard compiles to constant
+        # header pairs — free per request); every include below inherits it.
+        self._include_cors(CORS())
         self._include_resource(WidgetResource(widget_service, background_tasks), auth=token_auth)
         self._include_endpoint(WhoAmIEndpoint(), auth=token_auth)
         self._include_endpoint(SpotlightEndpoint(), auth=optional_token_auth)

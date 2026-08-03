@@ -70,6 +70,7 @@ from dataclasses import dataclass
 from enum import Enum
 from io import BytesIO
 from pathlib import Path
+from time import perf_counter
 from types import NoneType, UnionType, get_original_bases
 from typing import (
     Annotated,
@@ -95,6 +96,16 @@ from jero._exception_handlers import (
     ExceptionHandler,
     ExceptionResponse,
     invoke_exception_handler,
+)
+from jero._middleware import (
+    CORS,
+    CompiledCORS,
+    CompiledMiddleware,
+    HeadersHook,
+    HTTPMethod,
+    InterceptHook,
+    ObserveHook,
+    requested_method,
 )
 from jero._openapi_wiring import operation_input
 from jero._wiring_types import (
@@ -178,11 +189,8 @@ type _Handler = Callable[[Scope, Receive, Send, dict[str, str]], Awaitable[None]
 # A template segment: (is_param, static_value_or_slot_name).
 type _Segment = tuple[bool, str]
 type _StaticRoutes = dict[tuple[str, str], _Handler]
-type _DynamicRoutes = dict[tuple[_HttpMethod, int], list[_Pattern]]
-# HTTP methods the framework speaks. GET/POST/PUT/PATCH/DELETE are handler-declarable
-# (see the METHODS tables); HEAD/OPTIONS are synthesized for the Allow header.
-type _HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
-type _AllowedMethods = dict[str, list[_HttpMethod]]
+type _DynamicRoutes = dict[tuple[HTTPMethod, int], list[_Pattern]]
+type _AllowedMethods = dict[str, list[HTTPMethod]]
 # Resolves a Struct type to its reusable typed JSON decoder (the app's per-type cache).
 # ReturnKind / PayloadKind (the other wire-shape aliases) live in jero._wiring_types,
 # shared with the OpenAPI generator.
@@ -200,7 +208,7 @@ _BODYLESS_VERBS = frozenset({"GET", "DELETE"})
 class _Verb:
     """How one handler method maps onto HTTP."""
 
-    method: _HttpMethod
+    method: HTTPMethod
     success_status: int
     extends_path: bool  # may path fields beyond the template slots extend the URL?
 
@@ -526,9 +534,9 @@ class _StreamResult(Protocol):
     links: Sequence[Link]
 
 
-def _allow_header(allowed: Sequence[_HttpMethod]) -> bytes:
+def _allow_header(allowed: Sequence[HTTPMethod]) -> bytes:
     # copy: HEAD/OPTIONS are appended below without mutating the caller's list
-    methods: list[_HttpMethod] = [*allowed]
+    methods: list[HTTPMethod] = [*allowed]
     if "GET" in methods:
         methods.append("HEAD")
     methods.append("OPTIONS")
@@ -1002,7 +1010,7 @@ def _dispatch_type(ann: object) -> type:
 
 
 def _union_return_members(
-    cls: type, name: str, members: tuple[object, ...], verb_status: int
+    label: str, members: tuple[object, ...], verb_status: int
 ) -> tuple[ResponseMember, ...]:
     """Resolve and validate a union return annotation's members: each must be a recognized,
     non-streaming return kind.
@@ -1020,7 +1028,7 @@ def _union_return_members(
         kind = _return_kind(member)
         if kind is None or kind not in _UNION_MEMBER_KINDS:
             raise WiringError(
-                f"{cls.__name__}.{name}: union return members must each be a recognized, "
+                f"{label}: union return members must each be a recognized, "
                 f"non-streaming return type (a Struct, list[Struct], bytes, NoContent, "
                 f"Created, Accepted, JSONResponse, or BytesResponse); got {member!r}",
             )
@@ -1032,7 +1040,7 @@ def _union_return_members(
 
 
 def _resolve_return(
-    cls: type, name: str, http_method: _HttpMethod, verb_status: int, return_hint: object
+    cls: type, name: str, http_method: HTTPMethod, verb_status: int, return_hint: object
 ) -> tuple[ReturnKind, tuple[ResponseMember, ...]]:
     """The handler's return kind, and — for a union — its resolved members."""
     union_args = _union_args(return_hint)
@@ -1043,7 +1051,7 @@ def _resolve_return(
                 f"{cls.__name__}.{name}: a handler cannot return None — did you mean "
                 f"'| NoContent' for a 204?",
             )
-        return "union", _union_return_members(cls, name, union_args, verb_status)
+        return "union", _union_return_members(f"{cls.__name__}.{name}", union_args, verb_status)
     kind = _return_kind(return_hint)
     if kind is None:
         raise WiringError(
@@ -1702,13 +1710,96 @@ def _link_header_pairs(
     return pairs
 
 
+# A per-request producer of extra response-header pairs (origin echo, a middleware's
+# ``response_headers`` method), compiled at wiring and invoked as a response's headers
+# are assembled — before ``http.response.start``, so a failure can still become a
+# proper error response.
+type _TailHook = Callable[[Scope], Sequence[tuple[bytes, bytes]]]
+
+
+@dataclass(slots=True)
+class _RouteTail:
+    """The response-header tail appended to every response that leaves a route — CORS
+    pairs and middleware ``response_headers``, resolved once at ``__finalize`` (empty
+    until then, and forever on routes nothing covers).
+
+    ``pairs`` is the constant tier: pairs known at wiring, appended with one list
+    concat. ``dynamic`` hooks compute per-request pairs. One instance is shared by an
+    include's routes and their senders, so the finalize-time fill is visible everywhere
+    without rebuilding the compiled routes. ``active`` is precomputed when the tail is
+    filled, so the per-request guard on every sender is a two-load falsy check."""
+
+    pairs: tuple[tuple[bytes, bytes], ...] = ()
+    dynamic: tuple[_TailHook, ...] = ()
+    active: bool = False
+
+    def collect(self, scope: Scope) -> list[tuple[bytes, bytes]]:
+        """The dynamic hooks' pairs for one request. Strict: a hook failure propagates,
+        entering the exception funnel exactly like a handler failure (nothing has been
+        sent yet — senders assemble headers before ``http.response.start``)."""
+        pairs: list[tuple[bytes, bytes]] = []
+        for hook in self.dynamic:
+            pairs += hook(scope)
+        return pairs
+
+    def extend(self, headers: list[tuple[bytes, bytes]], scope: Scope) -> None:
+        """Append the tail to a response's header list: constant pairs, then the dynamic
+        hooks' pairs (strict, like :meth:`collect`). Callers guard with
+        ``if tail.active`` so an empty tail costs nothing."""
+        if self.pairs:
+            headers += self.pairs
+        if self.dynamic:
+            headers += self.collect(scope)
+
+    def collect_contained(self, scope: Scope) -> list[tuple[bytes, bytes]]:
+        """``collect`` for the error path: a hook that fails while an *error* response is
+        being assembled is logged and skipped — the error must still leave, and raising
+        here would recurse into the funnel that is already sending it."""
+        pairs: list[tuple[bytes, bytes]] = []
+        for hook in self.dynamic:
+            try:
+                pairs += hook(scope)
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.exception(
+                    "response header hook failed on the error path for %s %s; skipped",
+                    scope["method"],
+                    scope["path"],
+                )
+        return pairs
+
+    def error_extra(self, scope: Scope) -> list[tuple[bytes, bytes]] | None:
+        """The full tail for an error response (constant pairs + contained dynamic),
+        or ``None`` when the tail is empty — the shape ``_send_json`` expects."""
+        if not self.active:
+            return None
+        return list(self.pairs) + self.collect_contained(scope)
+
+
+@dataclass(slots=True)
+class _IncludeRecord:
+    """One ``_include_resource`` / ``_include_endpoint`` call: its compiled routes, the
+    shared header tail, and the per-include policy passed at the call. Collected during
+    ``wire`` and resolved at ``__finalize``, so ordering among the include calls (and
+    ``_include_cors``) never matters."""
+
+    tail: _RouteTail
+    routes: list[tuple[HTTPMethod, "_Route"]]
+    cors: CompiledCORS | None  # explicit per-include policy; None = inherit the app default
+    cors_off: bool  # True when cors=CORS.OFF opted this include out
+    middleware: tuple[CompiledMiddleware, ...]  # include-scoped, in the order passed
+
+
 @dataclass(slots=True)
 class _BytesSender:
     _status: int
+    _tail: _RouteTail
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send, result: bytes) -> None:
-        _ = (scope, receive)
+        _ = receive
         headers = _response_headers(None, None, b"application/octet-stream", len(result))
+        tail = self._tail
+        if tail.active:
+            tail.extend(headers, scope)
         await _send_payload(send, self._status, result, headers)
 
 
@@ -1716,6 +1807,7 @@ class _BytesSender:
 class _BytesResponseSender:
     _status: int
     _reverser: _Reverser
+    _tail: _RouteTail
 
     async def __call__(
         self, scope: Scope, receive: Receive, send: Send, result: BytesResponse[Any]
@@ -1726,6 +1818,9 @@ class _BytesResponseSender:
             result.headers, result.raw_headers, b"application/octet-stream", len(result.content)
         )
         headers += _link_header_pairs(self._reverser, scope, result.location, result.links)
+        tail = self._tail
+        if tail.active:
+            tail.extend(headers, scope)
         await _send_payload(send, status, result.content, headers)
 
 
@@ -1733,6 +1828,7 @@ class _BytesResponseSender:
 class _JSONResponseSender:
     _status: int
     _reverser: _Reverser
+    _tail: _RouteTail
 
     async def __call__(
         self,
@@ -1751,26 +1847,34 @@ class _JSONResponseSender:
             result.headers, result.raw_headers, b"application/json", len(payload)
         )
         headers += _link_header_pairs(self._reverser, scope, result.location, result.links)
+        tail = self._tail
+        if tail.active:
+            tail.extend(headers, scope)
         await _send_payload(send, status, payload, headers)
 
 
 @dataclass(slots=True)
 class _JSONSender:
     _status: int
+    _tail: _RouteTail
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send, result: object) -> None:
         # Inlines _send_json (kept for error paths) to save a coroutine hop on the
         # hot JSON response path.
-        _ = (scope, receive)
+        _ = receive
         payload = msgspec_encoder.encode(result)
+        headers = [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(payload)).encode()),
+        ]
+        tail = self._tail
+        if tail.active:
+            tail.extend(headers, scope)
         await send(
             {
                 "type": "http.response.start",
                 "status": self._status,
-                "headers": [
-                    (b"content-type", b"application/json"),
-                    (b"content-length", str(len(payload)).encode()),
-                ],
+                "headers": headers,
             }
         )
         await send({"type": "http.response.body", "body": payload})
@@ -1780,6 +1884,7 @@ class _JSONSender:
 class _NoContentSender:
     _status: int
     _reverser: _Reverser
+    _tail: _RouteTail
 
     async def __call__(
         self, scope: Scope, receive: Receive, send: Send, result: "NoContent[Any]"
@@ -1788,6 +1893,9 @@ class _NoContentSender:
         status = result.status_code if result.status_code is not None else self._status
         headers = _no_content_headers(result.headers, result.raw_headers, status)
         headers += _link_header_pairs(self._reverser, scope, result.location, result.links)
+        tail = self._tail
+        if tail.active:
+            tail.extend(headers, scope)
         await send({"type": "http.response.start", "status": status, "headers": headers})
         await send({"type": "http.response.body", "body": b""})
 
@@ -1839,6 +1947,7 @@ class _ExceptionHandlers:
         scope: Scope,
         send: Send,
         response: ExceptionResponse[Struct, Struct | None],
+        tail: _RouteTail,
     ) -> None:
         payload = msgspec_encoder.encode(response.json)
         headers = _response_headers(
@@ -1853,6 +1962,10 @@ class _ExceptionHandlers:
             response.location,
             response.links,
         )
+        if tail.pairs:
+            headers += tail.pairs
+        if tail.dynamic:
+            headers += tail.collect_contained(scope)
         await _send_payload(send, response.status_code, payload, headers)
 
     @staticmethod
@@ -1870,13 +1983,16 @@ class _ExceptionHandlers:
             exc_info=exception,
         )
 
-    async def _send_default(self, scope: Scope, send: Send, exception: Exception) -> None:
+    async def _send_default(
+        self, scope: Scope, send: Send, exception: Exception, tail: _RouteTail
+    ) -> None:
+        extra = tail.error_extra(scope)
         if isinstance(exception, BaseHTTPError):
-            await _send_json(send, exception.status, self.encode_error(exception))
+            await _send_json(send, exception.status, self.encode_error(exception), extra)
             return
         self._log_unexpected(scope, exception)
         error = InternalServerError()
-        await _send_json(send, error.status, self.encode_error(error))
+        await _send_json(send, error.status, self.encode_error(error), extra)
 
     def register(self, handler: object) -> None:
         """Register one compiled handler per exact exception type."""
@@ -1890,11 +2006,16 @@ class _ExceptionHandlers:
         self._handlers[compiled.exception_type] = compiled
         self._resolved.clear()
 
-    async def send(self, scope: Scope, send: Send, exception: Exception) -> None:
-        """Run the nearest handler, then send its response or the default problem."""
+    async def send(self, scope: Scope, send: Send, exception: Exception, tail: _RouteTail) -> None:
+        """Run the nearest handler, then send its response or the default problem.
+
+        ``tail`` is the failing route's response-header tail (CORS pairs, middleware
+        headers) — an error body a browser page must be able to *read* still needs the
+        route's CORS pairs on it. Dynamic hooks are contained here (logged, skipped on
+        failure), since this funnel is already sending the error response."""
         handler = self._resolve(type(exception))
         if handler is None:
-            await self._send_default(scope, send, exception)
+            await self._send_default(scope, send, exception, tail)
             return
         # A user handler is an isolation boundary: its own ordinary failure must not
         # escape the app or recursively dispatch through the registry. gather's
@@ -1916,16 +2037,16 @@ class _ExceptionHandlers:
                 exc_info=outcome,
             )
             self._log_unexpected(scope, exception)
-            await self._send_default(scope, send, InternalServerError())
+            await self._send_default(scope, send, InternalServerError(), tail)
             return
         if isinstance(outcome, BaseException):
             raise outcome
         result = outcome.value
         if result is None:
-            await self._send_default(scope, send, exception)
+            await self._send_default(scope, send, exception, tail)
             return
         if isinstance(result, BaseHTTPError):
-            await self._send_default(scope, send, result)
+            await self._send_default(scope, send, result, tail)
             return
         if not isinstance(result, ExceptionResponse):
             # The handler returned a value outside its declared contract (its return is
@@ -1940,12 +2061,13 @@ class _ExceptionHandlers:
                 scope["path"],
             )
             self._log_unexpected(scope, exception)
-            await self._send_default(scope, send, InternalServerError())
+            await self._send_default(scope, send, InternalServerError(), tail)
             return
         await self._send_response(
             scope,
             send,
             cast("ExceptionResponse[Struct, Struct | None]", result),
+            tail,
         )
 
 
@@ -2049,6 +2171,7 @@ class _StreamSender:
     _content_type: bytes
     _reverser: _Reverser
     _exceptions: _ExceptionHandlers
+    _tail: _RouteTail
 
     def _chunk(self, item: object) -> bytes:
         if not isinstance(item, bytes):
@@ -2062,7 +2185,19 @@ class _StreamSender:
         # Route through the exception registry: a custom handler or a raised HTTPError becomes
         # its Problem response, and an unexpected setup failure is logged and mapped to a 500
         # (the logging lives in _ExceptionHandlers, the single funnel for both paths).
-        await self._exceptions.send(scope, send, exc)
+        await self._exceptions.send(scope, send, exc, self._tail)
+
+    def _response_start(
+        self, scope: Scope, result: _StreamResult
+    ) -> tuple[int, list[tuple[bytes, bytes]]]:
+        """The response status and assembled header list (typed/raw headers, links, tail)."""
+        status = result.status_code if result.status_code is not None else self._status
+        headers = _stream_headers(result.headers, result.raw_headers, self._content_type)
+        headers += _link_header_pairs(self._reverser, scope, result.location, result.links)
+        tail = self._tail
+        if tail.active:
+            tail.extend(headers, scope)
+        return status, headers
 
     async def __call__(
         self,
@@ -2071,9 +2206,7 @@ class _StreamSender:
         send: Send,
         result: _StreamResult,
     ) -> None:
-        status = result.status_code if result.status_code is not None else self._status
-        headers = _stream_headers(result.headers, result.raw_headers, self._content_type)
-        headers += _link_header_pairs(self._reverser, scope, result.location, result.links)
+        status, headers = self._response_start(scope, result)
         if scope["method"] == "HEAD":
             await send({"type": "http.response.start", "status": status, "headers": headers})
             await send({"type": "http.response.body", "body": b""})
@@ -2180,9 +2313,7 @@ class _SSEStreamSender(_StreamSender):
         result: _StreamResult,
     ) -> None:
         sse = cast("SSEResponse[Any]", result)
-        status = result.status_code if result.status_code is not None else self._status
-        headers = _stream_headers(result.headers, result.raw_headers, self._content_type)
-        headers += _link_header_pairs(self._reverser, scope, result.location, result.links)
+        status, headers = self._response_start(scope, result)
         if scope["method"] == "HEAD":
             await send({"type": "http.response.start", "status": status, "headers": headers})
             await send({"type": "http.response.body", "body": b""})
@@ -2225,22 +2356,23 @@ def _result_sender(
     status: int,
     reverser: _Reverser,
     exceptions: _ExceptionHandlers,
+    tail: _RouteTail,
 ) -> _Sender:
     if kind == "bytes":
-        return _BytesSender(status)
+        return _BytesSender(status, tail)
     if kind == "bytes-response":
-        return _BytesResponseSender(status, reverser)
+        return _BytesResponseSender(status, reverser, tail)
     if kind in ("json-response", "created", "accepted"):
-        return _JSONResponseSender(status, reverser)
+        return _JSONResponseSender(status, reverser, tail)
     if kind == "no-content":
-        return _NoContentSender(status, reverser)
+        return _NoContentSender(status, reverser, tail)
     if kind == "stream-bytes":
-        return _StreamSender(status, b"application/octet-stream", reverser, exceptions)
+        return _StreamSender(status, b"application/octet-stream", reverser, exceptions, tail)
     if kind == "stream-ndjson":
-        return _NDJSONStreamSender(status, b"application/x-ndjson", reverser, exceptions)
+        return _NDJSONStreamSender(status, b"application/x-ndjson", reverser, exceptions, tail)
     if kind == "stream-sse":
-        return _SSEStreamSender(status, b"text/event-stream", reverser, exceptions)
-    return _JSONSender(status)
+        return _SSEStreamSender(status, b"text/event-stream", reverser, exceptions, tail)
+    return _JSONSender(status, tail)
 
 
 @dataclass(slots=True)
@@ -2260,6 +2392,7 @@ class _UnionResponseSender:
 
     _senders: tuple[tuple[type, _Sender], ...]
     _exceptions: _ExceptionHandlers
+    _tail: _RouteTail
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send, result: object) -> None:
         for response_type, sender in self._senders:
@@ -2271,11 +2404,14 @@ class _UnionResponseSender:
             f"declared union return types"
         )
         logger.error("%s %s: %s", scope["method"], scope["path"], message)
-        await self._exceptions.send(scope, send, TypeError(message))
+        await self._exceptions.send(scope, send, TypeError(message), self._tail)
 
 
 def _union_sender(
-    members: tuple[ResponseMember, ...], reverser: _Reverser, exceptions: _ExceptionHandlers
+    members: tuple[ResponseMember, ...],
+    reverser: _Reverser,
+    exceptions: _ExceptionHandlers,
+    tail: _RouteTail,
 ) -> _UnionResponseSender:
     """Build the union sender's isinstance chain, most-derived-first.
 
@@ -2286,10 +2422,24 @@ def _union_sender(
     a deeper subclass always has the longer mro. Wiring-time only; no per-request cost."""
     ordered = sorted(members, key=lambda member: len(member.response_type.__mro__), reverse=True)
     senders = tuple(
-        (member.response_type, _result_sender(member.kind, member.status, reverser, exceptions))
+        (
+            member.response_type,
+            _result_sender(member.kind, member.status, reverser, exceptions, tail),
+        )
         for member in ordered
     )
-    return _UnionResponseSender(senders, exceptions)
+    return _UnionResponseSender(senders, exceptions, tail)
+
+
+async def _drain_body(receive: Receive, first: bytes) -> bytes:
+    """Join a multi-chunk request body. Only the rare multi-chunk case pays this call —
+    the near-universal single-chunk read stays inlined in ``_Route.__call__``."""
+    chunks = [first]
+    while True:
+        message = await receive()
+        chunks.append(message.get("body", b""))
+        if not message.get("more_body"):
+            return b"".join(chunks)
 
 
 class _Route:
@@ -2305,6 +2455,7 @@ class _Route:
         "_is_async",
         "_json_status",
         "_send_result",
+        "_tail",
     )
 
     def __init__(
@@ -2316,6 +2467,7 @@ class _Route:
         auth: _CompiledAuth | None,
         reverser: _Reverser,
         exceptions: _ExceptionHandlers,
+        tail: _RouteTail,
     ) -> None:
         self._fn = fn
         self._is_async = inspect.iscoroutinefunction(fn)
@@ -2326,12 +2478,31 @@ class _Route:
         # __call__ rather than through _send_result, to save a coroutine hop.
         self._json_status = status if sources.return_kind == "json" else None
         self._send_result = (
-            _union_sender(sources.return_members, reverser, exceptions)
+            _union_sender(sources.return_members, reverser, exceptions, tail)
             if sources.return_kind == "union"
-            else _result_sender(sources.return_kind, status, reverser, exceptions)
+            else _result_sender(sources.return_kind, status, reverser, exceptions, tail)
         )
         self._exceptions = exceptions
         self._arity = sources.arity
+        self._tail = tail
+
+    async def _send_result_guarded(
+        self, scope: Scope, receive: Receive, send: Send, result: object
+    ) -> None:
+        """Run the result sender, funneling assembly failures into an error response.
+
+        Headers (dynamic tail hooks included) are assembled before
+        ``http.response.start``, so a failure here has sent nothing yet and can still
+        become a proper error response — the same funnel as a handler failure (custom
+        handlers get their shot, then the generic 500 problem). A ``WiringError``
+        surfacing at send time (e.g. a Link to an unmounted operation) is a programming
+        error and stays loud instead."""
+        try:
+            await self._send_result(scope, receive, send, result)
+        except WiringError:
+            raise
+        except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+            await self._exceptions.send(scope, send, exc, self._tail)
 
     async def __call__(
         self, scope: Scope, receive: Receive, send: Send, path_values: dict[str, str]
@@ -2343,17 +2514,11 @@ class _Route:
             elif self._bind_awaits_only_body:
                 # Inlined body read (mirrors _Binder.__call__) to skip the binder
                 # coroutine on unauthenticated body routes; one chunk is the near-
-                # universal case, so the joining list is only built on a second chunk.
+                # universal case, so only a second chunk pays the _drain_body call.
                 message = await receive()
                 body = message.get("body", b"")
                 if message.get("more_body"):
-                    chunks = [body]
-                    while True:
-                        message = await receive()
-                        chunks.append(message.get("body", b""))
-                        if not message.get("more_body"):
-                            break
-                    body = b"".join(chunks)
+                    body = await _drain_body(receive, body)
                 bound = self._bind.bind_with_body(scope, path_values, body)
             else:
                 bound = await self._bind(scope, receive, path_values)
@@ -2366,25 +2531,228 @@ class _Route:
             else:
                 result = await self._fn() if self._is_async else self._fn()
         except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-            await self._exceptions.send(scope, send, exc)
+            await self._exceptions.send(scope, send, exc, self._tail)
             return
         if self._json_status is not None:
             # Inlines _JSONSender (kept for _result_sender completeness) to save a
             # coroutine hop on the hot plain-JSON path.
             payload = msgspec_encoder.encode(result)
+            headers = [
+                (b"content-type", b"application/json"),
+                (b"content-length", b"%d" % len(payload)),
+            ]
+            tail = self._tail
+            if tail.active:
+                try:
+                    tail.extend(headers, scope)
+                except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+                    # A dynamic header hook raised: nothing sent yet, same funnel as a
+                    # handler failure.
+                    await self._exceptions.send(scope, send, exc, self._tail)
+                    return
             await send(
                 {
                     "type": "http.response.start",
                     "status": self._json_status,
-                    "headers": [
-                        (b"content-type", b"application/json"),
-                        (b"content-length", b"%d" % len(payload)),
-                    ],
+                    "headers": headers,
                 }
             )
             await send({"type": "http.response.body", "body": payload})
             return
+        await self._send_result_guarded(scope, receive, send, result)
+
+
+def _constant_middleware_pairs(headers: Struct) -> tuple[tuple[bytes, bytes], ...]:
+    """A constant ``response_headers`` Struct as wire pairs, encoded once at wiring —
+    the free tier: covered routes append these with a single list concat."""
+    return tuple(
+        (key.encode("latin-1"), value.encode("latin-1"))
+        for key, value in _typed_header_items(headers)
+    )
+
+
+def _claim_header_names(
+    claims: dict[str, str], owner: str, pairs: Sequence[tuple[bytes, bytes]]
+) -> None:
+    """Claim one contributor's constant header names on a route; a second claim of the
+    same name is a ``WiringError`` naming both contributors. Constants are checkable at
+    wiring, so they are — dynamic pairs cannot be, and append per HTTP semantics."""
+    for key, _ in pairs:
+        name = key.decode("latin-1").lower()
+        existing = claims.get(name)
+        if existing is not None:
+            raise WiringError(
+                f"duplicate constant response header {name!r}: declared by both "
+                f"{existing} and {owner}",
+            )
+        claims[name] = owner
+
+
+@dataclass(slots=True)
+class _HeadersTailHook:
+    """Adapts a compiled ``response_headers`` method hook to the tail-hook shape: one
+    scan + call, then the returned Struct encoded as wire pairs (``None`` adds nothing).
+    Runs inside the senders' header assembly, before ``http.response.start``."""
+
+    _hook: HeadersHook
+
+    def __call__(self, scope: Scope) -> list[tuple[bytes, bytes]]:
+        headers = self._hook(scope)
+        if headers is None:
+            return []
+        return [
+            (key.encode("latin-1"), value.encode("latin-1"))
+            for key, value in _typed_header_items(headers)
+        ]
+
+
+@dataclass(slots=True)
+class _StatusCapture:
+    """Wraps ``send`` to record the response's status and start time, so observe hooks
+    can see the outcome without ever holding the response itself. Compiled in only on
+    routes an observe hook covers."""
+
+    _send: Send
+    status: int = 0
+    started_at: float = 0.0
+
+    async def __call__(self, message: dict[str, Any]) -> None:
+        if message["type"] == "http.response.start":
+            self.status = message["status"]
+            self.started_at = perf_counter()
+        await self._send(message)
+
+
+@dataclass(slots=True)
+class _InterceptRunner:
+    """One compiled intercept and the sender its responses leave through (built from the
+    hook's return annotation at wiring — an intercept response reuses the exact sender a
+    handler returning that type would)."""
+
+    _hook: InterceptHook
+    _send_result: _Sender
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> bool:
+        result = await self._hook(scope)
+        if result is None:
+            return False
         await self._send_result(scope, receive, send, result)
+        return True
+
+
+async def _run_intercepts(
+    runners: tuple[_InterceptRunner, ...],
+    scope: Scope,
+    receive: Receive,
+    send: Send,
+    *,
+    exceptions: _ExceptionHandlers,
+    tail: _RouteTail,
+) -> bool:
+    """Run one verb's intercepts in registration order; the first response wins.
+
+    True when a response left — including an error response: a failing intercept enters
+    the same funnel as a handler failure, and the request is answered either way."""
+    try:
+        for runner in runners:
+            if await runner(scope, receive, send):
+                return True
+    except WiringError:
+        raise
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        await exceptions.send(scope, send, exc, tail)
+        return True
+    return False
+
+
+def _intercept_sender(
+    owner: str,
+    hook: InterceptHook,
+    reverser: _Reverser,
+    exceptions: _ExceptionHandlers,
+    tail: _RouteTail,
+) -> _Sender:
+    """The sender for an intercept's responses, resolved from its return annotation.
+
+    The annotation follows handler rules — any buffered return kind, unioned freely,
+    with ``| None`` meaning fall-through (streaming kinds are rejected, like union
+    members). A plain member's status is 200: an intercept has no verb defaults to
+    inherit; the fixed-status wrappers (``NoContent``/``Created``/``Accepted``) and
+    ``status_code=`` overrides carry their own."""
+    hint = unwrap_alias(hook.return_annotation)
+    members = _union_args(hint)
+    flattened = _flatten_union_members(members) if members is not None else (hint,)
+    concrete = tuple(member for member in flattened if not _is_none_type(member))
+    if not concrete:
+        raise WiringError(
+            f"{owner}.intercept must declare at least one response return type "
+            f"(None alone answers nothing)",
+        )
+    resolved = _union_return_members(f"{owner}.intercept", concrete, 200)
+    if len(resolved) == 1:
+        member = resolved[0]
+        return _result_sender(member.kind, member.status, reverser, exceptions, tail)
+    return _union_sender(resolved, reverser, exceptions, tail)
+
+
+@dataclass(slots=True)
+class _RouteMiddleware:
+    """Everything middleware adds to one route's dispatch, resolved at ``__finalize``:
+    the verb-keyed scoped intercepts and the observe hooks (global + scoped). Routes
+    nothing covers never see one of these — they stay unwrapped ``_Route``\\ s."""
+
+    intercepts: dict[str, tuple[_InterceptRunner, ...]] | None
+    observes: tuple[ObserveHook, ...]
+
+
+@dataclass(slots=True)
+class _CoveredRoute:
+    """A route at least one middleware hook covers, wrapping the compiled ``_Route``.
+
+    Swapped into the routing tables at ``__finalize`` so uncovered routes pay nothing —
+    not even a branch. Per covered request: stamp ``received_at`` (hooks read it off the
+    scope), run the scoped intercepts for the wire method (first response wins, before
+    auth and binding), dispatch, then let the observe hooks see the captured outcome."""
+
+    _route: "_Route"
+    _mw: _RouteMiddleware
+    _exceptions: _ExceptionHandlers
+    _tail: _RouteTail
+
+    async def __call__(
+        self, scope: Scope, receive: Receive, send: Send, path_values: dict[str, str]
+    ) -> None:
+        received_at = perf_counter()
+        scope["jero.received_at"] = received_at
+        mw = self._mw
+        capture: _StatusCapture | None = None
+        if mw.observes:
+            send = capture = _StatusCapture(send)
+        answered = False
+        if mw.intercepts is not None:
+            runners = mw.intercepts.get(scope["method"])
+            if runners is not None:
+                answered = await _run_intercepts(
+                    runners, scope, receive, send, exceptions=self._exceptions, tail=self._tail
+                )
+        if not answered:
+            await self._route(scope, receive, send, path_values)
+        if capture is not None:
+            duration = capture.started_at - received_at if capture.started_at else 0.0
+            for observe in mw.observes:
+                await observe(scope, capture.status, duration)
+
+
+@dataclass(slots=True)
+class _GlobalMiddleware:
+    """The app-level middleware machinery ``__call__`` consults: the verb-keyed global
+    intercept table (pre-routing, so an intercept can answer for a path that would 404)
+    and the global observe hooks (which also see short-circuits and fallthrough
+    responses). ``None`` on apps without global intercept/observe hooks, so the
+    disabled cost is one attribute load."""
+
+    intercepts: dict[str, tuple[_InterceptRunner, ...]]
+    observes: tuple[ObserveHook, ...]
 
 
 def _camel(name: str) -> str:
@@ -2610,6 +2978,19 @@ class BaseApp[FactoryT = None](ABC):
         base_url, trust_forwarded = _forwarded_config_from_env()
         self.__reverser = _Reverser(base_url=base_url, trust_forwarded=trust_forwarded)
         self.__exceptions = _ExceptionHandlers(self.__reverser)
+        # The tail for responses no route owns (unrouted 404, 405): the app-wide CORS
+        # default and global middleware headers, filled at __finalize.
+        self.__app_tail = _RouteTail()
+        self.__includes: list[_IncludeRecord] = []
+        self.__cors_default: CompiledCORS | None = None  # set by _include_cors
+        # route handler -> its resolved CORS policy, for answering preflights; built
+        # at __finalize once inheritance is resolved.
+        self.__route_cors: dict[_Handler, CompiledCORS] = {}
+        self.__middleware: list[CompiledMiddleware] = []  # global, in registration order
+        # The pre-routing middleware machinery (global intercept table + observes);
+        # stays None unless global middleware defines those hooks, so the disabled
+        # per-request cost is one attribute load.
+        self.__pre: _GlobalMiddleware | None = None
         self.__stack = ExitStack()
         self.__astack = AsyncExitStack()
         self.__factory: FactoryT = factory if factory is not None else self.__make_factory()
@@ -2665,7 +3046,7 @@ class BaseApp[FactoryT = None](ABC):
         omits it is flagged at its instantiation site by the type checker.
         """
 
-    def __register(self, method: _HttpMethod, segments: list[_Segment], handler: _Handler) -> None:
+    def __register(self, method: HTTPMethod, segments: list[_Segment], handler: _Handler) -> None:
         params = tuple((i, value) for i, (is_param, value) in enumerate(segments) if is_param)
         if not params:
             route_path = "/".join(value for _, value in segments)
@@ -2736,8 +3117,31 @@ class BaseApp[FactoryT = None](ABC):
         methods: dict[str, _Verb],
         *,
         auth: Auth[Any, Any] | None,
+        cors: CORS | None,
+        middleware: Sequence[object],
     ) -> None:
         cls = type(obj)
+        if cors is not None and not isinstance(cast("object", cors), CORS):
+            raise WiringError(
+                f"{cls.__name__}: cors= must be a CORS policy (or CORS.OFF), "
+                f"got {type(cors).__name__}",
+            )
+        # Explicit policies are validated and compiled here, at the include call —
+        # only what depends on other registrations (inheriting an omitted cors=, the
+        # global middleware every route picks up) waits for __finalize.
+        cors_off = cors is CORS.OFF
+        compiled_cors = CompiledCORS(cors) if cors is not None and not cors_off else None
+        compiled_middleware = tuple(CompiledMiddleware(m) for m in middleware)
+        # One shared tail per include: every route (and sender) the include registers
+        # holds this instance, and __finalize fills it in place once coverage is known.
+        tail = _RouteTail()
+        record = _IncludeRecord(
+            tail=tail,
+            routes=[],
+            cors=compiled_cors,
+            cors_off=cors_off,
+            middleware=compiled_middleware,
+        )
         path = getattr(cls, "path", None)
         if path is None:
             raise WiringError(
@@ -2785,8 +3189,10 @@ class BaseApp[FactoryT = None](ABC):
                 auth=compiled_auth,
                 reverser=self.__reverser,
                 exceptions=self.__exceptions,
+                tail=tail,
             )
             self.__register(verb.method, segments, handler)
+            record.routes.append((verb.method, handler))
             self.__reverser.register(
                 fn.__func__, cls.ref, name, _RouteRef(tuple(segments), sources.path)
             )
@@ -2807,6 +3213,7 @@ class BaseApp[FactoryT = None](ABC):
 
         if not registered:
             raise WiringError(f"{cls.__name__} defines none of: {', '.join(methods)}")
+        self.__includes.append(record)
 
     def _include_exception_handler[
         E: Exception,
@@ -2845,25 +3252,80 @@ class BaseApp[FactoryT = None](ABC):
             )
         self.__exceptions.adapter = adapter
 
+    def _include_cors(self, cors: CORS) -> None:
+        """Serve cross-origin browser callers app-wide with one default :class:`CORS` policy.
+
+        Call inside ``wire``, at most once (order among the ``include_*`` calls doesn't
+        matter). Every include inherits the policy unless it passes its own ``cors=`` —
+        a different policy overrides it, ``CORS.OFF`` removes it. Skipping
+        ``_include_cors`` entirely means no CORS anywhere except includes that opt in
+        with their own ``cors=``.
+
+        The policy is compiled at wiring: a wildcard origin becomes constant header
+        pairs in covered routes' responses (free per request), an origin allow-list one
+        set lookup + origin echo. Preflights (``OPTIONS`` with
+        ``Access-Control-Request-Method``) are answered per (path, requested method) on
+        the existing OPTIONS branch, so two verbs on one path may carry two policies.
+        Error responses carry the failing route's pairs — a browser page must be able
+        to *read* the 401/422 problem body; unrouted 404s carry this app default.
+        """
+        if not isinstance(cast("object", cors), CORS):
+            raise WiringError(f"_include_cors requires a CORS policy, got {type(cors).__name__}")
+        if cors is CORS.OFF:
+            raise WiringError(
+                "CORS.OFF is the per-include opt-out; an app that wants no CORS default "
+                "simply does not call _include_cors",
+            )
+        if self.__cors_default is not None:
+            raise WiringError("a CORS default is already registered; an app has at most one")
+        self.__cors_default = CompiledCORS(cors)
+
+    def _include_middleware(self, middleware: object) -> None:
+        """Register one middleware app-wide: every route (current and later includes) is
+        covered, and its intercepts run *pre-routing* — they can answer requests no
+        route serves, which is how an OPTIONS-scoped intercept answers preflights for
+        paths that would 404.
+
+        The middleware is a structurally typed object — no base class; its hooks
+        (``response_headers`` attribute or method, ``intercept`` + ``intercept_methods``,
+        ``observe``) are introspected and validated here, fail-loud, and compiled into
+        the covered routes at wiring (see :class:`~jero.CORS` for the same idea as a
+        built-in). Register order is run order, and globals run before include-scoped
+        middleware. Only what a middleware defines costs anything: a constant
+        ``response_headers`` is baked into route header blocks for free, an off-scope
+        verb never reaches an ``intercept``.
+        """
+        self.__middleware.append(CompiledMiddleware(middleware))
+
     def _include_resource[THeaders: Struct, TUser: Struct](
         self,
         resource: Resource,
         *,
         auth: Auth[THeaders, TUser] | None = None,
+        cors: CORS | None = None,
+        middleware: Sequence[object] = (),
     ) -> None:
         """Register a ``Resource``'s CRUD methods as routes, optionally behind ``auth``.
 
         An authenticator returning ``TUser`` gates every method: no valid credentials, no
         handler. One returning ``TUser | None`` accepts anonymous callers instead — see
         :meth:`_include_endpoint`.
+
+        ``cors=`` sets this include's :class:`CORS` policy: omitted inherits the
+        ``_include_cors`` default, a policy overrides it, ``CORS.OFF`` opts out.
+        ``middleware=`` adds include-scoped middleware on top of any registered with
+        :meth:`_include_middleware` — scope is deployment policy, so it lives here at
+        the mount, not on the class. Scoped intercepts run post-resolve, pre-auth.
         """
-        self.__include(resource, Resource.METHODS, auth=auth)
+        self.__include(resource, Resource.METHODS, auth=auth, cors=cors, middleware=middleware)
 
     def _include_endpoint[THeaders: Struct, TUser: Struct](
         self,
         endpoint: Endpoint,
         *,
         auth: Auth[THeaders, TUser] | None = None,
+        cors: CORS | None = None,
+        middleware: Sequence[object] = (),
     ) -> None:
         """Register an ``Endpoint``'s verb methods as routes, optionally behind ``auth``.
 
@@ -2872,8 +3334,14 @@ class BaseApp[FactoryT = None](ABC):
         presenting none is served with ``user=None``, *invalid* credentials are still a 401,
         and every handler on the route must declare ``user: TUser | None`` (all checked at
         startup).
+
+        ``cors=`` sets this include's :class:`CORS` policy: omitted inherits the
+        ``_include_cors`` default, a policy overrides it, ``CORS.OFF`` opts out.
+        ``middleware=`` adds include-scoped middleware on top of any registered with
+        :meth:`_include_middleware` — scope is deployment policy, so it lives here at
+        the mount, not on the class. Scoped intercepts run post-resolve, pre-auth.
         """
-        self.__include(endpoint, Endpoint.METHODS, auth=auth)
+        self.__include(endpoint, Endpoint.METHODS, auth=auth, cors=cors, middleware=middleware)
 
     def _include_openapi(
         self,
@@ -3017,7 +3485,7 @@ class BaseApp[FactoryT = None](ABC):
         # Static routes never reach here: __call__ resolves them with an inlined dict
         # lookup. The cast is paid only on this, the dynamic path.
         segments = path.split("/")
-        verb = cast("_HttpMethod", method)
+        verb = cast("HTTPMethod", method)
         for pattern in self.__dynamic.get((verb, len(segments)), ()):
             # Inlines pattern.matches (kept for the cold Allow path): a genexpr per
             # candidate is measurable here. unquote only when a segment is escaped.
@@ -3032,7 +3500,7 @@ class BaseApp[FactoryT = None](ABC):
                 return pattern.handler, values
         return None
 
-    def __allowed_methods(self, path: str) -> tuple[_HttpMethod, ...]:
+    def __allowed_methods(self, path: str) -> tuple[HTTPMethod, ...]:
         allowed = list(self.__allowed.get(path, ()))
         segments = path.split("/")
         for (method, count), bucket in self.__dynamic.items():
@@ -3052,6 +3520,29 @@ class BaseApp[FactoryT = None](ABC):
         allowed = self.__allowed_methods(path)
         return _allow_header(allowed) if allowed else None
 
+    def __preflight_pairs(self, scope: Scope, path: str) -> list[tuple[bytes, bytes]] | None:
+        """The CORS pairs for a preflight OPTIONS, or None when the request isn't one
+        (no ``Access-Control-Request-Method``) or nothing answers it.
+
+        The requested method selects *which route's* policy replies — the answer is per
+        (path, requested method), so ``GET`` public / ``POST`` restricted on one path
+        works. Preflights carry no credentials, so this runs before any auth would."""
+        requested = requested_method(scope)
+        if requested is None:
+            return None
+        # HEAD is served from GET routes, but the *policy* check still sees "HEAD".
+        verb = "GET" if requested == "HEAD" else requested
+        handler = self.__static.get((verb, path))
+        if handler is None:
+            resolved = self.__resolve_dynamic(verb, path)
+            if resolved is None:
+                return None
+            handler = resolved[0]
+        cors = self.__route_cors.get(handler)
+        if cors is None:
+            return None
+        return cors.preflight_pairs(scope, requested)
+
     def __log_openapi_docs(self, config: _OpenAPIConfig) -> None:
         """Announce where the docs/spec are served, once, at startup.
 
@@ -3065,8 +3556,154 @@ class BaseApp[FactoryT = None](ABC):
         else:
             logger.info("Serving OpenAPI spec at %s%s", base, config.openapi_path)
 
+    def __fill_tail(
+        self,
+        tail: _RouteTail,
+        cors: CompiledCORS | None,
+        middlewares: Sequence[CompiledMiddleware],
+    ) -> None:
+        """Fill one response-header tail: the CORS policy first, then each middleware's
+        constant pairs and ``response_headers`` method hooks (globals before scoped, in
+        registration order). Duplicate *constant* names across contributors fail loud."""
+        claims: dict[str, str] = {}
+        if cors is not None:
+            _claim_header_names(claims, "CORS", cors.constant_pairs)
+            tail.pairs += cors.constant_pairs
+            if cors.dynamic is not None:
+                tail.dynamic += (cors.dynamic,)
+        for mw in middlewares:
+            if mw.constant_headers is not None:
+                pairs = _constant_middleware_pairs(mw.constant_headers)
+                _claim_header_names(claims, mw.owner, pairs)
+                tail.pairs += pairs
+            if mw.headers_hook is not None:
+                tail.dynamic += (_HeadersTailHook(mw.headers_hook),)
+        tail.active = bool(tail.pairs or tail.dynamic)
+
+    def __build_global_middleware(self) -> None:
+        """Build the pre-routing machinery: the verb-keyed global intercept table and
+        the global observes. ``__pre`` stays None when neither exists — a middleware
+        with only header tiers has no pre-routing presence at all."""
+        table: dict[str, list[_InterceptRunner]] = {}
+        for mw in self.__middleware:
+            if mw.intercept is None:
+                continue
+            runner = _InterceptRunner(
+                mw.intercept,
+                _intercept_sender(
+                    mw.owner, mw.intercept, self.__reverser, self.__exceptions, self.__app_tail
+                ),
+            )
+            for method in mw.intercept_methods:
+                table.setdefault(method, []).append(runner)
+        observes = tuple(mw.observe for mw in self.__middleware if mw.observe is not None)
+        if table or observes:
+            self.__pre = _GlobalMiddleware(
+                {method: tuple(runners) for method, runners in table.items()}, observes
+            )
+
+    @staticmethod
+    def __check_scoped_intercepts(record: _IncludeRecord) -> None:
+        """A scoped intercept none of the include's wire methods can ever trigger is a
+        dead registration — fail loud rather than silently never running."""
+        served = {method for method, _ in record.routes}
+        if "GET" in served:
+            served.add("HEAD")
+        for mw in record.middleware:
+            if mw.intercept is not None and not served.intersection(mw.intercept_methods):
+                raise WiringError(
+                    f"{mw.owner}.intercept can never run on this include: it declares "
+                    f"intercept_methods {mw.intercept_methods!r} but the include serves "
+                    f"{', '.join(sorted(served))}. (OPTIONS never reaches scoped "
+                    f"middleware — intercept it globally via _include_middleware.)",
+                )
+
+    def __swap_handler(self, old: _Handler, new: _Handler) -> None:
+        """Replace one compiled route in the routing tables (wiring-time only) — how a
+        covered route's ``_CoveredRoute`` wrapper takes its place, so uncovered routes
+        never pay so much as a branch for middleware."""
+        for key, handler in self.__static.items():
+            if handler is old:
+                self.__static[key] = new
+        for bucket in self.__dynamic.values():
+            for index, pattern in enumerate(bucket):
+                if pattern.handler is old:
+                    bucket[index] = _Pattern(pattern.statics, pattern.params, new)
+
+    def __cover_route(
+        self,
+        record: _IncludeRecord,
+        verb: HTTPMethod,
+        route: "_Route",
+        scoped_runners: Sequence[tuple[CompiledMiddleware, _InterceptRunner]],
+        observes: tuple[ObserveHook, ...],
+        *,
+        headers_hooks: bool,
+    ) -> _Handler:
+        """Wrap one route in a ``_CoveredRoute`` when any middleware hook covers it
+        (an intercept scoped to one of its wire methods, an observe, or a dynamic
+        ``response_headers`` needing the ``received_at`` stamp); uncovered routes are
+        returned untouched."""
+        wire_methods = ("GET", "HEAD") if verb == "GET" else (verb,)
+        table: dict[str, list[_InterceptRunner]] = {}
+        for mw, runner in scoped_runners:
+            for method in mw.intercept_methods:
+                if method in wire_methods:
+                    table.setdefault(method, []).append(runner)
+        if not table and not observes and not headers_hooks:
+            return route
+        compiled = _RouteMiddleware(
+            {method: tuple(runners) for method, runners in table.items()} if table else None,
+            observes,
+        )
+        covered = _CoveredRoute(route, compiled, self.__exceptions, record.tail)
+        self.__swap_handler(route, covered)
+        return covered
+
+    def __finalize_tails(self) -> None:
+        """Resolve every include's response-header tail (the CORS policy it declares or
+        inherits, plus middleware header tiers), the middleware coverage of each route,
+        and the app-level tail + pre-routing table for unrouted responses. One pass
+        after wiring, so ``_include_cors`` / ``_include_middleware`` and the include
+        calls compose in any order."""
+        default = self.__cors_default
+        # Unrouted responses (404, 405) carry the app default and global middleware only.
+        self.__fill_tail(self.__app_tail, default, self.__middleware)
+        self.__build_global_middleware()
+        global_observes = self.__pre.observes if self.__pre is not None else ()
+        for record in self.__includes:
+            self.__check_scoped_intercepts(record)
+            cors = None if record.cors_off else (record.cors or default)
+            middlewares = (*self.__middleware, *record.middleware)
+            self.__fill_tail(record.tail, cors, middlewares)
+            headers_hooks = any(mw.headers_hook is not None for mw in middlewares)
+            scoped_runners = [
+                (
+                    mw,
+                    _InterceptRunner(
+                        mw.intercept,
+                        _intercept_sender(
+                            mw.owner, mw.intercept, self.__reverser, self.__exceptions, record.tail
+                        ),
+                    ),
+                )
+                for mw in record.middleware
+                if mw.intercept is not None
+            ]
+            observes = global_observes + tuple(
+                mw.observe for mw in record.middleware if mw.observe is not None
+            )
+            for verb, route in record.routes:
+                handler = self.__cover_route(
+                    record, verb, route, scoped_runners, observes, headers_hooks=headers_hooks
+                )
+                if cors is not None:
+                    self.__route_cors[handler] = cors
+
     def __finalize(self) -> None:
-        """Precompute Allow headers and build the OpenAPI document; runs once after wiring."""
+        """Precompute Allow headers, resolve response-header tails, and build the OpenAPI
+        document; runs once after wiring."""
+        self.__finalize_tails()
         self.__allow_cache = {
             path: _allow_header(self.__allowed_methods(path)) for path in self.__allowed
         }
@@ -3107,6 +3744,67 @@ class BaseApp[FactoryT = None](ABC):
             raise
         await send({"type": "lifespan.shutdown.complete"})
 
+    async def __intercept_global(
+        self,
+        pre: _GlobalMiddleware,
+        runners: tuple[_InterceptRunner, ...],
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> bool:
+        """Run one verb's global intercepts, pre-routing (they can answer requests no
+        route serves — preflights for paths that would 404). True when one answered:
+        the response (or its error) has left and the global observes have seen it;
+        False falls through to routing untouched."""
+        received_at = perf_counter()
+        scope["jero.received_at"] = received_at
+        if scope["method"] == "HEAD":
+            send = _SuppressBody(send)
+        capture: _StatusCapture | None = None
+        if pre.observes:
+            send = capture = _StatusCapture(send)
+        answered = await _run_intercepts(
+            runners, scope, receive, send, exceptions=self.__exceptions, tail=self.__app_tail
+        )
+        if answered and capture is not None:
+            duration = capture.started_at - received_at if capture.started_at else 0.0
+            for observe in pre.observes:
+                await observe(scope, capture.status, duration)
+        return answered
+
+    async def __fallthrough(self, scope: Scope, send: Send, method: str, path: str) -> None:
+        """Answer a request no route serves. No route owns these responses, so the 404
+        and 405 problems carry the app-level tail (the CORS default and global
+        middleware headers); the OPTIONS answer adds the CORS preflight block when the
+        requested method's route has a policy."""
+        allow = self.__allow_for(path)
+        error: HTTPError
+        if allow is None:
+            error = NotFoundError()
+            await _send_json(
+                send,
+                error.status,
+                self.__exceptions.encode_error(error),
+                self.__app_tail.error_extra(scope),
+            )
+        elif method == "OPTIONS":
+            headers = [(b"allow", allow)]
+            if self.__route_cors:
+                preflight = self.__preflight_pairs(scope, path)
+                if preflight is not None:
+                    headers += preflight
+            await send({"type": "http.response.start", "status": 204, "headers": headers})
+            await send({"type": "http.response.body", "body": b""})
+        else:
+            error = MethodNotAllowedError()
+            extra = self.__app_tail.error_extra(scope)
+            await _send_json(
+                send,
+                error.status,
+                self.__exceptions.encode_error(error),
+                [(b"allow", allow)] + (extra if extra is not None else []),
+            )
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             if scope["type"] == "lifespan":
@@ -3117,6 +3815,15 @@ class BaseApp[FactoryT = None](ABC):
         # HTTP is the hot path; inlined here (was _handle_http) to save a coroutine hop.
         method: str = scope["method"]
         path: str = scope["path"]
+        # Global intercepts run pre-routing; the table is verb-keyed, so an off-scope
+        # method costs one dict hit and apps without them one attribute load.
+        pre = self.__pre
+        if pre is not None:
+            runners = pre.intercepts.get(method)
+            if runners is not None and await self.__intercept_global(
+                pre, runners, scope, receive, send
+            ):
+                return
         verb = "GET" if method == "HEAD" else method
         # A static hit is the hottest path of all: one dict lookup, inlined here to skip
         # the resolver call (a non-route verb simply misses).
@@ -3131,22 +3838,14 @@ class BaseApp[FactoryT = None](ABC):
                 scope, receive, _SuppressBody(send) if method == "HEAD" else send, path_values
             )
             return
-
-        allow = self.__allow_for(path)
-        error: HTTPError
-        if allow is None:
-            error = NotFoundError()
-            await _send_json(send, error.status, self.__exceptions.encode_error(error))
-        elif method == "OPTIONS":
-            await send(
-                {"type": "http.response.start", "status": 204, "headers": [(b"allow", allow)]}
-            )
-            await send({"type": "http.response.body", "body": b""})
-        else:
-            error = MethodNotAllowedError()
-            await _send_json(
-                send,
-                error.status,
-                self.__exceptions.encode_error(error),
-                [(b"allow", allow)],
-            )
+        if pre is None or not pre.observes:
+            await self.__fallthrough(scope, send, method, path)
+            return
+        # Global observes see fallthrough answers too — capture the outcome around it.
+        received_at = perf_counter()
+        scope["jero.received_at"] = received_at
+        capture = _StatusCapture(send)
+        await self.__fallthrough(scope, capture, method, path)
+        duration = capture.started_at - received_at if capture.started_at else 0.0
+        for observe in pre.observes:
+            await observe(scope, capture.status, duration)
