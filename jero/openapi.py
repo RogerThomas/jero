@@ -139,7 +139,7 @@ class ModelMeta(Struct):
 
 class Tag(Struct):
     """A document-level tag — the only place a tag carries a ``description`` (docs UIs render
-    it as the blurb under the tag's section). Declare them on ``include_openapi(tags=...)``
+    it as the blurb under the tag's section). Declare them on ``_include_openapi(tags=...)``
     to describe and order the groups; operations reference a tag by its ``name``."""
 
     name: str
@@ -171,7 +171,7 @@ type ScalarTheme = Literal[
 
 class ScalarConfig(Struct, rename="camel", omit_defaults=True):
     """A typed subset of the Scalar docs-UI configuration, passed to
-    :meth:`~jero.BaseApp.include_openapi` as ``scalar_config`` and forwarded to the viewer as
+    :meth:`~jero.BaseApp._include_openapi` as ``scalar_config`` and forwarded to the viewer as
     its ``data-configuration``.
 
     Only the commonly-useful, verified options are modeled — jero blesses a subset rather

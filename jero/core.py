@@ -4,7 +4,7 @@ The contract:
 
 - Resources are plain classes with any of the CRUD methods ``create`` / ``read_one`` /
   ``read_many`` / ``update_full`` / ``update_partial`` / ``delete``, mapped to POST / GET (item) /
-  GET (collection) / PUT / PATCH / DELETE on the path given to ``include_resource``. ``read_many``
+  GET (collection) / PUT / PATCH / DELETE on the path given to ``_include_resource``. ``read_many``
   serves the mount path itself and cannot extend it with trailing segments — items belong to
   ``read_one``.
 - The mount path is a template: static segments plus ``{slot}`` params (snake_case, matching the
@@ -18,7 +18,7 @@ The contract:
   application/octet-stream), or a ``BytesResponse`` / ``JSONResponse`` to control response headers.
   msgspec ``rename`` is honored everywhere (e.g. ``Struct, rename="camel"`` for camelCase on the
   wire, snake_case in code) — define your own base Struct for the wire convention.
-- Auth is an object passed to ``include_resource`` implementing
+- Auth is an object passed to ``_include_resource`` implementing
   ``authenticate(headers: SomeStruct) -> UserStruct``; raise an ``HTTPError`` subclass
   to reject. When set, it runs for every method on the resource, before the body is decoded.
   Handlers that declare
@@ -28,10 +28,10 @@ The contract:
   handlers — which must all declare ``user: UserStruct | None`` — serve the caller
   anonymously, while invalid credentials are still a 401.
 - Dependencies are wired by hand in the overridden ``BaseApp.wire`` method (runs once at startup).
-  Open resources with ``self.aenter(cm)`` / ``self.enter(cm)`` — the app holds them on exit stacks
+  Open resources with ``self._aenter(cm)`` / ``self._enter(cm)`` — the app holds them on exit stacks
   and closes them (reverse order) at shutdown. No ``yield``, no DI container.
 
-All introspection happens once, at ``include_resource`` time. Routing is dict lookups: static
+All introspection happens once, at ``_include_resource`` time. Routing is dict lookups: static
 routes match exactly; templated routes are bucketed by (method, segment count) and matched on their
 static segments — no regexes, no route-table scans, no ordering rules.
 
@@ -1799,7 +1799,7 @@ class _ExceptionHandlers:
         self._handlers: dict[type[Exception], CompiledExceptionHandler] = {}
         self._resolved: dict[type[Exception], CompiledExceptionHandler | None] = {}
         self._reverser = reverser
-        # The app-wide renderer for the Problem family (see include_error_adapter);
+        # The app-wide renderer for the Problem family (see _include_error_adapter);
         # None means the family renders its own Problem body.
         self.adapter: ErrorBodyAdapter[Any] | None = None
 
@@ -2395,7 +2395,7 @@ def _camel(name: str) -> str:
 
 def _json_doc_handler(config: "_OpenAPIConfig") -> _Handler:
     """A handler serving the cached OpenAPI document. The payload is filled in at
-    ``_finalize`` (after wiring), so the route can be registered before the document
+    ``__finalize`` (after wiring), so the route can be registered before the document
     exists — the closure reads ``config.payload`` at request time."""
 
     async def handler(
@@ -2439,12 +2439,12 @@ def _favicon_payload(favicon: Path) -> tuple[bytes, bytes]:
     if content_type is None:
         supported = ", ".join(sorted(_FAVICON_CONTENT_TYPES))
         raise WiringError(
-            f"include_openapi favicon {favicon} has an unsupported suffix; use {supported}",
+            f"_include_openapi favicon {favicon} has an unsupported suffix; use {supported}",
         )
     try:
         body = favicon.read_bytes()
     except OSError as exc:
-        raise WiringError(f"include_openapi favicon {favicon} is not readable: {exc}") from exc
+        raise WiringError(f"_include_openapi favicon {favicon} is not readable: {exc}") from exc
     return body, content_type
 
 
@@ -2484,7 +2484,7 @@ def _scalar_html(
 
 @dataclass(slots=True)
 class _OpenAPIConfig:
-    """The settings stashed by ``include_openapi`` and read at ``_finalize`` / startup."""
+    """The settings stashed by ``_include_openapi`` and read at ``__finalize`` / startup."""
 
     title: str
     version: str
@@ -2493,7 +2493,7 @@ class _OpenAPIConfig:
     tags: tuple[Tag, ...]
     openapi_path: str
     docs_path: str | None
-    payload: bytes = b"{}"  # the built OpenAPI document, filled in at _finalize
+    payload: bytes = b"{}"  # the built OpenAPI document, filled in at __finalize
 
 
 def _assemble_openapi_tags(
@@ -2520,27 +2520,9 @@ def _assemble_openapi_tags(
     return tuple(Tag(name=name, description=desc) for name, desc in resolved.items())
 
 
-class _StackScope:
-    """Exit-stack helpers shared by ``BaseApp`` (owns the stacks) and
-    ``BaseFactory`` (borrows them): open a resource for the owner's lifetime."""
-
-    _stack: ExitStack
-    _astack: AsyncExitStack
-
-    def enter[T](self, cm: AbstractContextManager[T]) -> T:
-        """Open a sync context manager, closed at the app's shutdown (a ``BaseFactory``
-        borrows the app's stacks, so resources it enters share the app's lifetime)."""
-        return self._stack.enter_context(cm)
-
-    async def aenter[T](self, cm: AbstractAsyncContextManager[T]) -> T:
-        """Open an async context manager, closed at the app's shutdown (a ``BaseFactory``
-        borrows the app's stacks, so resources it enters share the app's lifetime)."""
-        return await self._astack.enter_async_context(cm)
-
-
-class BaseFactory(_StackScope):
+class BaseFactory:
     """Base for an app's factory. Subclass and add ``create_*`` methods that
-    build services with ``self.enter`` / ``self.aenter``.
+    build services with ``self._enter`` / ``self._aenter``.
 
     Under an app, the app injects its exit stacks (``es`` / ``aes``); anything
     opened via the helpers is closed when the app shuts down. Standalone —
@@ -2549,8 +2531,18 @@ class BaseFactory(_StackScope):
     """
 
     def __init__(self, es: ExitStack, aes: AsyncExitStack) -> None:
-        self._stack = es
-        self._astack = aes
+        self.__stack = es
+        self.__astack = aes
+
+    def _enter[T](self, cm: AbstractContextManager[T]) -> T:
+        """Open a sync context manager on the factory's injected stack — under an app
+        that is the app's stack, so the resource is closed at the app's shutdown."""
+        return self.__stack.enter_context(cm)
+
+    async def _aenter[T](self, cm: AbstractAsyncContextManager[T]) -> T:
+        """Open an async context manager on the factory's injected stack — under an app
+        that is the app's stack, so the resource is closed at the app's shutdown."""
+        return await self.__astack.enter_async_context(cm)
 
     @classmethod
     @asynccontextmanager
@@ -2588,14 +2580,14 @@ def _instantiate_factory[F](factory_cls: type[F], stack: ExitStack, astack: Asyn
     return factory_cls(**{name: s for name, s in stacks.items() if name in params})
 
 
-class BaseApp[FactoryT = None](_StackScope, ABC):
+class BaseApp[FactoryT = None](ABC):
     """Subclass and override ``wire`` to open resources and include resources/endpoints.
 
     The app owns the two exit stacks. Parameterize with a factory class —
     ``class MyApp(BaseApp[MyFactory])`` — and the app builds it at construction,
     injecting the stacks the factory's ``__init__`` names (``es`` for the
     ExitStack, ``aes`` for the AsyncExitStack). The built factory is then
-    ``self.factory`` (typed as ``MyFactory``) inside ``wire``, and any resource
+    ``self._factory`` (typed as ``MyFactory``) inside ``wire``, and any resource
     it registers on those stacks is closed at shutdown.
 
     Pass ``factory=`` to supply a prebuilt factory instead of building one — the
@@ -2608,26 +2600,34 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
     """
 
     def __init__(self, *, factory: FactoryT | None = None) -> None:
-        self._static: _StaticRoutes = {}
-        self._dynamic: _DynamicRoutes = {}
-        self._allowed: _AllowedMethods = {}
-        self._allow_cache: dict[str, bytes] = {}
-        self._decoders: dict[type[Struct], Decoder[Struct]] = {}
-        self._operations: list[OperationSpec] = []  # captured for the OpenAPI document
-        self._openapi: _OpenAPIConfig | None = None  # set by include_openapi, built at _finalize
+        self.__static: _StaticRoutes = {}
+        self.__dynamic: _DynamicRoutes = {}
+        self.__allowed: _AllowedMethods = {}
+        self.__allow_cache: dict[str, bytes] = {}
+        self.__decoders: dict[type[Struct], Decoder[Struct]] = {}
+        self.__operations: list[OperationSpec] = []  # captured for the OpenAPI document
+        self.__openapi: _OpenAPIConfig | None = None  # set by _include_openapi, built at __finalize
         base_url, trust_forwarded = _forwarded_config_from_env()
-        self._reverser = _Reverser(base_url=base_url, trust_forwarded=trust_forwarded)
-        self._exceptions = _ExceptionHandlers(self._reverser)
-        self._stack = ExitStack()
-        self._astack = AsyncExitStack()
-        self._factory: FactoryT = factory if factory is not None else self._make_factory()
+        self.__reverser = _Reverser(base_url=base_url, trust_forwarded=trust_forwarded)
+        self.__exceptions = _ExceptionHandlers(self.__reverser)
+        self.__stack = ExitStack()
+        self.__astack = AsyncExitStack()
+        self.__factory: FactoryT = factory if factory is not None else self.__make_factory()
 
     @property
-    def factory(self) -> FactoryT:
+    def _factory(self) -> FactoryT:
         """The built factory, read inside ``wire``. Set once at construction (read-only)."""
-        return self._factory
+        return self.__factory
 
-    def _decoder(self, struct_type: type[Struct]) -> Decoder[Struct]:
+    def _enter[T](self, cm: AbstractContextManager[T]) -> T:
+        """Open a sync context manager, closed at shutdown in reverse order."""
+        return self.__stack.enter_context(cm)
+
+    async def _aenter[T](self, cm: AbstractAsyncContextManager[T]) -> T:
+        """Open an async context manager, closed at shutdown in reverse order."""
+        return await self.__astack.enter_async_context(cm)
+
+    def __decoder(self, struct_type: type[Struct]) -> Decoder[Struct]:
         """The reusable typed JSON decoder for ``struct_type``, built once per app.
 
         Decoders are keyed by type, so models shared across handlers (a ``WidgetIn``
@@ -2635,11 +2635,11 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         wiring time; the binder holds the resolved decoder, so the request path does
         no lookup.
         """
-        if struct_type not in self._decoders:
-            self._decoders[struct_type] = Decoder(struct_type)
-        return self._decoders[struct_type]
+        if struct_type not in self.__decoders:
+            self.__decoders[struct_type] = Decoder(struct_type)
+        return self.__decoders[struct_type]
 
-    def _resolve_factory_type(self) -> type | None:
+    def __resolve_factory_type(self) -> type | None:
         """The factory class from ``BaseApp[...]``, or None if unparameterized."""
         for base in get_original_bases(type(self)):
             if get_origin(base) is BaseApp:
@@ -2648,15 +2648,15 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
                     return args[0]
         return None
 
-    def _make_factory(self) -> FactoryT:
-        factory_type = self._resolve_factory_type()
+    def __make_factory(self) -> FactoryT:
+        factory_type = self.__resolve_factory_type()
         if factory_type is None:
             return cast("FactoryT", None)
-        return cast("FactoryT", _instantiate_factory(factory_type, self._stack, self._astack))
+        return cast("FactoryT", _instantiate_factory(factory_type, self.__stack, self.__astack))
 
     @abstractmethod
     async def wire(self) -> None:
-        """Override to open resources (via ``enter`` / ``aenter``) and include them.
+        """Override to open resources (via ``_enter`` / ``_aenter``) and include them.
 
         Runs once at startup. Anything entered via the helpers is torn
         down (in reverse order) at shutdown.
@@ -2665,24 +2665,24 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         omits it is flagged at its instantiation site by the type checker.
         """
 
-    def _register(self, method: _HttpMethod, segments: list[_Segment], handler: _Handler) -> None:
+    def __register(self, method: _HttpMethod, segments: list[_Segment], handler: _Handler) -> None:
         params = tuple((i, value) for i, (is_param, value) in enumerate(segments) if is_param)
         if not params:
             route_path = "/".join(value for _, value in segments)
-            if (method, route_path) in self._static:
+            if (method, route_path) in self.__static:
                 raise WiringError(f"{method} {route_path} is already registered")
-            self._static[(method, route_path)] = handler
-            self._allowed.setdefault(route_path, []).append(method)
+            self.__static[(method, route_path)] = handler
+            self.__allowed.setdefault(route_path, []).append(method)
             return
 
         statics = tuple((i, value) for i, (is_param, value) in enumerate(segments) if not is_param)
-        bucket = self._dynamic.setdefault((method, len(segments)), [])
+        bucket = self.__dynamic.setdefault((method, len(segments)), [])
         if any(pattern.statics == statics for pattern in bucket):
             raise WiringError(f"{method} {_template_str(segments)} is already registered")
         bucket.append(_Pattern(statics, params, handler))
 
     @staticmethod
-    def _check_user_source(
+    def __check_user_source(
         resource_cls: type,
         name: str,
         sources: Sources,
@@ -2730,7 +2730,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
                 f"callers",
             )
 
-    def _include(
+    def __include(
         self,
         obj: Resource | Endpoint,
         methods: dict[str, _Verb],
@@ -2754,18 +2754,24 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         # An authed route with no declared scheme defaults to HTTP bearer (the common case).
         security_scheme: SecurityScheme | None = None
         if auth is not None:
-            declared = getattr(type(auth), "openapi_security", None)
-            security_scheme = (
-                declared if isinstance(declared, SecurityScheme) else (SecurityScheme.http_bearer())
-            )
+            declared: object = getattr(type(auth), "openapi_security", None)
+            if declared is None:
+                security_scheme = SecurityScheme.http_bearer()
+            elif isinstance(declared, SecurityScheme):
+                security_scheme = declared
+            else:
+                raise WiringError(
+                    f"{type(auth).__name__}: openapi_security must be SecurityScheme, "
+                    f"got {type(declared).__name__}",
+                )
 
         registered = False
         for name, verb in methods.items():
             fn = getattr(obj, name, None)
             if fn is None:
                 continue
-            sources = _bind_sources(cls, name, fn, verb, self._decoder)
-            self._check_user_source(cls, name, sources, compiled_auth)
+            sources = _bind_sources(cls, name, fn, verb, self.__decoder)
+            self.__check_user_source(cls, name, sources, compiled_auth)
             segments = _route_segments(
                 cls, name, template, sources.path, extends_path=verb.extends_path
             )
@@ -2777,14 +2783,14 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
                 status,
                 sources=sources,
                 auth=compiled_auth,
-                reverser=self._reverser,
-                exceptions=self._exceptions,
+                reverser=self.__reverser,
+                exceptions=self.__exceptions,
             )
-            self._register(verb.method, segments, handler)
-            self._reverser.register(
+            self.__register(verb.method, segments, handler)
+            self.__reverser.register(
                 fn.__func__, cls.ref, name, _RouteRef(tuple(segments), sources.path)
             )
-            self._operations.append(
+            self.__operations.append(
                 OperationSpec(
                     path=_template_str(segments),
                     method=verb.method.lower(),
@@ -2802,7 +2808,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         if not registered:
             raise WiringError(f"{cls.__name__} defines none of: {', '.join(methods)}")
 
-    def add_exception_handler[
+    def _include_exception_handler[
         E: Exception,
     ](self, handler: ExceptionHandler[E]) -> None:
         """Register a structurally typed custom exception handler.
@@ -2810,9 +2816,9 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         The exception, JSON body, and typed-header types are inferred from the concrete
         ``handle_exception`` signature and validated once during wiring.
         """
-        self._exceptions.register(handler)
+        self.__exceptions.register(handler)
 
-    def include_error_adapter(self, adapter: ErrorBodyAdapter[Any]) -> None:
+    def _include_error_adapter(self, adapter: ErrorBodyAdapter[Any]) -> None:
         """Replace the Problem family's wire body app-wide with ``adapter``'s composition.
 
         Call inside ``wire``, at most once. Every Problem-family error — the framework's
@@ -2824,7 +2830,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         # The isinstance guards untyped callers; cast first so it isn't statically vacuous.
         if not isinstance(cast("object", adapter), ErrorBodyAdapter):
             raise WiringError(
-                "include_error_adapter requires an ErrorBodyAdapter instance, "
+                "_include_error_adapter requires an ErrorBodyAdapter instance, "
                 f"got {type(adapter).__name__}",
             )
         if getattr(type(adapter), "body_type", None) is None:
@@ -2832,14 +2838,14 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
                 f"{type(adapter).__name__} never bound a concrete body Struct; "
                 "parameterize the class: ErrorBodyAdapter[YourBody]",
             )
-        if self._exceptions.adapter is not None:
-            existing = type(self._exceptions.adapter).__name__
+        if self.__exceptions.adapter is not None:
+            existing = type(self.__exceptions.adapter).__name__
             raise WiringError(
                 f"an error body adapter ({existing}) is already registered; an app has at most one",
             )
-        self._exceptions.adapter = adapter
+        self.__exceptions.adapter = adapter
 
-    def include_resource[THeaders: Struct, TUser: Struct](
+    def _include_resource[THeaders: Struct, TUser: Struct](
         self,
         resource: Resource,
         *,
@@ -2849,11 +2855,11 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
 
         An authenticator returning ``TUser`` gates every method: no valid credentials, no
         handler. One returning ``TUser | None`` accepts anonymous callers instead — see
-        :meth:`include_endpoint`.
+        :meth:`_include_endpoint`.
         """
-        self._include(resource, Resource.METHODS, auth=auth)
+        self.__include(resource, Resource.METHODS, auth=auth)
 
-    def include_endpoint[THeaders: Struct, TUser: Struct](
+    def _include_endpoint[THeaders: Struct, TUser: Struct](
         self,
         endpoint: Endpoint,
         *,
@@ -2867,9 +2873,9 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         and every handler on the route must declare ``user: TUser | None`` (all checked at
         startup).
         """
-        self._include(endpoint, Endpoint.METHODS, auth=auth)
+        self.__include(endpoint, Endpoint.METHODS, auth=auth)
 
-    def include_openapi(
+    def _include_openapi(
         self,
         *,
         title: str,
@@ -2916,7 +2922,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         ``OperationMeta`` (summary/description/tags/responses) and a model's ``ModelMeta``.
         Docstrings are never published; public prose is always explicit.
         """
-        self._openapi = _OpenAPIConfig(
+        self.__openapi = _OpenAPIConfig(
             title=title,
             version=version,
             description=description,
@@ -2928,26 +2934,26 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         favicon_href: str | None = None
         if isinstance(favicon, Path):
             body, content_type = _favicon_payload(favicon)
-            self._register(
+            self.__register(
                 "GET", _parse_template("/favicon.ico"), _static_bytes_handler(body, content_type)
             )
             favicon_href = "/favicon.ico"
         elif favicon is not None:
             favicon_href = favicon
-        self._register("GET", _parse_template(openapi_path), _json_doc_handler(self._openapi))
+        self.__register("GET", _parse_template(openapi_path), _json_doc_handler(self.__openapi))
         if docs_path is not None:
             page = (
                 docs_html
                 if docs_html is not None
                 else _scalar_html(title, openapi_path, favicon_href, scalar_config)
             )
-            self._register(
+            self.__register(
                 "GET",
                 _parse_template(docs_path),
                 _static_bytes_handler(page.encode(), b"text/html; charset=utf-8"),
             )
 
-    async def create_background_tasks(
+    async def _create_background_tasks(
         self,
         *,
         maxsize: int = 1024,
@@ -2956,12 +2962,12 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
     ) -> BackgroundTasks:
         """Build a :class:`BackgroundTasks` queue bound to the app's lifecycle.
 
-        Sugar for ``await self.aenter(BackgroundTasks(...))``: the worker starts at
+        Sugar for ``await self._aenter(BackgroundTasks(...))``: the worker starts at
         startup and drains/stops at shutdown. Call inside ``wire`` *after* the services
         its handlers use, so reverse-order shutdown drains the queue before those
         services are torn down.
         """
-        return await self.aenter(
+        return await self._aenter(
             BackgroundTasks(
                 maxsize=maxsize,
                 drain_timeout=drain_timeout,
@@ -2969,13 +2975,13 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
             )
         )
 
-    def _build_openapi_document(self, config: _OpenAPIConfig) -> bytes:
+    def __build_openapi_document(self, config: _OpenAPIConfig) -> bytes:
         """Translate the captured operations into the OpenAPI document, encoded as JSON."""
         operations = tuple(
-            operation_input(spec, self._exceptions.adapter) for spec in self._operations
+            operation_input(spec, self.__exceptions.adapter) for spec in self.__operations
         )
         schemes: dict[str, SecurityScheme] = {}
-        for spec in self._operations:
+        for spec in self.__operations:
             scheme = spec.security_scheme
             if scheme is None:
                 continue
@@ -3007,12 +3013,12 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
             ) from exc
         return msgspec_encoder.encode(document)
 
-    def _resolve_dynamic(self, method: str, path: str) -> tuple[_Handler, dict[str, str]] | None:
+    def __resolve_dynamic(self, method: str, path: str) -> tuple[_Handler, dict[str, str]] | None:
         # Static routes never reach here: __call__ resolves them with an inlined dict
         # lookup. The cast is paid only on this, the dynamic path.
         segments = path.split("/")
         verb = cast("_HttpMethod", method)
-        for pattern in self._dynamic.get((verb, len(segments)), ()):
+        for pattern in self.__dynamic.get((verb, len(segments)), ()):
             # Inlines pattern.matches (kept for the cold Allow path): a genexpr per
             # candidate is measurable here. unquote only when a segment is escaped.
             for i, value in pattern.statics:
@@ -3026,10 +3032,10 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
                 return pattern.handler, values
         return None
 
-    def _allowed_methods(self, path: str) -> tuple[_HttpMethod, ...]:
-        allowed = list(self._allowed.get(path, ()))
+    def __allowed_methods(self, path: str) -> tuple[_HttpMethod, ...]:
+        allowed = list(self.__allowed.get(path, ()))
         segments = path.split("/")
-        for (method, count), bucket in self._dynamic.items():
+        for (method, count), bucket in self.__dynamic.items():
             if (
                 count == len(segments)
                 and method not in allowed
@@ -3038,15 +3044,15 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
                 allowed.append(method)
         return tuple(allowed)
 
-    def _allow_for(self, path: str) -> bytes | None:
+    def __allow_for(self, path: str) -> bytes | None:
         """The Allow header for a path, or None if no route shape matches it."""
-        cached = self._allow_cache.get(path)
+        cached = self.__allow_cache.get(path)
         if cached is not None:
             return cached
-        allowed = self._allowed_methods(path)
+        allowed = self.__allowed_methods(path)
         return _allow_header(allowed) if allowed else None
 
-    def _log_openapi_docs(self, config: _OpenAPIConfig) -> None:
+    def __log_openapi_docs(self, config: _OpenAPIConfig) -> None:
         """Announce where the docs/spec are served, once, at startup.
 
         jero is the ASGI app, not the server, so it can't know the bound host/port — the
@@ -3059,26 +3065,26 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         else:
             logger.info("Serving OpenAPI spec at %s%s", base, config.openapi_path)
 
-    def _finalize(self) -> None:
+    def __finalize(self) -> None:
         """Precompute Allow headers and build the OpenAPI document; runs once after wiring."""
-        self._allow_cache = {
-            path: _allow_header(self._allowed_methods(path)) for path in self._allowed
+        self.__allow_cache = {
+            path: _allow_header(self.__allowed_methods(path)) for path in self.__allowed
         }
-        if self._openapi is not None:
-            self._openapi.payload = self._build_openapi_document(self._openapi)
-            self._log_openapi_docs(self._openapi)
+        if self.__openapi is not None:
+            self.__openapi.payload = self.__build_openapi_document(self.__openapi)
+            self.__log_openapi_docs(self.__openapi)
 
-    async def _close_resources(self) -> None:
-        await self._astack.aclose()
-        self._stack.close()
+    async def __close_resources(self) -> None:
+        await self.__astack.aclose()
+        self.__stack.close()
 
-    async def _handle_lifespan(self, receive: Receive, send: Send) -> None:
+    async def __handle_lifespan(self, receive: Receive, send: Send) -> None:
         await receive()  # lifespan.startup
         try:
             await self.wire()
-            self._finalize()  # builds the OpenAPI doc; can raise WiringError (e.g. tag conflict)
+            self.__finalize()  # builds the OpenAPI doc; can raise WiringError (e.g. tag conflict)
         except BaseException as exc:
-            await self._close_resources()  # release anything entered before the failure
+            await self.__close_resources()  # release anything entered before the failure
             await send(
                 {
                     "type": "lifespan.startup.failed",
@@ -3090,7 +3096,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
 
         await receive()  # lifespan.shutdown
         try:
-            await self._close_resources()
+            await self.__close_resources()
         except BaseException as exc:
             await send(
                 {
@@ -3104,7 +3110,7 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             if scope["type"] == "lifespan":
-                await self._handle_lifespan(receive, send)
+                await self.__handle_lifespan(receive, send)
                 return
             raise RuntimeError(f"unsupported scope type {scope['type']!r}")
 
@@ -3114,10 +3120,10 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
         verb = "GET" if method == "HEAD" else method
         # A static hit is the hottest path of all: one dict lookup, inlined here to skip
         # the resolver call (a non-route verb simply misses).
-        handler = self._static.get((verb, path))
+        handler = self.__static.get((verb, path))
         path_values: dict[str, str] = {}
         if handler is None:
-            resolved = self._resolve_dynamic(verb, path)
+            resolved = self.__resolve_dynamic(verb, path)
             if resolved is not None:
                 handler, path_values = resolved
         if handler is not None:
@@ -3126,11 +3132,11 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
             )
             return
 
-        allow = self._allow_for(path)
+        allow = self.__allow_for(path)
         error: HTTPError
         if allow is None:
             error = NotFoundError()
-            await _send_json(send, error.status, self._exceptions.encode_error(error))
+            await _send_json(send, error.status, self.__exceptions.encode_error(error))
         elif method == "OPTIONS":
             await send(
                 {"type": "http.response.start", "status": 204, "headers": [(b"allow", allow)]}
@@ -3141,6 +3147,6 @@ class BaseApp[FactoryT = None](_StackScope, ABC):
             await _send_json(
                 send,
                 error.status,
-                self._exceptions.encode_error(error),
+                self.__exceptions.encode_error(error),
                 [(b"allow", allow)],
             )

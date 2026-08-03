@@ -20,8 +20,8 @@ from demo_app.errors import (
     UpstreamResponseErrorHandler,
     UpstreamUnavailableError,
 )
-from jero import BaseFactory
-from jero.testing import FactoryHarness
+from jero import BaseApp, BaseFactory
+from jero.testing import FactoryHarness, TestClient
 
 
 @pytest.fixture(name="harness")
@@ -71,11 +71,31 @@ class ProbeFactory(BaseFactory):
 
     async def create_async_probe(self) -> AsyncProbe:
         """Open an async probe on the async exit stack."""
-        return await self.aenter(AsyncProbe())
+        return await self._aenter(AsyncProbe())
 
     def create_sync_probe(self) -> SyncProbe:
         """Open a sync probe on the sync exit stack."""
-        return self.enter(SyncProbe())
+        return self._enter(SyncProbe())
+
+
+class ProbeApp(BaseApp[ProbeFactory]):
+    """App whose wire opens probes through its factory."""
+
+    async_probe: AsyncProbe
+    sync_probe: SyncProbe
+
+    async def wire(self) -> None:
+        self.async_probe = await self._factory.create_async_probe()
+        self.sync_probe = self._factory.create_sync_probe()
+
+
+def test_factory_entered_resources_close_at_app_shutdown() -> None:
+    """A resource opened inside a factory create_* shares the app's lifetime: it stays
+    open while the app serves and is closed when the app's lifespan ends."""
+    app = ProbeApp()
+    with TestClient(app):
+        assert (app.async_probe.closed, app.sync_probe.closed) == (False, False)
+    assert (app.async_probe.closed, app.sync_probe.closed) == (True, True)
 
 
 def test_harness_runs_async_create_and_closes_on_exit() -> None:

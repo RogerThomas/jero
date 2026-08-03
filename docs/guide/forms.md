@@ -39,7 +39,7 @@ class JobsEndpoint(Endpoint, path="/jobs"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_endpoint(JobsEndpoint())
+        self._include_endpoint(JobsEndpoint())
 
 
 app = App()

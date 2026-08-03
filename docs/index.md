@@ -81,7 +81,7 @@ class WidgetResource(Resource, path="/widgets"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_resource(WidgetResource())
+        self._include_resource(WidgetResource())
 
 
 app = App()

@@ -11,7 +11,7 @@ queue (Celery, a message bus, your database etc.).
 ## A complete example
 
 `BackgroundTasks` is a normal dependency: build it in `wire` with
-`self.create_background_tasks(...)` (which binds it to the app's lifecycle — the worker
+`self._create_background_tasks(...)` (which binds it to the app's lifecycle — the worker
 starts at startup and drains at shutdown), register your handlers, and inject it into
 the endpoints that enqueue.
 
@@ -51,10 +51,10 @@ class Factory(BaseFactory):
 
 class App(BaseApp[Factory]):
     async def wire(self) -> None:
-        analytics_service = await self.factory.create_analytics_service()
-        tasks = await self.create_background_tasks(drain_timeout=30.0)
+        analytics_service = await self._factory.create_analytics_service()
+        tasks = await self._create_background_tasks(drain_timeout=30.0)
         tasks.register(analytics_service.process)   # the item type is inferred from the handler
-        self.include_endpoint(EventsEndpoint(tasks))
+        self._include_endpoint(EventsEndpoint(tasks))
 
 
 app = App()
@@ -74,7 +74,7 @@ By default there is **one handler per type**; registering a second for the same 
 is a `WiringError`. To fan out — run several handlers for one event — opt in:
 
 ```python
-tasks = await self.create_background_tasks(drain_timeout=30.0, allow_one_to_many=True)
+tasks = await self._create_background_tasks(drain_timeout=30.0, allow_one_to_many=True)
 ```
 
 All handlers for a type then run sequentially, in registration order, each isolated so one

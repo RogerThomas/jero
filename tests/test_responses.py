@@ -54,7 +54,7 @@ class BlobApp(BaseApp):
     """App exercising the non-JSON response kinds."""
 
     async def wire(self) -> None:
-        self.include_resource(BlobResource())
+        self._include_resource(BlobResource())
 
 
 @pytest.fixture(name="blob_client")
@@ -118,7 +118,7 @@ class RawRespApp(BaseApp):
     """App wiring the RawHeaders-response resource."""
 
     async def wire(self) -> None:
-        self.include_resource(RawRespResource())
+        self._include_resource(RawRespResource())
 
 
 def test_response_accepts_raw_headers_bag() -> None:
@@ -193,7 +193,7 @@ class TypedHeaderApp(BaseApp):
     """App wiring the typed-header resource."""
 
     async def wire(self) -> None:
-        self.include_resource(TypedHeaderResource())
+        self._include_resource(TypedHeaderResource())
 
 
 @pytest.fixture(name="typed_client")
@@ -247,7 +247,7 @@ class UUIDHeaderApp(BaseApp):
     """App wiring the UUID-header resource."""
 
     async def wire(self) -> None:
-        self.include_resource(UUIDHeaderResource())
+        self._include_resource(UUIDHeaderResource())
 
 
 def test_uuid_typed_header_is_bare_string() -> None:
@@ -275,7 +275,7 @@ class StatusApp(BaseApp):
     """App wiring the status-override resource."""
 
     async def wire(self) -> None:
-        self.include_resource(StatusResource())
+        self._include_resource(StatusResource())
 
 
 def test_status_code_overrides_verb_default() -> None:
@@ -325,10 +325,10 @@ class FixedStatusApp(BaseApp):
     """App wiring the fixed-status single-member endpoints."""
 
     async def wire(self) -> None:
-        self.include_endpoint(NoContentEndpoint())
-        self.include_endpoint(CreatedEndpoint())
-        self.include_endpoint(AcceptedEndpoint())
-        self.include_endpoint(NoContentOverrideEndpoint())
+        self._include_endpoint(NoContentEndpoint())
+        self._include_endpoint(CreatedEndpoint())
+        self._include_endpoint(AcceptedEndpoint())
+        self._include_endpoint(NoContentOverrideEndpoint())
 
 
 @pytest.fixture(name="fixed_status_client")
@@ -442,11 +442,11 @@ class UnionApp(BaseApp):
     """App wiring the union-return endpoints."""
 
     async def wire(self) -> None:
-        self.include_endpoint(SpotlightEndpoint())
-        self.include_endpoint(WrapperUnionEndpoint())
-        self.include_endpoint(PlainStructEndpoint())
-        self.include_endpoint(PlainListEndpoint())
-        self.include_endpoint(PlainBytesEndpoint())
+        self._include_endpoint(SpotlightEndpoint())
+        self._include_endpoint(WrapperUnionEndpoint())
+        self._include_endpoint(PlainStructEndpoint())
+        self._include_endpoint(PlainListEndpoint())
+        self._include_endpoint(PlainBytesEndpoint())
 
 
 @pytest.fixture(name="union_client")
@@ -558,9 +558,9 @@ class HeaderedNoContentApp(BaseApp):
     """App wiring the typed-header 204 and the contract-violating union."""
 
     async def wire(self) -> None:
-        self.include_endpoint(NoContentHeadersEndpoint())
-        self.include_endpoint(FramingHeadersEndpoint())
-        self.include_endpoint(LyingUnionEndpoint())
+        self._include_endpoint(NoContentHeadersEndpoint())
+        self._include_endpoint(FramingHeadersEndpoint())
+        self._include_endpoint(LyingUnionEndpoint())
 
 
 @pytest.fixture(name="unsubscripted_client")
@@ -620,8 +620,8 @@ class HandledBreachApp(BaseApp):
     """App that handles TypeError, so the union breach never reaches the default 500."""
 
     async def wire(self) -> None:
-        self.include_endpoint(LyingUnionEndpoint())
-        self.add_exception_handler(_TypeErrorHandler())
+        self._include_endpoint(LyingUnionEndpoint())
+        self._include_exception_handler(_TypeErrorHandler())
 
 
 def test_union_breach_is_logged_even_when_the_app_handles_type_error(

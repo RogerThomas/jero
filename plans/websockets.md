@@ -4,6 +4,9 @@ Status: **designed, not built.** The surface, framing rules, handshake semantics
 and the `Channel` primitive are locked (DECIDED notes throughout); five OPEN items
 remain, none blocking. Build in the staged order at the bottom.
 
+Note: member spellings here (`include_socket`) predate the `public-surface.md`
+naming rule — final spellings follow that rule at build time.
+
 ## Goal
 
 Typed, compiled WebSockets that inherit jero's invariants: everything about a
@@ -56,7 +59,7 @@ class TriviaSocket(SocketEndpoint, path="/trivia/{client_id}"):
 class App(BaseApp[Factory]):
     async def wire(self) -> None:
         self.include_socket(
-            TriviaSocket(self.factory.weather_service()), auth=self.factory.auth()
+            TriviaSocket(self._factory.weather_service()), auth=self._factory.auth()
         )
 ```
 

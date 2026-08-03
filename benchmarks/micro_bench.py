@@ -220,9 +220,9 @@ def build_jero():
 
     class App(BaseApp):
         async def wire(self) -> None:
-            self.include_endpoint(PingEndpoint())
-            self.include_endpoint(ItemEndpoint())
-            self.include_endpoint(ItemsEndpoint())
+            self._include_endpoint(PingEndpoint())
+            self._include_endpoint(ItemEndpoint())
+            self._include_endpoint(ItemsEndpoint())
 
     return App()
 

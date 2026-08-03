@@ -28,13 +28,13 @@ class DemoApp(BaseApp[Factory]):
 
     async def wire(self) -> None:
         """Build services from the factory, open the background queue, and wire the routes."""
-        widget_service = await self.factory.create_widget_service()
-        analytics_service = await self.factory.create_analytics_service()
-        question_service = await self.factory.create_question_service()
-        upstream_response_error_handler = self.factory.create_upstream_response_error_handler()
+        widget_service = await self._factory.create_widget_service()
+        analytics_service = await self._factory.create_analytics_service()
+        question_service = await self._factory.create_question_service()
+        upstream_response_error_handler = self._factory.create_upstream_response_error_handler()
         # The queue is opened after the analytics service it dispatches to, so it drains
         # before that service would be torn down.
-        background_tasks = await self.create_background_tasks(drain_timeout=1.0)
+        background_tasks = await self._create_background_tasks(drain_timeout=1.0)
         background_tasks.register(analytics_service.process)
         users = {
             "token": User(id="user-id", name="user-name"),
@@ -44,20 +44,20 @@ class DemoApp(BaseApp[Factory]):
         # Same token lookup, the other policy: credentials are an input rather than a gate, so
         # an anonymous caller binds user=None. A bad token is still a 401.
         optional_token_auth = OptionalTokenAuth(users)
-        self.add_exception_handler(upstream_response_error_handler)
-        self.include_resource(WidgetResource(widget_service, background_tasks), auth=token_auth)
-        self.include_endpoint(WhoAmIEndpoint(), auth=token_auth)
-        self.include_endpoint(SpotlightEndpoint(), auth=optional_token_auth)
-        self.include_endpoint(HealthEndpoint())
-        self.include_endpoint(RawHealthEndpoint())
-        self.include_endpoint(RawFormEndpoint())
-        self.include_endpoint(FeaturedWidgetEndpoint())
-        self.include_endpoint(QuestionsEndpoint(question_service))
-        self.include_endpoint(NotificationsEndpoint())
+        self._include_exception_handler(upstream_response_error_handler)
+        self._include_resource(WidgetResource(widget_service, background_tasks), auth=token_auth)
+        self._include_endpoint(WhoAmIEndpoint(), auth=token_auth)
+        self._include_endpoint(SpotlightEndpoint(), auth=optional_token_auth)
+        self._include_endpoint(HealthEndpoint())
+        self._include_endpoint(RawHealthEndpoint())
+        self._include_endpoint(RawFormEndpoint())
+        self._include_endpoint(FeaturedWidgetEndpoint())
+        self._include_endpoint(QuestionsEndpoint(question_service))
+        self._include_endpoint(NotificationsEndpoint())
         # Serve the auto-generated OpenAPI 3.1 spec at /openapi.json and a Scalar UI at /docs.
         # Tag descriptions are defined on the resources/endpoints themselves (see their meta);
         # pass tags=[Tag(...)] here only for app-level tags or to pin the section order.
-        self.include_openapi(title="Demo API", version="0.1.0")
+        self._include_openapi(title="Demo API", version="0.1.0")
 
 
 app = DemoApp()

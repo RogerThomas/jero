@@ -22,15 +22,15 @@ class WidgetsEndpoint(Endpoint, path="/widgets"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_endpoint(WidgetsEndpoint())
-        self.include_openapi(title="Widgets API", version="1.0.0")
+        self._include_endpoint(WidgetsEndpoint())
+        self._include_openapi(title="Widgets API", version="1.0.0")
 
 
 app = App()
 ```
 
 That serves the document at **`/openapi.json`** and the docs UI at **`/docs`**. Order
-doesn't matter — `include_openapi` can come before or after your routes, because the
+doesn't matter — `_include_openapi` can come before or after your routes, because the
 document is built once after wiring finishes.
 
 ## What's derived
@@ -211,8 +211,8 @@ class WidgetResource(
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_resource(WidgetResource())
-        self.include_openapi(title="Widgets API", version="1.0.0")
+        self._include_resource(WidgetResource())
+        self._include_openapi(title="Widgets API", version="1.0.0")
 
 
 app = App()
@@ -251,8 +251,8 @@ class WidgetsEndpoint(
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_endpoint(WidgetsEndpoint())
-        self.include_openapi(title="Widgets API", version="1.0.0")
+        self._include_endpoint(WidgetsEndpoint())
+        self._include_openapi(title="Widgets API", version="1.0.0")
 
 
 app = App()
@@ -300,11 +300,11 @@ there in two ways:
 
 - **Define it inline** with a `Tag(name, description)` anywhere it's used (above), and it's
   hoisted to the document. Reference the same tag by bare name (`"widgets"`) elsewhere.
-- **Declare it centrally** on `include_openapi(tags=[...])`, which also fixes the order
+- **Declare it centrally** on `_include_openapi(tags=[...])`, which also fixes the order
   sections appear in:
 
 ```python
-self.include_openapi(
+self._include_openapi(
     title="Widgets API", version="1.0.0",
     tags=[
         Tag("widgets", "Create, read, and manage widgets."),
@@ -354,7 +354,9 @@ class CookieAuth:
 ```
 
 `SecurityScheme` has three constructors: `http_bearer()`, `http_basic()`, and
-`api_key(name=..., location="header" | "query" | "cookie")`.
+`api_key(name=..., location="header" | "query" | "cookie")`. The attribute must be a
+`SecurityScheme` (or absent / `None`, which means the bearer default) — anything else is a
+`WiringError` at startup, so a spec never silently advertises the wrong scheme.
 
 An operation whose authenticator [accepts anonymous callers](auth.md#optional-authentication) advertises
 its scheme *and* the unauthenticated alternative, which OpenAPI spells as an empty
@@ -367,10 +369,10 @@ requirement object alongside it:
 ## The docs UI
 
 `/docs` serves a [Scalar](https://github.com/scalar/scalar) reference loaded from a CDN
-and pointed at `/openapi.json`. Tune the serving with `include_openapi`:
+and pointed at `/openapi.json`. Tune the serving with `_include_openapi`:
 
 ```python
-self.include_openapi(
+self._include_openapi(
     title="Widgets API",
     version="1.0.0",
     description="Manage widgets.",     # info.description

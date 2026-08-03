@@ -271,7 +271,7 @@ class _EndpointApp(BaseApp):
         super().__init__()
 
     async def wire(self) -> None:
-        self.include_endpoint(self._endpoint)
+        self._include_endpoint(self._endpoint)
 
 
 def test_finite_ndjson_stream() -> None:
@@ -404,8 +404,8 @@ class _HandlerEndpointApp(BaseApp):
         super().__init__()
 
     async def wire(self) -> None:
-        self.add_exception_handler(SetupErrorHandler())
-        self.include_endpoint(self._endpoint)
+        self._include_exception_handler(SetupErrorHandler())
+        self._include_endpoint(self._endpoint)
 
 
 def test_custom_handler_intercepts_stream_setup_error() -> None:

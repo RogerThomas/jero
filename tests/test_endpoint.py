@@ -31,7 +31,7 @@ class PingApp(BaseApp):
     """App wiring the Pinger endpoint at /ping."""
 
     async def wire(self) -> None:
-        self.include_endpoint(Pinger())
+        self._include_endpoint(Pinger())
 
 
 def test_endpoint_post_returns_200_not_201() -> None:

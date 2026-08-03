@@ -45,7 +45,7 @@ class MoviesEndpoint(Endpoint, path="/movies"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_endpoint(MoviesEndpoint())
+        self._include_endpoint(MoviesEndpoint())
 
 
 app = App()
@@ -88,7 +88,7 @@ class AnswerEndpoint(Endpoint, path="/answer"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_endpoint(AnswerEndpoint())
+        self._include_endpoint(AnswerEndpoint())
 
 
 app = App()
@@ -104,7 +104,7 @@ The wire output is one tagged line per item:
 
 Strictly, the tags are only *required* when an OpenAPI document is built — msgspec
 must be able to tell the members apart to schema the union, so an untagged union of
-several Structs fails loud at startup once `include_openapi` is wired. Without a spec,
+several Structs fails loud at startup once `_include_openapi` is wired. Without a spec,
 an untagged union streams fine. Tag them anyway: without a discriminator, clients have
 to guess each line's shape from its fields, and the tag is what makes the stream
 self-describing and cleanly decodable on the wire.
@@ -139,7 +139,7 @@ class EventsEndpoint(Endpoint, path="/events"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_endpoint(EventsEndpoint())
+        self._include_endpoint(EventsEndpoint())
 
 
 app = App()
@@ -175,7 +175,7 @@ class ExportEndpoint(Endpoint, path="/export"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_endpoint(ExportEndpoint())
+        self._include_endpoint(ExportEndpoint())
 
 
 app = App()
@@ -231,7 +231,7 @@ class MoviesExportEndpoint(Endpoint, path="/movies/export"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_endpoint(MoviesExportEndpoint())
+        self._include_endpoint(MoviesExportEndpoint())
 
 
 app = App()

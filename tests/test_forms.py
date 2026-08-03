@@ -145,9 +145,9 @@ class UploadApp(BaseApp):
     """App wiring the form endpoints."""
 
     async def wire(self) -> None:
-        self.include_endpoint(UploadEndpoint())
-        self.include_endpoint(ParamsOnlyEndpoint())
-        self.include_endpoint(HeadersEndpoint())
+        self._include_endpoint(UploadEndpoint())
+        self._include_endpoint(ParamsOnlyEndpoint())
+        self._include_endpoint(HeadersEndpoint())
 
 
 class BodyOnPostResource(Resource, path="/x"):
@@ -206,7 +206,7 @@ class ResourceApp(BaseApp):
         super().__init__()
 
     async def wire(self) -> None:
-        self.include_resource(self._resource)
+        self._include_resource(self._resource)
 
 
 @pytest.fixture(name="client")
@@ -509,7 +509,7 @@ class ConstrainedFormApp(BaseApp):
     """App wiring the Meta-constrained form."""
 
     async def wire(self) -> None:
-        self.include_endpoint(ConstrainedFormEndpoint())
+        self._include_endpoint(ConstrainedFormEndpoint())
 
 
 def test_meta_constrained_scalar_form_field_binds_and_is_enforced() -> None:

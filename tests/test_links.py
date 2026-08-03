@@ -87,9 +87,9 @@ class LinksDemoApp(BaseApp):
 
     async def wire(self) -> None:
         """Wire the jobs resource and the cross-module link / redirect endpoints."""
-        self.include_resource(JobsResource())
-        self.include_endpoint(JobLinkEndpoint())
-        self.include_endpoint(JobRedirectEndpoint())
+        self._include_resource(JobsResource())
+        self._include_endpoint(JobLinkEndpoint())
+        self._include_endpoint(JobRedirectEndpoint())
 
 
 class _SubJobPath(JobPath):
@@ -325,8 +325,8 @@ class _AmbiguousApp(BaseApp):
     """Mounts the same inherited handler at two paths, so its reversal is ambiguous."""
 
     async def wire(self) -> None:
-        self.include_resource(_JobsAtA())
-        self.include_resource(_JobsAtB())
+        self._include_resource(_JobsAtA())
+        self._include_resource(_JobsAtB())
 
 
 class _DupRefAEndpoint(Endpoint, path="/dup-a", ref="dup"):
@@ -349,8 +349,8 @@ class _DupRefApp(BaseApp):
     """Mounts two classes that claim the same ref."""
 
     async def wire(self) -> None:
-        self.include_endpoint(_DupRefAEndpoint())
-        self.include_endpoint(_DupRefBEndpoint())
+        self._include_endpoint(_DupRefAEndpoint())
+        self._include_endpoint(_DupRefBEndpoint())
 
 
 class _UnmountedJobs(Resource, path="/unmounted"):
@@ -389,8 +389,8 @@ class _DanglingApp(BaseApp):
     """Wires only the dangling-link endpoints, not their targets."""
 
     async def wire(self) -> None:
-        self.include_endpoint(_DanglingOpEndpoint())
-        self.include_endpoint(_DanglingRefEndpoint())
+        self._include_endpoint(_DanglingOpEndpoint())
+        self._include_endpoint(_DanglingRefEndpoint())
 
 
 def test_ambiguous_reverse_target_fails_at_wiring() -> None:

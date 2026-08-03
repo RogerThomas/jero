@@ -25,7 +25,6 @@ from jero import (
     StructHTTPError,
     TooManyRequestsError,
     ValidationFailedError,
-    WiringError,
 )
 from jero.core import ExceptionHandler
 from jero.testing import TestClient
@@ -218,13 +217,13 @@ class ErrorsApp(BaseApp):
 
     async def wire(self) -> None:
         """Register handlers before exposing the endpoint."""
-        self.add_exception_handler(ServiceErrorHandler())
-        self.add_exception_handler(SpecificServiceErrorHandler())
-        self.add_exception_handler(BrokenHandler())
-        self.add_exception_handler(BadReturnHandler())
-        self.add_exception_handler(TeapotHandler())
-        self.add_exception_handler(NamedResponseHandler())
-        self.include_endpoint(ErrorsEndpoint())
+        self._include_exception_handler(ServiceErrorHandler())
+        self._include_exception_handler(SpecificServiceErrorHandler())
+        self._include_exception_handler(BrokenHandler())
+        self._include_exception_handler(BadReturnHandler())
+        self._include_exception_handler(TeapotHandler())
+        self._include_exception_handler(NamedResponseHandler())
+        self._include_endpoint(ErrorsEndpoint())
 
 
 class DuplicateHandlerApp(BaseApp):
@@ -232,8 +231,8 @@ class DuplicateHandlerApp(BaseApp):
 
     async def wire(self) -> None:
         """Trigger duplicate-registration validation during startup."""
-        self.add_exception_handler(ServiceErrorHandler())
-        self.add_exception_handler(ServiceErrorHandler())
+        self._include_exception_handler(ServiceErrorHandler())
+        self._include_exception_handler(ServiceErrorHandler())
 
 
 class StockErrorsEndpoint(Endpoint, path="/stock-errors"):
@@ -257,7 +256,7 @@ class StockErrorsApp(BaseApp):
 
     async def wire(self) -> None:
         """Expose the endpoint raising ready-made errors."""
-        self.include_endpoint(StockErrorsEndpoint())
+        self._include_endpoint(StockErrorsEndpoint())
 
 
 @pytest.mark.parametrize(
@@ -573,10 +572,15 @@ def test_exception_response_status_must_be_client_or_server_error(status_code: i
 
 
 class _BareApp(BaseApp):
-    """Minimal app for exercising ``add_exception_handler`` validation directly."""
+    """Minimal app registering one exception handler, for validation tests."""
+
+    def __init__(self, handler: object) -> None:
+        self._handler = handler
+        super().__init__()
 
     async def wire(self) -> None:
-        """No routes; the validation under test runs at ``add_exception_handler``."""
+        """No routes; the validation under test runs at ``_include_exception_handler``."""
+        self._include_exception_handler(cast(ExceptionHandler[Exception], self._handler))
 
 
 class NoMethodHandler:
@@ -621,9 +625,8 @@ class BadReturnAnnotationHandler:
 )
 def test_exception_handler_wiring_validation(handler: object, match: str) -> None:
     """A structurally invalid handler is rejected when it is registered."""
-    app = _BareApp()
-    with pytest.raises(WiringError, match=match):
-        app.add_exception_handler(cast(ExceptionHandler[Exception], handler))
+    with pytest.raises(RuntimeError, match=match):
+        TestClient(_BareApp(handler))
 
 
 # --- StructHTTPError (the bring-your-own-body engine) ---
@@ -719,7 +722,7 @@ class StructErrorsApp(BaseApp):
 
     async def wire(self) -> None:
         """Expose the raising endpoint."""
-        self.include_endpoint(StructRaisingEndpoint())
+        self._include_endpoint(StructRaisingEndpoint())
 
 
 def _define_struct_httperror(**options: object) -> str:
@@ -1008,10 +1011,10 @@ class AdaptedApp(BaseApp):
 
     async def wire(self) -> None:
         """Register the adapter, both raising endpoints, and the handler."""
-        self.include_error_adapter(self._adapter)
-        self.include_endpoint(AdapterProbeEndpoint())
-        self.include_endpoint(StructRaisingEndpoint())
-        self.add_exception_handler(DomainErrorHandler())
+        self._include_error_adapter(self._adapter)
+        self._include_endpoint(AdapterProbeEndpoint())
+        self._include_endpoint(StructRaisingEndpoint())
+        self._include_exception_handler(DomainErrorHandler())
 
 
 def test_adapter_renders_framework_errors_house_shaped() -> None:
@@ -1079,7 +1082,7 @@ class UnboundAdapterApp(BaseApp):
             (ErrorBodyAdapter,),
             exec_body=lambda ns: ns.update(compose=_unbound_compose),
         )
-        self.include_error_adapter(cast("ErrorBodyAdapter[HouseBody]", adapter_cls()))
+        self._include_error_adapter(cast("ErrorBodyAdapter[HouseBody]", adapter_cls()))
 
 
 def test_adapter_subclass_validation() -> None:
@@ -1106,8 +1109,8 @@ class TwoAdaptersApp(BaseApp):
 
     async def wire(self) -> None:
         """Register the adapter twice to trigger the duplicate check."""
-        self.include_error_adapter(HouseAdapter())
-        self.include_error_adapter(HouseAdapter())
+        self._include_error_adapter(HouseAdapter())
+        self._include_error_adapter(HouseAdapter())
 
 
 class NotAnAdapterApp(BaseApp):
@@ -1115,7 +1118,7 @@ class NotAnAdapterApp(BaseApp):
 
     async def wire(self) -> None:
         """Register a non-adapter to trigger the type check."""
-        self.include_error_adapter(cast("ErrorBodyAdapter[HouseBody]", object()))
+        self._include_error_adapter(cast("ErrorBodyAdapter[HouseBody]", object()))
 
 
 def test_include_error_adapter_rejects_duplicates_and_non_adapters() -> None:
@@ -1248,8 +1251,8 @@ class KwOnlyAdaptedApp(BaseApp):
 
     async def wire(self) -> None:
         """Register the adapter and a probe endpoint."""
-        self.include_error_adapter(KwOnlyAdapter())
-        self.include_endpoint(AdapterProbeEndpoint())
+        self._include_error_adapter(KwOnlyAdapter())
+        self._include_endpoint(AdapterProbeEndpoint())
 
 
 def test_adapter_supports_kw_only_bodies() -> None:
@@ -1277,8 +1280,8 @@ class StructHandlerApp(BaseApp):
 
     async def wire(self) -> None:
         """Register the handler and the probe endpoint."""
-        self.add_exception_handler(StructReturningHandler())
-        self.include_endpoint(AdapterProbeEndpoint())
+        self._include_exception_handler(StructReturningHandler())
+        self._include_endpoint(AdapterProbeEndpoint())
 
 
 def test_handler_may_return_a_struct_family_error() -> None:
@@ -1316,10 +1319,10 @@ class NoStatusAdaptedApp(BaseApp):
 
     async def wire(self) -> None:
         """Register the adapter, a probe endpoint, and the spec."""
-        self.include_error_adapter(NoStatusAdapter())
-        self.include_endpoint(AdapterProbeEndpoint())
-        self.include_endpoint(NoStatusProbeEndpoint())
-        self.include_openapi(title="no-status", version="1")
+        self._include_error_adapter(NoStatusAdapter())
+        self._include_endpoint(AdapterProbeEndpoint())
+        self._include_endpoint(NoStatusProbeEndpoint())
+        self._include_openapi(title="no-status", version="1")
 
 
 def test_adapter_without_status_field_renders_body_as_is() -> None:
@@ -1359,8 +1362,8 @@ class WrongTypeAdaptedApp(BaseApp):
 
     async def wire(self) -> None:
         """Register the adapter and a probe endpoint."""
-        self.include_error_adapter(WrongTypeAdapter())
-        self.include_endpoint(AdapterProbeEndpoint())
+        self._include_error_adapter(WrongTypeAdapter())
+        self._include_endpoint(AdapterProbeEndpoint())
 
 
 def test_adapter_wrong_compose_type_falls_back(caplog: pytest.LogCaptureFixture) -> None:
@@ -1439,8 +1442,8 @@ class HouseAdapterApp(BaseApp):
 
     async def wire(self) -> None:
         """Register the house adapter, then expose the endpoint."""
-        self.include_error_adapter(InfoHouseAdapter())
-        self.include_endpoint(WidgetEndpoint())
+        self._include_error_adapter(InfoHouseAdapter())
+        self._include_endpoint(WidgetEndpoint())
 
 
 class ValidationBody(Struct, rename="camel"):
@@ -1468,8 +1471,8 @@ class ValidationHandlerApp(BaseApp):
 
     async def wire(self) -> None:
         """Register the per-error handler, then expose the endpoint."""
-        self.add_exception_handler(ValidationHandler())
-        self.include_endpoint(WidgetEndpoint())
+        self._include_exception_handler(ValidationHandler())
+        self._include_endpoint(WidgetEndpoint())
 
 
 _BAD_WIDGET = {"name": "gizmo", "priceCents": "not-an-int"}

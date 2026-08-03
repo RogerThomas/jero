@@ -177,7 +177,7 @@ class DocumentsEndpoint(Endpoint, path="/documents"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_endpoint(DocumentsEndpoint())
+        self._include_endpoint(DocumentsEndpoint())
 
 
 app = App()
@@ -244,7 +244,7 @@ class ThingsEndpoint(Endpoint, path="/things"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_endpoint(ThingsEndpoint())
+        self._include_endpoint(ThingsEndpoint())
 
 
 app = App()
@@ -299,8 +299,8 @@ class HealthEndpoint(Endpoint, path="/healthz"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_error_adapter(HouseErrorAdapter())
-        self.include_endpoint(HealthEndpoint())
+        self._include_error_adapter(HouseErrorAdapter())
+        self._include_endpoint(HealthEndpoint())
 
 
 app = App()
@@ -372,8 +372,8 @@ class StatusEndpoint(Endpoint, path="/status"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.add_exception_handler(UpstreamHandler())
-        self.include_endpoint(StatusEndpoint())
+        self._include_exception_handler(UpstreamHandler())
+        self._include_endpoint(StatusEndpoint())
 ```
 
 jero infers every type from the method signature at wiring. Registering two handlers

@@ -49,7 +49,7 @@ class WidgetResource(Resource, path="/widgets"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self.include_resource(WidgetResource())
+        self._include_resource(WidgetResource())
 
 
 app = App()
@@ -95,7 +95,7 @@ only lifecycle — the one thing plain Python doesn't give you.
 - **Multipart forms & uploads** — typed parts, file uploads, per-part headers.
 - **Auth checked at startup** — the `user` type is verified against your authenticator
   before a single request is served, not at runtime.
-- **OpenAPI 3.1, derived** — one `include_openapi` call serves the spec and a Scalar UI,
+- **OpenAPI 3.1, derived** — one `_include_openapi` call serves the spec and a Scalar UI,
   built from your types, docstrings, and `msgspec.Meta` constraints — no decorators.
 - **Lifecycle without a DI container** — hand-wire in `wire`, open resources on exit
   stacks, group construction in a `BaseFactory`.
@@ -112,7 +112,7 @@ browse the full [Guide](https://RogerThomas.github.io/jero/).
 For anything real, a resource delegates to a service, and a `Factory` builds that
 service — opening any resources it needs (HTTP clients, DB pools, …) on the app's
 exit stacks, which jero closes in reverse at shutdown. The app is parameterised with
-the factory type (`BaseApp[Factory]`), exposing it as `self.factory` in `wire`.
+the factory type (`BaseApp[Factory]`), exposing it as `self._factory` in `wire`.
 
 ```python
 from dataclasses import dataclass
@@ -177,14 +177,14 @@ class WidgetResource(Resource, path="/widgets"):
 
 class Factory(BaseFactory):
     async def create_widget_service(self) -> WidgetService:
-        client = await self.aenter(niquests.AsyncSession(base_url="https://api.example.com"))
+        client = await self._aenter(niquests.AsyncSession(base_url="https://api.example.com"))
         return WidgetService(client)
 
 
 class App(BaseApp[Factory]):
     async def wire(self) -> None:
-        widget_service = await self.factory.create_widget_service()
-        self.include_resource(WidgetResource(widget_service))
+        widget_service = await self._factory.create_widget_service()
+        self._include_resource(WidgetResource(widget_service))
 
 
 app = App()

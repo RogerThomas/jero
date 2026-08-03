@@ -31,7 +31,7 @@ class _ResourceApp(BaseApp):
         super().__init__()
 
     async def wire(self) -> None:
-        self.include_resource(self._resource)
+        self._include_resource(self._resource)
 
 
 class _EndpointApp(BaseApp):
@@ -40,7 +40,7 @@ class _EndpointApp(BaseApp):
         super().__init__()
 
     async def wire(self) -> None:
-        self.include_endpoint(self._endpoint)
+        self._include_endpoint(self._endpoint)
 
 
 class BadArgResource(Resource, path="/x"):
@@ -441,7 +441,7 @@ class _AuthApp(BaseApp):
         super().__init__()
 
     async def wire(self) -> None:
-        self.include_resource(self._resource, auth=self._auth)
+        self._include_resource(self._resource, auth=self._auth)
 
 
 def test_user_declared_without_auth() -> None:
@@ -515,8 +515,8 @@ class SecondEndpoint(Endpoint, path="/dup"):
 
 class _DuplicateRouteApp(BaseApp):
     async def wire(self) -> None:
-        self.include_endpoint(FirstEndpoint())
-        self.include_endpoint(SecondEndpoint())
+        self._include_endpoint(FirstEndpoint())
+        self._include_endpoint(SecondEndpoint())
 
 
 def test_duplicate_route_registration() -> None:

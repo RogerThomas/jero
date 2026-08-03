@@ -55,7 +55,7 @@ class SearchApp(BaseApp):
     """App wiring the search endpoint."""
 
     async def wire(self) -> None:
-        self.include_endpoint(SearchEndpoint())
+        self._include_endpoint(SearchEndpoint())
 
 
 def test_query_param_with_plus_encoding() -> None:
@@ -113,7 +113,7 @@ class HeadersOnlyApp(BaseApp):
     """App wiring the headers-only endpoint."""
 
     async def wire(self) -> None:
-        self.include_endpoint(HeadersOnlyEndpoint())
+        self._include_endpoint(HeadersOnlyEndpoint())
 
 
 def test_headers_only_single_source() -> None:
@@ -147,7 +147,7 @@ class AuthedPingApp(BaseApp):
     """App wiring the authed ping endpoint."""
 
     async def wire(self) -> None:
-        self.include_endpoint(AuthedPingEndpoint(), auth=_AUTH)
+        self._include_endpoint(AuthedPingEndpoint(), auth=_AUTH)
 
 
 def test_arity_zero_with_auth() -> None:
@@ -188,7 +188,7 @@ class UserFiltersApp(BaseApp):
     """App wiring the user-filters endpoint behind auth."""
 
     async def wire(self) -> None:
-        self.include_endpoint(UserFiltersEndpoint(), auth=_AUTH)
+        self._include_endpoint(UserFiltersEndpoint(), auth=_AUTH)
 
 
 def test_multi_source_user_and_params() -> None:
@@ -229,7 +229,7 @@ class UploadApp(BaseApp):
     """App wiring the upload endpoint."""
 
     async def wire(self) -> None:
-        self.include_endpoint(UploadEndpoint())
+        self._include_endpoint(UploadEndpoint())
 
 
 def test_multi_source_content_and_path() -> None:
@@ -284,8 +284,8 @@ class ABApp(BaseApp):
     """App wiring two dynamic endpoints with the same depth."""
 
     async def wire(self) -> None:
-        self.include_endpoint(AEndpoint())
-        self.include_endpoint(BEndpoint())
+        self._include_endpoint(AEndpoint())
+        self._include_endpoint(BEndpoint())
 
 
 def test_dynamic_route_static_segment_mismatch() -> None:
@@ -323,7 +323,7 @@ class EchoApp(BaseApp):
     """App wiring the echo endpoint."""
 
     async def wire(self) -> None:
-        self.include_endpoint(EchoEndpoint())
+        self._include_endpoint(EchoEndpoint())
 
 
 class _ChunkedReceive:
