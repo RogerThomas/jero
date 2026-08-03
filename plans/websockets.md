@@ -56,7 +56,7 @@ class TriviaSocket(SocketEndpoint, path="/trivia/{client_id}"):
 class App(BaseApp[Factory]):
     async def wire(self) -> None:
         self.include_socket(
-            TriviaSocket(self.factory.weather_service()), auth=self.factory.auth()
+            TriviaSocket(self._factory.weather_service()), auth=self._factory.auth()
         )
 ```
 

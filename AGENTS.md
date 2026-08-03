@@ -344,11 +344,9 @@ These pull against each other constantly; keep all three in mind on every change
   (`POST /movies`): jero 31.5k req/s ≈ 1.5× blacksheep, ~2.4× litestar, ~3.4× FastAPI.
   Proxy path (all Python frameworks on pyreqwest): within ~10% of Go/gin at equal p99.
   (The benchmark harness lives in a separate repo.)
-- **Unbuilt**: cookies (first-class `Set-Cookie` / `Cookie` — fully designed, all
-  decisions locked in `plans/cookies.md`); absolute (vs relative) reverse-routed URLs are
-  a deliberate follow-up. Minor polish:
-  the factory's `es`/`aes` stack injection matches by name with no startup check — a
-  `WiringError` on an unrecognized param would close that.
+- **Unbuilt**: absolute (vs relative) reverse-routed URLs are a deliberate follow-up.
+  Minor polish: the factory's `es`/`aes` stack injection matches by name with no startup
+  check — a `WiringError` on an unrecognized param would close that.
 - **The OpenAPI spec is *derived from the types*** (Struct sources, typed returns
   including generics like `NDJSONStreamingResponse[Movie]`), with no runtime guessing.
   This is the reason every endpoint must be statically typed end to end — any feature

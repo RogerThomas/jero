@@ -70,7 +70,7 @@ the Struct's fields name.
 
 A middleware object may define any of the following; `add_middleware` /
 `middleware=` introspects and validates the signatures fail-loud at wiring
-(`WiringError`), exactly like `add_exception_handler` does:
+(`WiringError`), exactly like `_include_exception_handler` does:
 
 ```python
 class ExampleMiddleware:
@@ -104,8 +104,8 @@ rather than covering it slowly.
 class App(BaseApp):
     async def wire(self) -> None:
         self.add_middleware(TimingMiddleware())                     # every route
-        self.include_resource(WidgetResource(), auth=auth)          # covered by globals
-        self.include_endpoint(
+        self._include_resource(WidgetResource(), auth=auth)          # covered by globals
+        self._include_endpoint(
             AdminEndpoint(),
             middleware=(AdminGateMiddleware(),),                    # + scoped
         )
@@ -133,8 +133,8 @@ class CORS(Struct, frozen=True):
 
 ```python
 self.include_cors(CORS())                                   # app-wide default
-self.include_resource(WidgetResource(), cors=PUBLIC)        # override per include
-self.include_endpoint(MetricsEndpoint(), cors=CORS.OFF)     # opt out
+self._include_resource(WidgetResource(), cors=PUBLIC)        # override per include
+self._include_endpoint(MetricsEndpoint(), cors=CORS.OFF)     # opt out
 ```
 
 DECIDED:
