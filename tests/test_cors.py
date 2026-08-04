@@ -10,7 +10,16 @@ from typing import cast
 
 import pytest
 
-from jero import CORS, BaseApp, Endpoint, HTTPMethod, NotFoundError, Struct
+from jero import (
+    CORS,
+    BaseApp,
+    BytesResponse,
+    Endpoint,
+    ExceptionResponse,
+    HTTPMethod,
+    NotFoundError,
+    Struct,
+)
 from jero.testing import TestClient
 
 
@@ -379,3 +388,194 @@ def test_demo_app_inherits_wildcard_default(client: TestClient) -> None:
     response = client.get("/healthz")
 
     assert response.headers["access-control-allow-origin"] == "*"
+
+
+class BinaryEndpoint(Endpoint, path="/binary"):
+    """bytes and BytesResponse returns, so the byte senders' tails are exercised."""
+
+    def get(self) -> bytes:
+        """Raw bytes out."""
+        return b"raw"
+
+    def post(self) -> BytesResponse:
+        """Wrapped bytes out."""
+        return BytesResponse(content=b"wrapped")
+
+
+class ThingPath(Struct):
+    """The template slot of the dynamic route."""
+
+    thing_id: str
+
+
+class ThingEndpoint(Endpoint, path="/things/{thing_id}"):
+    """A templated (dynamic) route, so preflights resolve through the dynamic table."""
+
+    def get(self, path: ThingPath) -> Pong:
+        """Answer for any thing."""
+        _ = path
+        return Pong(ok=True)
+
+
+class BoomError(Exception):
+    """The error the custom handler translates."""
+
+
+class BoomBody(Struct):
+    """The custom handler's response body."""
+
+    code: str
+
+
+class BoomHandler:
+    """Translates BoomError into a typed ExceptionResponse."""
+
+    def handle_exception(self, exception: BoomError) -> ExceptionResponse[BoomBody]:
+        """Always answer 502."""
+        _ = exception
+        return ExceptionResponse(status_code=502, json=BoomBody(code="boom"))
+
+
+class BoomEndpoint(Endpoint, path="/boom"):
+    """Always raises the custom-handled error."""
+
+    def get(self) -> Pong:
+        """Raise for the handler to translate."""
+        raise BoomError()
+
+
+class KindsApp(BaseApp):
+    """Wildcard default over the non-plain-JSON senders and a dynamic route."""
+
+    async def wire(self) -> None:
+        self._include_cors(CORS())
+        self._include_endpoint(BinaryEndpoint())
+        self._include_endpoint(ThingEndpoint())
+
+
+class HandledErrorApp(BaseApp):
+    """Allow-list CORS + a custom exception handler, so the handler's response
+    carries both the constant Vary pair and the dynamic origin echo."""
+
+    async def wire(self) -> None:
+        self._include_cors(CORS(allow_origins=("https://app.example",)))
+        self._include_exception_handler(BoomHandler())
+        self._include_endpoint(BoomEndpoint())
+
+
+class EmptyMethodsApp(BaseApp):
+    """allow_methods=() is meaningless; wiring must fail loud."""
+
+    async def wire(self) -> None:
+        self._include_cors(CORS(allow_methods=()))
+
+
+class NegativeMaxAgeApp(BaseApp):
+    """A negative max_age is malformed; wiring must fail loud."""
+
+    async def wire(self) -> None:
+        self._include_cors(CORS(max_age=-1))
+
+
+class NotACORSDefaultApp(BaseApp):
+    """A non-CORS object sneaks past static typing via cast; wiring must fail loud."""
+
+    async def wire(self) -> None:
+        self._include_cors(cast(CORS, object()))
+
+
+class NotACORSIncludeApp(BaseApp):
+    """A non-CORS cors= keyword sneaks past static typing via cast; fail loud."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(PingEndpoint(), cors=cast(CORS, object()))
+
+
+def test_wildcard_pairs_on_bytes_kinds() -> None:
+    """The byte senders (plain bytes and BytesResponse) append the tail too."""
+    with TestClient(KindsApp()) as client:
+        raw = client.get("/binary")
+        wrapped = client.post("/binary", json=None)
+
+    assert raw.headers["access-control-allow-origin"] == "*"
+    assert wrapped.headers["access-control-allow-origin"] == "*"
+
+
+def test_preflight_resolves_dynamic_routes() -> None:
+    """A preflight for a templated path resolves through the dynamic table."""
+    with TestClient(KindsApp()) as client:
+        response = client.options(
+            "/things/thing-id",
+            headers={"origin": "https://app.example", "access-control-request-method": "GET"},
+        )
+
+    assert response.headers["access-control-allow-origin"] == "*"
+
+
+def test_preflight_denied_when_policy_excludes_a_routed_method() -> None:
+    """POST is routed on /ping but the include's policy allows only GET — the policy
+    replies with nothing (the plain 204 still goes out)."""
+    with TestClient(PerIncludeApp()) as client:
+        response = client.options(
+            "/ping",
+            headers={"origin": "https://a.example", "access-control-request-method": "POST"},
+        )
+
+    assert response.status_code == 204
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_preflight_on_uncovered_route_has_no_pairs() -> None:
+    """A route with no policy (no default, no cors=) answers preflights plainly."""
+    with TestClient(PerIncludeApp()) as client:
+        response = client.options(
+            "/open",
+            headers={"origin": "https://a.example", "access-control-request-method": "GET"},
+        )
+
+    assert response.status_code == 204
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_allow_list_preflight_without_origin() -> None:
+    """An allow-list preflight with no Origin header gets no pairs."""
+    with TestClient(AllowListApp()) as client:
+        response = client.options("/ping", headers={"access-control-request-method": "GET"})
+
+    assert response.status_code == 204
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_exception_handler_response_carries_pairs() -> None:
+    """A custom handler's ExceptionResponse leaves with the route's CORS pairs —
+    constant Vary and the dynamic origin echo both."""
+    with TestClient(HandledErrorApp()) as client:
+        response = client.get("/boom", headers={"origin": "https://app.example"})
+
+    assert response.status_code == 502
+    assert response.headers["access-control-allow-origin"] == "https://app.example"
+    assert response.headers["vary"] == "Origin"
+
+
+def test_empty_allow_methods_is_a_wiring_error() -> None:
+    """allow_methods=() fails at startup."""
+    with pytest.raises(RuntimeError, match="must not be empty"):
+        TestClient(EmptyMethodsApp())
+
+
+def test_negative_max_age_is_a_wiring_error() -> None:
+    """max_age=-1 fails at startup."""
+    with pytest.raises(RuntimeError, match="non-negative"):
+        TestClient(NegativeMaxAgeApp())
+
+
+def test_non_cors_default_is_a_wiring_error() -> None:
+    """_include_cors rejects a non-CORS object at startup."""
+    with pytest.raises(RuntimeError, match="requires a CORS policy"):
+        TestClient(NotACORSDefaultApp())
+
+
+def test_non_cors_include_keyword_is_a_wiring_error() -> None:
+    """cors= rejects a non-CORS object at startup."""
+    with pytest.raises(RuntimeError, match="must be a CORS policy"):
+        TestClient(NotACORSIncludeApp())

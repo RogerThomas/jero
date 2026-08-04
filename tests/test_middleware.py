@@ -16,10 +16,12 @@ from jero import (
     Endpoint,
     HTTPMethod,
     JSONResponse,
+    Link,
     NoContent,
     NotFoundError,
     Request,
     Struct,
+    WiringError,
 )
 from jero.testing import TestClient
 
@@ -632,3 +634,330 @@ def test_duplicate_constant_headers_are_a_wiring_error() -> None:
     """Two middlewares' constant pairs claiming one name is checkable — so it fails."""
     with pytest.raises(RuntimeError, match="duplicate constant response header"):
         TestClient(_MiddlewareApp(global_middleware=(SecurityMiddleware(), SecurityMiddleware())))
+
+
+class RequiredTenantHeaders(Struct):
+    """A hook Struct with a *required* header — absence is a 400 at bind time."""
+
+    x_tenant: str
+
+
+class TenantEchoMiddleware:
+    """A headers hook that can fail binding: the required header may be absent."""
+
+    def response_headers(self, request: Request[RequiredTenantHeaders]) -> EchoHeaders | None:
+        """Echo the tenant back."""
+        return EchoHeaders(x_echo=request.headers.x_tenant)
+
+
+class AlwaysHeadersMiddleware:
+    """A headers hook returning a plain Struct (no ``| None``) — always contributes."""
+
+    def response_headers(self, request: Request) -> SecurityHeaders:
+        """Always the same block."""
+        _ = request
+        return SecurityHeaders()
+
+
+class WrappedEndpoint(Endpoint, path="/wrapped"):
+    """Returns a response wrapper, so the non-inline sender path is exercised."""
+
+    def get(self) -> JSONResponse[Pong]:
+        """Answer wrapped."""
+        return JSONResponse(json=Pong(ok=True))
+
+
+class ThingPath(Struct):
+    """The template slot of the dynamic route."""
+
+    thing_id: str
+
+
+class ThingEndpoint(Endpoint, path="/things/{thing_id}"):
+    """A templated (dynamic) route, so covered-route swapping hits the dynamic table."""
+
+    def get(self, path: ThingPath) -> Pong:
+        """Answer for any thing."""
+        _ = path
+        return Pong(ok=True)
+
+
+class UnmountedEndpoint(Endpoint, path="/unmounted"):
+    """Never included — the dangling target for the intercept link test."""
+
+    def get(self) -> Pong:
+        """Never mounted."""
+        raise NotImplementedError()
+
+
+class DanglingLinkIntercept:
+    """An intercept whose response links to an operation that was never mounted —
+    a wiring fault that only surfaces at send time and must stay loud."""
+
+    intercept_methods = ("GET",)
+
+    def intercept(self, request: Request) -> JSONResponse[Refusal] | None:
+        """Answer with a dangling link."""
+        _ = request
+        return JSONResponse(
+            json=Refusal(reason="dangling"),
+            links=[Link.from_operation(UnmountedEndpoint.get, rel="self")],
+        )
+
+
+class UnionIntercept:
+    """An intercept declaring a multi-member response union."""
+
+    intercept_methods = ("POST",)
+
+    def intercept(self, request: Request[GateHeaders]) -> Refusal | NoContent | None:
+        """Refuse, answer empty, or fall through, by header."""
+        if request.headers.x_gate == "block":
+            return Refusal(reason="blocked")
+        if request.headers.x_gate == "empty":
+            return NoContent()
+        return None
+
+
+class NoneOnlyIntercept:
+    """An intercept that can only ever fall through — a dead declaration."""
+
+    intercept_methods = ("GET",)
+
+    def intercept(self, request: Request) -> None:
+        """Never answers anything."""
+        _ = request
+
+
+class BadReturnHeadersMiddleware:
+    """response_headers must return a Struct; int is rejected."""
+
+    def response_headers(self, request: Request) -> int:
+        """Illegal return type."""
+        _ = request
+        raise NotImplementedError()
+
+
+class BadParamNameMiddleware:
+    """Hook parameters must lead with 'request'."""
+
+    def response_headers(self, req: Request) -> EchoHeaders | None:
+        """Illegal parameter name."""
+        _ = req
+        raise NotImplementedError()
+
+
+class NotCallableIntercept:
+    """intercept must be a method, not a data attribute."""
+
+    intercept_methods = ("GET",)
+    intercept = "nope"
+
+
+class ListMethodsIntercept:
+    """intercept_methods must be a tuple, not a list."""
+
+    intercept_methods: ClassVar[list[str]] = ["GET"]
+
+    def intercept(self, request: Request) -> Refusal | None:
+        """Never wired."""
+        _ = request
+        raise NotImplementedError()
+
+
+class UnknownMethodIntercept:
+    """intercept_methods entries must be wire methods."""
+
+    intercept_methods = ("GETT",)
+
+    def intercept(self, request: Request) -> Refusal | None:
+        """Never wired."""
+        _ = request
+        raise NotImplementedError()
+
+
+class DuplicateMethodIntercept:
+    """intercept_methods entries must be distinct."""
+
+    intercept_methods = ("GET", "GET")
+
+    def intercept(self, request: Request) -> Refusal | None:
+        """Never wired."""
+        _ = request
+        raise NotImplementedError()
+
+
+class BadObserveAnnotations:
+    """observe must annotate status: int and duration: float."""
+
+    def observe(self, request: Request, status: str, duration: float) -> None:
+        """Illegal status annotation."""
+        _ = (request, status, duration)
+        raise NotImplementedError()
+
+
+class NotCallableObserve:
+    """observe must be a method, not a data attribute."""
+
+    observe = 5
+
+
+class _KindsApp(BaseApp):
+    """Global middleware over wrapper-returning and dynamic routes."""
+
+    def __init__(self, *middlewares: object) -> None:
+        self._middlewares = middlewares
+        super().__init__()
+
+    async def wire(self) -> None:
+        """Register the middleware and the extra route shapes."""
+        for middleware in self._middlewares:
+            self._include_middleware(middleware)
+        self._include_endpoint(WrappedEndpoint())
+        self._include_endpoint(ThingEndpoint())
+        self._include_endpoint(MissingEndpoint())
+
+
+def test_missing_required_hook_header_is_a_400() -> None:
+    """A required header the hook Struct names binds strictly: absence is the
+    malformed-request problem, via the same funnel as a handler failure."""
+    with TestClient(_MiddlewareApp(global_middleware=(TenantEchoMiddleware(),))) as client:
+        bound = client.get("/ping", headers={"x-tenant": "acme"})
+        unbound = client.get("/ping")
+
+    assert bound.headers["x-echo"] == "acme"
+    assert unbound.status_code == 400
+    assert unbound.json()["type"] == "malformed-request"
+
+
+def test_failing_hook_on_wrapper_response_funnels() -> None:
+    """The same bind failure on a non-inline sender path also becomes a 400."""
+    with TestClient(_KindsApp(TenantEchoMiddleware())) as client:
+        response = client.get("/wrapped")
+
+    assert response.status_code == 400
+
+
+def test_failing_hook_on_error_path_is_contained() -> None:
+    """A hook that fails while an *error* response is being assembled is logged and
+    skipped — the error must still leave."""
+    with TestClient(_KindsApp(TenantEchoMiddleware())) as client:
+        response = client.get("/missing")
+
+    assert response.status_code == 404
+    assert "x-echo" not in response.headers
+
+
+def test_headers_method_returning_plain_struct() -> None:
+    """A hook may declare a plain Struct return (no ``| None``)."""
+    with TestClient(_MiddlewareApp(global_middleware=(AlwaysHeadersMiddleware(),))) as client:
+        response = client.get("/ping")
+
+    assert response.headers["x-frame-options"] == "DENY"
+
+
+def test_union_intercept_dispatches_per_member() -> None:
+    """A multi-member intercept union dispatches each response by its own kind."""
+    with TestClient(_MiddlewareApp(scoped=(UnionIntercept(),))) as client:
+        refused = client.post("/ping", json={}, headers={"x-gate": "block"})
+        empty = client.post("/ping", json={}, headers={"x-gate": "empty"})
+        passed = client.post("/ping", json={})
+
+    assert (refused.status_code, refused.json()) == (200, {"reason": "blocked"})
+    assert (empty.status_code, empty.content) == (204, b"")
+    assert passed.json() == {"ok": True}
+
+
+def test_global_intercept_answers_head_with_suppressed_body() -> None:
+    """A HEAD-scoped *global* intercept answers pre-routing with HEAD semantics."""
+    with TestClient(_MiddlewareApp(global_middleware=(HeadOnlyMiddleware(),))) as client:
+        response = client.head("/ping")
+
+    assert response.status_code == 200
+    assert response.content == b""
+
+
+def test_observe_covers_dynamic_routes() -> None:
+    """Covered-route swapping reaches routes in the dynamic (templated) table."""
+    observer = Observer()
+    with TestClient(_KindsApp(observer)) as client:
+        response = client.get("/things/thing-id")
+
+    assert response.status_code == 200
+    assert [(path, status) for path, status, _, _ in observer.seen] == [("/things/thing-id", 200)]
+
+
+def test_intercept_link_to_unmounted_operation_stays_loud() -> None:
+    """A wiring fault surfacing while an intercept's response sends is a programming
+    error — it propagates instead of becoming a contained 500."""
+    with (
+        TestClient(_MiddlewareApp(scoped=(DanglingLinkIntercept(),))) as client,
+        pytest.raises(WiringError, match="not a mounted operation"),
+    ):
+        client.get("/ping")
+
+
+def test_none_only_intercept_is_a_wiring_error() -> None:
+    """-> None alone answers nothing; the declaration is dead."""
+    with pytest.raises(RuntimeError, match="at least one response return type"):
+        TestClient(_MiddlewareApp(scoped=(NoneOnlyIntercept(),)))
+
+
+def test_non_struct_headers_return_is_a_wiring_error() -> None:
+    """response_headers must declare a Struct return."""
+    with pytest.raises(RuntimeError, match="must declare a Struct return type"):
+        TestClient(_MiddlewareApp(global_middleware=(BadReturnHeadersMiddleware(),)))
+
+
+def test_bad_request_param_name_is_a_wiring_error() -> None:
+    """Hooks must take 'request' as their first argument."""
+    with pytest.raises(RuntimeError, match="must take 'request'"):
+        TestClient(_MiddlewareApp(global_middleware=(BadParamNameMiddleware(),)))
+
+
+def test_non_callable_intercept_is_a_wiring_error() -> None:
+    """intercept as a data attribute fails loud."""
+    with pytest.raises(RuntimeError, match="intercept must be a method"):
+        TestClient(_MiddlewareApp(global_middleware=(NotCallableIntercept(),)))
+
+
+def test_list_intercept_methods_is_a_wiring_error() -> None:
+    """intercept_methods must be a tuple (an immutable declaration)."""
+    with pytest.raises(RuntimeError, match="non-empty tuple"):
+        TestClient(_MiddlewareApp(global_middleware=(ListMethodsIntercept(),)))
+
+
+def test_unknown_intercept_method_is_a_wiring_error() -> None:
+    """intercept_methods entries outside the vocabulary fail loud."""
+    with pytest.raises(RuntimeError, match="not an HTTP method"):
+        TestClient(_MiddlewareApp(global_middleware=(UnknownMethodIntercept(),)))
+
+
+def test_duplicate_intercept_method_is_a_wiring_error() -> None:
+    """A repeated intercept_methods entry fails loud."""
+    with pytest.raises(RuntimeError, match="lists 'GET' twice"):
+        TestClient(_MiddlewareApp(global_middleware=(DuplicateMethodIntercept(),)))
+
+
+def test_bad_observe_annotations_is_a_wiring_error() -> None:
+    """observe must annotate status: int and duration: float."""
+    with pytest.raises(RuntimeError, match="'status: int' and 'duration: float'"):
+        TestClient(_MiddlewareApp(global_middleware=(BadObserveAnnotations(),)))
+
+
+def test_non_callable_observe_is_a_wiring_error() -> None:
+    """observe as a data attribute fails loud."""
+    with pytest.raises(RuntimeError, match="observe must be a method"):
+        TestClient(_MiddlewareApp(global_middleware=(NotCallableObserve(),)))
+
+
+class BadHeadersValueMiddleware:
+    """response_headers as a non-Struct, non-callable value fails loud."""
+
+    response_headers = 5
+
+
+def test_non_struct_headers_value_is_a_wiring_error() -> None:
+    """response_headers must be a Struct instance or a method."""
+    with pytest.raises(RuntimeError, match="Struct instance"):
+        TestClient(_MiddlewareApp(global_middleware=(BadHeadersValueMiddleware(),)))
