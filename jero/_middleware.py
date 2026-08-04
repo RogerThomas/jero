@@ -132,8 +132,9 @@ class CORS(Struct, frozen=True):
     at all (pure opt-in).
 
     ``allow_origins="*"`` compiles to constant header pairs in every covered route's
-    response — free at request time. An explicit origin tuple compiles to one frozenset
-    lookup plus an origin echo (and a ``Vary: Origin`` pair) instead. Combining an
+    response — free at request time. An explicit origin tuple compiles to an origin
+    echo whose verdict is memoized per origin (and a ``Vary: Origin`` pair) instead.
+    Combining an
     origin allow-list with ``allow_credentials=True`` echoes the origin with
     ``Access-Control-Allow-Credentials: true``; combining credentials with ``"*"`` is
     spec-forbidden and fails wiring loud.
@@ -169,21 +170,38 @@ def _validate_origin(origin: str) -> None:
 class _OriginEcho:
     """The allow-list simple-response hook: echo the request origin when it is allowed
     (plus the credentials pair when the policy grants them), else contribute nothing.
-    One frozenset lookup per response on covered routes."""
 
-    __slots__ = ("_extra", "_origins")
+    The verdict pairs are memoized per raw wire origin (origins repeat heavily across a
+    client's requests), so the steady state is one header scan plus one dict hit — no
+    decode, no ``.lower()``, no tuple build. The cache is capped so a flood of hostile
+    distinct origins cannot grow it unbounded; overflow traffic just takes the uncached
+    path, which is the pre-memo cost."""
+
+    _CACHE_CAP = 128
+
+    __slots__ = ("_cache", "_extra", "_origins")
 
     def __init__(self, origins: frozenset[str], *, credentials: bool) -> None:
         self._origins = origins
         self._extra: tuple[tuple[bytes, bytes], ...] = (
             ((b"access-control-allow-credentials", b"true"),) if credentials else ()
         )
+        self._cache: dict[bytes, tuple[tuple[bytes, bytes], ...]] = {}
 
     def __call__(self, scope: dict[str, Any]) -> Sequence[tuple[bytes, bytes]]:
-        origin = request_origin(scope)
-        if origin is None or origin.lower() not in self._origins:
-            return ()
-        return ((b"access-control-allow-origin", origin.encode("latin-1")), *self._extra)
+        for key, value in scope["headers"]:
+            if key == b"origin":
+                pairs = self._cache.get(value)
+                if pairs is None:
+                    pairs = (
+                        ((b"access-control-allow-origin", value), *self._extra)
+                        if value.decode("latin-1").lower() in self._origins
+                        else ()
+                    )
+                    if len(self._cache) < self._CACHE_CAP:
+                        self._cache[value] = pairs
+                return pairs
+        return ()
 
 
 def _validate_cors(config: CORS, *, wildcard: bool) -> None:
@@ -213,9 +231,9 @@ class CompiledCORS:
 
     ``constant_pairs`` joins a covered route's constant header tail (the free tier:
     ``access-control-allow-origin: *`` for a wildcard policy, ``Vary: Origin`` for an
-    allow-list). ``dynamic`` is the allow-list origin-echo hook, or ``None`` for a
-    wildcard policy. :meth:`preflight_pairs` answers one preflight from the precomputed
-    block.
+    allow-list). ``dynamic`` is the allow-list origin-echo hook (verdicts memoized per
+    origin), or ``None`` for a wildcard policy. :meth:`preflight_pairs` answers one
+    preflight from the precomputed block.
     """
 
     __slots__ = ("_allowed_methods", "_origins", "_preflight_block", "constant_pairs", "dynamic")

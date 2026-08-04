@@ -250,8 +250,8 @@ These pull against each other constantly; keep all three in mind on every change
 - **CORS** is a built-in on the same machinery: `_include_cors(CORS(...))` sets the
   app-wide default; per-include `cors=` overrides, `CORS.OFF` opts out, omitted
   inherits; no default + no `cors=` = no CORS. `"*"` compiles to constant pairs (free);
-  an origin allow-list compiles to a frozenset lookup + origin echo + constant
-  `Vary: Origin`. Preflights ride the cold OPTIONS branch, answered per (path,
+  an origin allow-list compiles to an origin echo (verdict memoized per raw origin,
+  cache capped at 128) + constant `Vary: Origin`. Preflights ride the cold OPTIONS branch, answered per (path,
   requested method); error responses carry the failing route's pairs, unrouted 404s
   the app default; `allow_credentials=True` with `"*"` is a `WiringError`.
 - **Background tasks**: `BackgroundTasks` is an in-process, fire-and-forget queue

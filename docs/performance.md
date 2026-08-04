@@ -207,7 +207,7 @@ relative to a real server, where socket I/O dominates):
 | configuration | relative cost |
 | :-- | :-- |
 | no middleware, no CORS | 1.00× |
-| wildcard CORS / a constant `response_headers` block | ~1.05× |
+| wildcard CORS / a constant `response_headers` block | ~1.02× |
 | origin allow-list CORS | ~1.3× |
 | on-scope `intercept` (falling through) | ~1.4× |
 | `observe` | ~1.6× |

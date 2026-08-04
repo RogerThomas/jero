@@ -30,7 +30,7 @@ Which tier a policy compiles to depends only on `allow_origins`:
 | policy | per-request cost |
 | :-- | :-- |
 | `allow_origins="*"` | zero — constant pairs baked into each covered route's header block at wiring |
-| an origin tuple | one frozenset lookup + origin echo per response, plus a constant `Vary: Origin` pair |
+| an origin tuple | one header scan + a memoized verdict per origin (the first sighting pays the lookup + echo build), plus a constant `Vary: Origin` pair |
 
 Preflights (`OPTIONS` with `Access-Control-Request-Method`) ride the existing cold
 OPTIONS branch and never touch the hot path.

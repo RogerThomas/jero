@@ -1733,26 +1733,24 @@ class _RouteTail:
     dynamic: tuple[_TailHook, ...] = ()
     active: bool = False
 
-    def collect(self, scope: Scope) -> list[tuple[bytes, bytes]]:
-        """The dynamic hooks' pairs for one request. Strict: a hook failure propagates,
-        entering the exception funnel exactly like a handler failure (nothing has been
-        sent yet — senders assemble headers before ``http.response.start``)."""
-        pairs: list[tuple[bytes, bytes]] = []
+    def extend_dynamic(self, headers: list[tuple[bytes, bytes]], scope: Scope) -> None:
+        """Append each dynamic hook's pairs straight into ``headers`` — no intermediate
+        list. Strict: a hook failure propagates, entering the exception funnel exactly
+        like a handler failure (nothing has been sent yet — senders assemble headers
+        before ``http.response.start``)."""
         for hook in self.dynamic:
-            pairs += hook(scope)
-        return pairs
+            headers += hook(scope)
 
     def extend(self, headers: list[tuple[bytes, bytes]], scope: Scope) -> None:
         """Append the tail to a response's header list: constant pairs, then the dynamic
-        hooks' pairs (strict, like :meth:`collect`). Callers guard with
+        hooks' pairs (strict, via :meth:`extend_dynamic`). Callers guard with
         ``if tail.active`` so an empty tail costs nothing."""
         if self.pairs:
             headers += self.pairs
-        if self.dynamic:
-            headers += self.collect(scope)
+        self.extend_dynamic(headers, scope)
 
     def collect_contained(self, scope: Scope) -> list[tuple[bytes, bytes]]:
-        """``collect`` for the error path: a hook that fails while an *error* response is
+        """The hook loop for the error path: a hook that fails while an *error* response is
         being assembled is logged and skipped — the error must still leave, and raising
         here would recurse into the funnel that is already sending it."""
         pairs: list[tuple[bytes, bytes]] = []
@@ -2543,16 +2541,20 @@ class _Route:
             return
         if self._json_status is not None:
             # Inlines _JSONSender (kept for _result_sender completeness) to save a
-            # coroutine hop on the hot plain-JSON path.
+            # coroutine hop on the hot plain-JSON path. The tail is inlined too: the
+            # constant pairs ride the header literal's unpack (near-free when empty,
+            # no ``active`` branch or ``extend`` call), and dynamic hooks append
+            # straight into the list.
             payload = msgspec_encoder.encode(result)
+            tail = self._tail
             headers = [
                 (b"content-type", b"application/json"),
                 (b"content-length", b"%d" % len(payload)),
+                *tail.pairs,
             ]
-            tail = self._tail
-            if tail.active:
+            if tail.dynamic:
                 try:
-                    tail.extend(headers, scope)
+                    tail.extend_dynamic(headers, scope)
                 except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
                     # A dynamic header hook raised: nothing sent yet, same funnel as a
                     # handler failure.

@@ -318,8 +318,8 @@ socket I/O dominates):
 | configuration | relative cost |
 | :-- | :-- |
 | no middleware, no CORS | 1.00× |
-| wildcard CORS / constant `response_headers` | ~1.05× |
-| allow-list CORS | ~1.3× |
+| wildcard CORS / constant `response_headers` | ~1.02× |
+| allow-list CORS | ~1.15× |
 | on-scope `intercept` (falling through) | ~1.4× |
 | `observe` | ~1.6× |
 | `response_headers` method | ~1.9× |
