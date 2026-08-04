@@ -196,6 +196,29 @@ startup**. The request path is dict lookup → msgspec decode → handler call �
 nothing is ever added to it. See [the design philosophy](index.md) for why that's a
 deliberate, non-negotiable bet.
 
+## What middleware and CORS cost
+
+[Middleware](guide/middleware.md) and [CORS](guide/cors.md) are compiled at wiring
+rather than layered as app wrappers, so their cost is per *tier*, opt-in, and zero on
+routes nothing covers. Measured with the in-process hot-path harness (`bench.py`'s
+POST-echo shape, ~1.3µs/request baseline; in-process numbers amplify framework deltas
+relative to a real server, where socket I/O dominates):
+
+| configuration | relative cost |
+| :-- | :-- |
+| no middleware, no CORS | 1.00× |
+| wildcard CORS / a constant `response_headers` block | ~1.02× |
+| origin allow-list CORS | ~1.3× |
+| on-scope `intercept` (falling through) | ~1.4× |
+| `observe` | ~1.6× |
+| `response_headers` method | ~1.9× |
+
+For contrast, a single *onion-style* ASGI wrapper doing nothing but appending one
+constant CORS pair measured ~1.3× on the same harness — for every request, whether or
+not it applied, and before it does anything a real middleware does. That number is why
+jero's middleware is a compiled protocol instead: one bare wrapper already costs what
+the compiled model's mid tiers do, and the compiled model's floor is free.
+
 ## Measure it yourself
 
 The numbers above need a load generator, a server, and patience. This one doesn't — and
