@@ -139,3 +139,25 @@ class RawFormHeaders(Camel):
     part_checksum_values: list[str]
     part_content_type: str | None
     part_typed_headers: bool
+
+
+class WebSocketPath(Camel):
+    """The client id carried by the demo WebSocket path."""
+
+    client_id: str
+
+
+class PingRequest(Camel, tag="ping-request"):
+    """One correlated client-to-server WebSocket request."""
+
+    request_id: str
+    message: str
+
+
+class PingResponse(Camel, tag="ping-response"):
+    """The demo WebSocket's correlated response."""
+
+    request_id: str
+    client_id: str
+    user_id: str
+    message: str

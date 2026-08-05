@@ -169,6 +169,7 @@ from jero.streaming import (
     StreamingResponse,
     encode_sse,
 )
+from jero.websockets import CompiledWebSocket, WebSocket, compile_websocket
 
 # annotationlib is 3.14+. On 3.14 inspect.signature evaluates annotations by default
 # (PEP 649), so _instantiate_factory asks for the FORWARDREF format instead. Pre-3.14
@@ -198,6 +199,7 @@ type Send = Callable[[dict[str, Any]], Awaitable[None]]
 
 # A compiled per-request handler: decode -> call -> encode.
 type _Handler = Callable[[Scope, Receive, Send, dict[str, str]], Awaitable[None]]
+type _WebSocketHandler = Callable[[Scope, Receive, Send, dict[str, str]], Awaitable[None]]
 # A template segment: (is_param, static_value_or_slot_name).
 type _Segment = tuple[bool, str]
 type _StaticRoutes = dict[tuple[str, str], _Handler]
@@ -207,6 +209,11 @@ type _AllowedMethods = dict[str, list[HTTPMethod]]
 # ReturnKind / PayloadKind (the other wire-shape aliases) live in jero._wiring_types,
 # shared with the OpenAPI generator.
 type _DecoderFor = Callable[[type[Struct]], Decoder[Struct]]
+
+
+class _WebSocketInterceptRunner(Protocol):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> bool: ...
+
 
 # Argument names the binder understands, shared by every handler kind.
 _SOURCES = frozenset(
@@ -487,6 +494,18 @@ class Endpoint(_Routable):
         cls.meta_delete = meta_delete
 
 
+class WebSocketEndpoint(_Routable):
+    """One typed WebSocket protocol at one class-declared path.
+
+    Subclasses define exactly one async ``handle`` method whose first argument is
+    ``websocket: WebSocket[Inbound, Outbound]``. Handshake sources use the existing
+    ``path`` / ``params`` / ``headers`` / ``raw_headers`` / ``user`` vocabulary.
+    """
+
+    def __init_subclass__(cls, *, path: str) -> None:
+        super().__init_subclass__(path=path)
+
+
 class Auth[THeaders: Struct, TUser: Struct](Protocol):
     """Implement ``authenticate``; raise an ``HTTPError`` subclass to reject.
 
@@ -564,6 +583,21 @@ class _SuppressBody:
     async def __call__(self, message: dict[str, Any]) -> None:
         if message["type"] == "http.response.body":
             message = {"type": "http.response.body", "body": b""}
+        await self._send(message)
+
+
+@dataclass(slots=True)
+class _WebSocketDenialSend:
+    """Translate an HTTP middleware answer into ASGI's pre-upgrade denial events."""
+
+    _send: Send
+
+    async def __call__(self, message: dict[str, Any]) -> None:
+        event_type = message["type"]
+        if event_type == "http.response.start":
+            message = {**message, "type": "websocket.http.response.start"}
+        elif event_type == "http.response.body":
+            message = {**message, "type": "websocket.http.response.body"}
         await self._send(message)
 
 
@@ -1249,6 +1283,65 @@ class _Pattern:
         return all(segments[i] == value for i, value in self.statics)
 
 
+@dataclass(frozen=True, slots=True)
+class _WebSocketPattern:
+    statics: tuple[tuple[int, str], ...]
+    params: tuple[tuple[int, str], ...]
+    handler: _WebSocketHandler
+
+
+def _bind_websocket_sources(cls: type, fn: Callable[..., Any]) -> tuple[Sources, object, object]:
+    """Compile a WebSocket handler's framing and handshake-only sources."""
+    hints = get_type_hints(fn)
+    params = list(inspect.signature(fn).parameters.values())
+    if not params or params[0].name != "websocket":
+        raise WiringError(f"{cls.__name__}.handle must take 'websocket' as its first argument")
+    websocket_hint = hints.get("websocket")
+    if get_origin(websocket_hint) is not WebSocket or len(get_args(websocket_hint)) != 2:
+        raise WiringError(
+            f"{cls.__name__}.handle: 'websocket' must be annotated WebSocket[Inbound, Outbound]",
+        )
+    if hints.get("return") not in (None, NoneType):
+        raise WiringError(f"{cls.__name__}.handle must return None")
+    if not inspect.iscoroutinefunction(fn):
+        raise WiringError(f"{cls.__name__}.handle must be async")
+
+    types: dict[str, type[Struct]] = {}
+    wants_raw_headers = False
+    user_optional = False
+    allowed = frozenset({"params", "path", "headers", "user", "raw_headers"})
+    for param in params[1:]:
+        if param.name not in allowed:
+            raise WiringError(
+                f"{cls.__name__}.handle: unsupported argument {param.name!r}; "
+                "allowed handshake sources are path, params, headers, raw_headers, and user",
+            )
+        if param.name == "raw_headers":
+            if hints.get("raw_headers") is not RawHeaders:
+                raise WiringError(
+                    f"{cls.__name__}.handle: 'raw_headers' must be annotated as RawHeaders",
+                )
+            wants_raw_headers = True
+            continue
+        annotation = hints.get(param.name)
+        if param.name == "user":
+            annotation, user_optional = _strip_optional(annotation)
+        types[param.name] = _struct_annotation(cls, "handle", param.name, annotation)
+    sources = Sources(
+        params=types.get("params"),
+        path=types.get("path"),
+        headers=types.get("headers"),
+        user=types.get("user"),
+        user_optional=user_optional,
+        raw_headers=wants_raw_headers,
+        return_kind="bytes",
+        return_annotation=NoneType,
+        arity=len(types) + wants_raw_headers,
+    )
+    inbound, outbound = get_args(websocket_hint)
+    return sources, unwrap_alias(inbound), unwrap_alias(outbound)
+
+
 class _CompiledAuth:
     """An authenticator introspected once at registration time.
 
@@ -1430,6 +1523,101 @@ class _Binder:
                     break
             body = chunks[0] if len(chunks) == 1 else b"".join(chunks)
         return self._finish(scope, raw_headers, path_values, user, body)
+
+
+class _WebSocketRoute:
+    """A compiled handshake binder followed by one accepted WebSocket handler."""
+
+    __slots__ = (
+        "_arity",
+        "_bind",
+        "_exceptions",
+        "_fn",
+        "_intercepts",
+        "_spec",
+        "_tail",
+    )
+
+    def __init__(
+        self,
+        fn: Callable[..., Awaitable[None]],
+        *,
+        sources: Sources,
+        inbound: object,
+        outbound: object,
+        auth: _CompiledAuth | None,
+        exceptions: "_ExceptionHandlers",
+        intercepts: tuple[_WebSocketInterceptRunner, ...],
+        tail: "_RouteTail",
+        max_frame_size: int,
+    ) -> None:
+        spec: CompiledWebSocket = compile_websocket(
+            inbound, outbound, max_frame_size=max_frame_size
+        )
+        self._fn = fn
+        self._bind = _Binder(sources, auth)
+        self._exceptions = exceptions
+        self._intercepts = intercepts
+        self._spec = spec
+        self._tail = tail
+        self._arity = sources.arity
+
+    async def _reject(self, send: Send, error: BaseHTTPError) -> None:
+        payload = self._exceptions.encode_error(error)
+        await send(
+            {
+                "type": "websocket.http.response.start",
+                "status": error.status,
+                "headers": [
+                    (b"content-type", b"application/problem+json"),
+                    (b"content-length", str(len(payload)).encode()),
+                ],
+            }
+        )
+        await send({"type": "websocket.http.response.body", "body": payload})
+
+    async def __call__(
+        self, scope: Scope, receive: Receive, send: Send, path_values: dict[str, str]
+    ) -> None:
+        if self._intercepts and await _run_intercepts(
+            self._intercepts,
+            scope,
+            receive,
+            _WebSocketDenialSend(send),
+            exceptions=self._exceptions,
+            tail=self._tail,
+        ):
+            return
+        try:
+            bound = (
+                None
+                if self._arity == 0
+                else await self._bind(scope, receive, path_values)
+                if not self._bind.is_sync
+                else self._bind.bind_sync(scope, path_values)
+            )
+        except BaseHTTPError as error:
+            await self._reject(send, error)
+            return
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("error binding WebSocket handshake for %s", scope["path"])
+            await self._reject(send, InternalServerError())
+            return
+        await send({"type": "websocket.accept"})
+        websocket: WebSocket[object, object] = self._spec.open(receive, send)
+        try:
+            if self._arity >= 2:
+                kwargs = cast("dict[str, object]", bound)
+                await self._fn(websocket=websocket, **kwargs)
+            elif self._arity == 1:
+                await self._fn(websocket, bound)
+            else:
+                await self._fn(websocket)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("error in WebSocket handler for %s", scope["path"])
+            await websocket.close(code=1011, reason="internal error")
+            return
+        await websocket.close()
 
 
 type _Sender = Callable[[Scope, Receive, Send, Any], Awaitable[None]]
@@ -2667,7 +2855,7 @@ class _InterceptRunner:
 
 
 async def _run_intercepts(
-    runners: tuple[_InterceptRunner, ...],
+    runners: tuple[_WebSocketInterceptRunner, ...],
     scope: Scope,
     receive: Receive,
     send: Send,
@@ -3002,6 +3190,8 @@ class BaseApp[FactoryT = None](ABC):
     def __init__(self, *, factory: FactoryT | None = None) -> None:
         self.__static: _StaticRoutes = {}
         self.__dynamic: _DynamicRoutes = {}
+        self.__websocket_static: dict[str, _WebSocketHandler] = {}
+        self.__websocket_dynamic: dict[int, list[_WebSocketPattern]] = {}
         self.__allowed: _AllowedMethods = {}
         self.__allow_cache: dict[str, bytes] = {}
         self.__decoders: dict[type[Struct], Decoder[Struct]] = {}
@@ -3093,6 +3283,20 @@ class BaseApp[FactoryT = None](ABC):
         if any(pattern.statics == statics for pattern in bucket):
             raise WiringError(f"{method} {_template_str(segments)} is already registered")
         bucket.append(_Pattern(statics, params, handler))
+
+    def __register_websocket(self, segments: list[_Segment], handler: _WebSocketHandler) -> None:
+        params = tuple((i, value) for i, (is_param, value) in enumerate(segments) if is_param)
+        if not params:
+            route_path = "/".join(value for _, value in segments)
+            if route_path in self.__websocket_static:
+                raise WiringError(f"WebSocket {route_path} is already registered")
+            self.__websocket_static[route_path] = handler
+            return
+        statics = tuple((i, value) for i, (is_param, value) in enumerate(segments) if not is_param)
+        bucket = self.__websocket_dynamic.setdefault(len(segments), [])
+        if any(pattern.statics == statics for pattern in bucket):
+            raise WiringError(f"WebSocket {_template_str(segments)} is already registered")
+        bucket.append(_WebSocketPattern(statics, params, handler))
 
     @staticmethod
     def __check_user_source(
@@ -3375,6 +3579,71 @@ class BaseApp[FactoryT = None](ABC):
         """
         self.__include(endpoint, Endpoint.METHODS, auth=auth, cors=cors, middleware=middleware)
 
+    def _include_websocket[THeaders: Struct, TUser: Struct](
+        self,
+        endpoint: WebSocketEndpoint,
+        *,
+        auth: Auth[THeaders, TUser] | None = None,
+        max_frame_size: int = 1024 * 1024,
+        middleware: Sequence[object] = (),
+    ) -> None:
+        """Register one typed WebSocket protocol and compile its handshake contract."""
+        if not isinstance(max_frame_size, int) or isinstance(max_frame_size, bool):
+            raise WiringError("max_frame_size must be a positive integer")
+        if max_frame_size < 1:
+            raise WiringError("max_frame_size must be a positive integer")
+        cls = type(endpoint)
+        path = getattr(cls, "path", None)
+        if path is None:
+            raise WiringError(
+                f"{cls.__name__}: no path — declare it on the class, "
+                f"e.g. `class {cls.__name__}(WebSocketEndpoint, path='/...')`.",
+            )
+        fn = getattr(endpoint, "handle", None)
+        if fn is None:
+            raise WiringError(f"{cls.__name__} must define handle")
+        sources, inbound, outbound = _bind_websocket_sources(cls, fn)
+        compiled_auth = _CompiledAuth(auth) if auth is not None else None
+        self.__check_user_source(cls, "handle", sources, compiled_auth)
+        tail = _RouteTail()
+        intercepts: list[_WebSocketInterceptRunner] = []
+        for item in middleware:
+            compiled = CompiledMiddleware(item)
+            if compiled.intercept is None:
+                continue
+            if "GET" not in compiled.intercept_methods:
+                raise WiringError(
+                    f"{compiled.owner}.intercept can never run on a WebSocket handshake: "
+                    f"intercept_methods is {compiled.intercept_methods!r}, expected GET",
+                )
+            intercepts.append(
+                _InterceptRunner(
+                    compiled.intercept,
+                    _intercept_sender(
+                        compiled.owner,
+                        compiled.intercept,
+                        self.__reverser,
+                        self.__exceptions,
+                        tail,
+                    ),
+                )
+            )
+        segments = _route_segments(
+            cls, "handle", _parse_template(path), sources.path, extends_path=False
+        )
+        route = _WebSocketRoute(
+            fn,
+            sources=sources,
+            inbound=inbound,
+            outbound=outbound,
+            auth=compiled_auth,
+            exceptions=self.__exceptions,
+            intercepts=tuple(intercepts),
+            tail=tail,
+            max_frame_size=max_frame_size,
+        )
+        self.__register_websocket(segments, route)
+
     def _include_openapi(
         self,
         *,
@@ -3536,6 +3805,22 @@ class BaseApp[FactoryT = None](ABC):
                 values: dict[str, str] = {}
                 for i, name in pattern.params:
                     segment = segments[i]
+                    values[name] = unquote(segment) if "%" in segment else segment
+                return pattern.handler, values
+        return None
+
+    def __resolve_websocket_dynamic(
+        self, path: str
+    ) -> tuple[_WebSocketHandler, dict[str, str]] | None:
+        segments = path.split("/")
+        for pattern in self.__websocket_dynamic.get(len(segments), ()):
+            for index, value in pattern.statics:
+                if segments[index] != value:
+                    break
+            else:
+                values: dict[str, str] = {}
+                for index, name in pattern.params:
+                    segment = segments[index]
                     values[name] = unquote(segment) if "%" in segment else segment
                 return pattern.handler, values
         return None
@@ -3858,12 +4143,64 @@ class BaseApp[FactoryT = None](ABC):
                 [(b"allow", allow)] + (extra if extra is not None else []),
             )
 
+    async def __handle_websocket(self, scope: Scope, receive: Receive, send: Send) -> None:
+        connect = await receive()
+        if connect["type"] != "websocket.connect":
+            await send({"type": "websocket.close", "code": 1008, "reason": "bad handshake"})
+            return
+        # WebSocket handshakes are GET requests for middleware verb scoping. Global
+        # intercepts run before routing/auth exactly as on the HTTP path; observe is
+        # deliberately absent for sockets in v1.
+        scope["method"] = "GET"
+        pre = self.__pre
+        if pre is not None:
+            runners = pre.intercepts.get("GET")
+            if runners is not None and await _run_intercepts(
+                runners,
+                scope,
+                receive,
+                _WebSocketDenialSend(send),
+                exceptions=self.__exceptions,
+                tail=self.__app_tail,
+            ):
+                return
+        path: str = scope["path"]
+        handler = self.__websocket_static.get(path)
+        path_values: dict[str, str] = {}
+        if handler is None:
+            resolved = self.__resolve_websocket_dynamic(path)
+            if resolved is not None:
+                handler, path_values = resolved
+        if handler is not None:
+            await handler(scope, receive, send, path_values)
+            return
+        error = NotFoundError()
+        payload = self.__exceptions.encode_error(error)
+        await send(
+            {
+                "type": "websocket.http.response.start",
+                "status": error.status,
+                "headers": [
+                    (b"content-type", b"application/problem+json"),
+                    (b"content-length", str(len(payload)).encode()),
+                ],
+            }
+        )
+        await send({"type": "websocket.http.response.body", "body": payload})
+
+    async def __handle_non_http(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "lifespan":
+            await self.__handle_lifespan(receive, send)
+            return
+        if scope["type"] == "websocket":
+            await self.__handle_websocket(scope, receive, send)
+            return
+        raise RuntimeError(f"unsupported scope type {scope['type']!r}")
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
-            if scope["type"] == "lifespan":
-                await self.__handle_lifespan(receive, send)
-                return
-            raise RuntimeError(f"unsupported scope type {scope['type']!r}")
+            await self.__handle_non_http(scope, receive, send)
+            return
 
         # HTTP is the hot path; inlined here (was _handle_http) to save a coroutine hop.
         method: str = scope["method"]

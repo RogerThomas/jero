@@ -261,6 +261,18 @@ These pull against each other constantly; keep all three in mind on every change
   handler per type (`allow_one_to_many=True` to fan out); `drain_timeout: float | None`
   controls shutdown (float = drain best-effort then drop, None = drop now). Enter it
   *after* the resources its handlers use, so it drains before they're torn down.
+- **WebSockets**: subclass `WebSocketEndpoint` with a required class `path` and one
+  async `handle(websocket: WebSocket[Inbound, Outbound], ...) -> None`; mount it with
+  `_include_websocket`. Handshake `path`/`params`/`headers`/`raw_headers`/`user` bind
+  and auth run before implicit acceptance. Each direction is exactly one framing kind:
+  a tagged Struct union as strict JSON, raw `str` text, or raw `bytes` binary; wrong
+  frames close `1003`, malformed/invalid JSON `1007`/`1008`, oversized frames `1009`
+  (1 MiB default, configurable per mount), and uncaught handler errors `1011`.
+  OpenAPI does not model sockets. `Channel[T]` is the typed, per-process broadcast
+  primitive: one encode per publish, bounded writer queue per attachment, synchronous
+  `join`/`leave`/`publish`, and `"close"` (`1013`) or `"drop-oldest"` overflow.
+  Cross-worker pub/sub and ping/pong keepalive belong to the user's backplane and ASGI
+  server respectively. `TestClient.websocket(...)` is the synchronous typed harness.
 - REST error semantics throughout (404/400/422/401/405, auto HEAD + OPTIONS);
   camelCase on the wire via msgspec `rename`.
 - **Naming convention**: foundations you extend once are `Base*` (`BaseApp`,
@@ -292,6 +304,8 @@ These pull against each other constantly; keep all three in mind on every change
   `jero/testing.py` — sync in-process `TestClient` + `FactoryHarness`.
   `jero/forms.py` / `jero/streaming.py` — multipart parts and streaming response
   types. `jero/background.py` — the in-process `BackgroundTasks` queue.
+  `jero/websockets.py` — compiled typed WebSocket framing plus the in-process
+  `Channel[T]` fan-out primitive.
   `jero/links.py` — `Location` / `Link` and their reverse-routing targets (a leaf module
   `core` and `streaming` both import). `jero/headers.py` — the `RawHeaders` opaque bag.
   `jero/errors.py` — typed Problem Details Structs, `HTTPError` foundations, and the
@@ -300,8 +314,10 @@ These pull against each other constantly; keep all three in mind on every change
   shared reusable `msgspec_encoder` / `msgspec_decoder` (imported by `core`,
   `streaming`, `testing`; SSE wire-formatting lives in `streaming.py` as the
   un-underscored boundary-crosser `encode_sse`).
-- Runtime deps are intentionally sparse: `msgspec` for typed validation/JSON and
-  `python-multipart` for buffered `multipart/form-data` parsing.
+- Runtime deps are intentionally sparse: `msgspec` for typed validation/JSON,
+  `python-multipart` for buffered `multipart/form-data` parsing, and
+  `typing-extensions` for Python 3.13's `TypeForm` backport (preserving exact generic
+  types when the test WebSocket API accepts union type expressions).
 - `demo_app/` — a complete, project-structured example app (`config`, `models`,
   `auth`, `services/`, `operations/`, `factory`, `app`); its `TokenAuth` gates widgets +
   `/me` and its `OptionalTokenAuth` serves anonymous callers at `/spotlight`. It is the **single source of
@@ -337,7 +353,10 @@ These pull against each other constantly; keep all three in mind on every change
   `Location` / `Link` responses, typed Problem Details errors, structurally registered
   custom exception handlers, `TestClient`, the test suite; compiled middleware
   (`_include_middleware` / `middleware=`, the four hook tiers) with built-in CORS
-  (`_include_cors` / `cors=` / `CORS.OFF`) as its first consumer. **OpenAPI 3.1**:
+  (`_include_cors` / `cors=` / `CORS.OFF`) as its first consumer; typed WebSockets
+  (`WebSocketEndpoint`, `WebSocket[Inbound, Outbound]`, `_include_websocket`), the
+  synchronous typed `TestClient.websocket` harness, and bounded per-process
+  `Channel[T]` fan-out with close/drop-oldest overflow policies. **OpenAPI 3.1**:
   `_include_openapi` serves `/openapi.json` + a Scalar `/docs` UI, derived from the
   wired types (sources, returns incl. generics, `msgspec.Meta`); `favicon=` (Path read
   once at wiring → precomputed `/favicon.ico` route + `<link>` in the default page;
