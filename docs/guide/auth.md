@@ -54,11 +54,10 @@ class TokenAuth:
 ## Wiring it up
 
 Pass `auth=` when including a resource or endpoint. It then runs for **every** method
-on that resource, before the body is decoded:
+on that resource, before the body is decoded (the authenticator here is a trivial
+stand-in for the one above):
 
 ```python
-from dataclasses import dataclass
-
 from msgspec import Struct
 
 from jero import BaseApp, Endpoint, HTTPError
@@ -81,16 +80,11 @@ class User(Struct):
     name: str
 
 
-@dataclass
 class TokenAuth:
-    _users: dict[str, User]
-
     async def authenticate(self, headers: Credentials) -> User:
-        token = headers.authorization.removeprefix("Bearer ").strip()
-        user = self._users.get(token)
-        if user is None:
+        if headers.authorization != "Bearer token":
             raise InvalidTokenError()
-        return user
+        return User(id="user-id", name="user-name")
 
 
 class Health(Struct):
@@ -109,8 +103,7 @@ class WhoAmIEndpoint(Endpoint, path="/me"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        auth = TokenAuth({"token": User(id="user-id", name="user-name")})
-        self._include_endpoint(WhoAmIEndpoint(), auth=auth)
+        self._include_endpoint(WhoAmIEndpoint(), auth=TokenAuth())
         self._include_endpoint(HealthEndpoint())   # no auth
 
 

@@ -29,14 +29,6 @@ throughput. **jero is the fastest Python framework in every one** — gin (Go) a
   <img src="assets/bench-grid.svg" alt="Benchmark results: jero is the fastest Python framework across all four workloads" width="820">
 </p>
 
-And yes — benchmarks are genuinely hard to do right, and to do fairly. Every
-framework has a configuration that flatters it, every harness makes choices that nudge
-the numbers, and reasonable people disagree about what "fair" even means. This is *one*
-benchmark, run one way, on one machine. The methodology and configuration are laid out
-below so you can judge for yourself — but treat it as a single data point, not the last
-word. If you have a workload that matters to you, the only number worth trusting is the
-one you measure yourself.
-
 ## How the numbers were produced
 
 The benchmark runs each framework **in isolation, one at a time**. Only one framework
@@ -189,12 +181,12 @@ service.
 - **A benchmark is not your app.** Single worker, one core, a Docker Desktop Linux VM
   (CPU pinning near-exact, not exact), fixed payloads, best-of-N. Real workloads have
   more moving parts. Treat these as directional evidence that jero's per-request
-  overhead is low — not as a promise about your production numbers.
+  overhead is low — not as a promise about your production numbers. For a workload that
+  matters to you, the only number worth trusting is the one you measure yourself.
 
 Where jero's design earns these numbers: all type introspection happens **once, at
 startup**. The request path is dict lookup → msgspec decode → handler call → encode, and
-nothing is ever added to it. See [the design philosophy](index.md) for why that's a
-deliberate, non-negotiable bet.
+nothing is ever added to it. See [Philosophy](philosophy.md) for the reasoning.
 
 ## What middleware and CORS cost
 
@@ -208,7 +200,7 @@ relative to a real server, where socket I/O dominates):
 | :-- | :-- |
 | no middleware, no CORS | 1.00× |
 | wildcard CORS / a constant `response_headers` block | ~1.02× |
-| origin allow-list CORS | ~1.3× |
+| origin allow-list CORS | ~1.15× |
 | on-scope `intercept` (falling through) | ~1.4× |
 | `observe` | ~1.6× |
 | `response_headers` method | ~1.9× |
@@ -221,19 +213,14 @@ the compiled model's mid tiers do, and the compiled model's floor is free.
 
 ## Measure it yourself
 
-The numbers above need a load generator, a server, and patience. This one doesn't — and
-it answers a *different question*. A single self-contained script drives each framework
-**in-process as a bare ASGI callable** — no server, no sockets — so it isolates pure
+A single self-contained script drives jero, Litestar, BlackSheep, and FastAPI
+**in-process as bare ASGI callables** — no server, no sockets — isolating pure
 framework overhead (routing, binding/validation, serialization) on your own machine in
-under a minute.
-
-It benchmarks jero, Litestar, BlackSheep, and FastAPI against a hand-rolled raw ASGI
-app serving the same three-endpoint API. The raw app uses no framework but is kept
-honest: it routes by hand, extracts the path and query values, does a typed validating
-msgspec decode of the POST body, and a typed msgspec encode of every response. It
-skips everything a framework gives you (404/405 semantics, HEAD/OPTIONS, content-type
-checks, error envelopes) — that's the point: it is the **theoretical ceiling** the
-frameworks are measured against.
+under a minute. Each is measured against a hand-rolled raw ASGI app serving the same
+three-endpoint API: no framework, but kept honest (hand routing, typed validating
+msgspec decode, typed encode), while skipping everything a framework gives you
+(404/405 semantics, HEAD/OPTIONS, error envelopes). That raw app is the **theoretical
+ceiling** the frameworks are measured against.
 
 !!! note "This is a different test from the four scenarios above"
 
@@ -250,20 +237,16 @@ frameworks are measured against.
     of the throughput tables.
 
 The script declares its dependencies inline (PEP 723), so
-[uv](https://docs.astral.sh/uv/) resolves them on the fly — nothing is installed into
-your project, and it runs in a throwaway environment. There are two ways to run it.
-
-**Fast path** — pipe it straight into uv, which reads the script from stdin, resolves
-the inline dependencies, and runs it:
+[uv](https://docs.astral.sh/uv/) runs it in a throwaway environment — nothing is
+installed into your project:
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/RogerThomas/jero/main/benchmarks/micro_bench.py | uv run -
 ```
 
 That executes a script fetched over the network — the full source is right below, so
-read it first if you'd rather trust your own eyes. To run it locally instead, save it as
-`micro_bench.py` and run `uv run micro_bench.py`. Either way, pin versions by editing the
-`dependencies` block, and tweak the apps or scenarios as you see fit.
+read it first if you'd rather. To run it locally, save it as `micro_bench.py` and
+`uv run micro_bench.py`; pin versions or tweak the scenarios by editing it.
 
 ```python
 --8<-- "benchmarks/micro_bench.py"

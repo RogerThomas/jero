@@ -61,7 +61,7 @@ The body is decoded straight into your `Struct` by msgspec. A malformed body →
 a well-formed body that fails the schema → **422**.
 
 A JSON body is **always** a `Struct`, never a raw `dict`. That's what gives it both
-validation and a schema for the coming OpenAPI spec.
+validation and a schema in the [OpenAPI spec](openapi.md).
 
 ## Raw body — `content`
 

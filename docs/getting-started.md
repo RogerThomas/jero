@@ -17,21 +17,10 @@ uv add "jero[granian]"
 
 ## Python version
 
-jero requires **Python 3.13 or newer**. Python 3.12 and earlier are not supported.
-
-The reason is generics. jero's response wrappers (and several other types) declare
-type-parameter *defaults*, like the optional typed-headers parameter `H`:
-
-```python
-class JSONResponse[T: Struct, H: Struct | None = None]: ...
-```
-
-The `= None` default on a type parameter is [PEP 696](https://peps.python.org/pep-0696/),
-which shipped in Python 3.13. The generic syntax itself
-([PEP 695](https://peps.python.org/pep-0695/)) arrived in 3.12, so 3.12 can parse
-`[T: Struct]` but not the `[H: Struct | None = None]` default. jero relies on those
-defaults throughout, so 3.13 is the current floor, and there are no current plans to
-lower it. If you have a need to run on an earlier version, please get in touch on
+jero requires **Python 3.13 or newer**. Its generics use type-parameter defaults
+([PEP 696](https://peps.python.org/pep-0696/), e.g.
+`JSONResponse[T: Struct, H: Struct | None = None]`), which shipped in 3.13. If you need
+an earlier version, get in touch on
 [GitHub Discussions](https://github.com/RogerThomas/jero/discussions).
 
 ## Your first app
@@ -86,12 +75,10 @@ curl localhost:8000/widgets/abc # -> { "id": "abc", "name": "widget-name" }
 That's the whole loop: a `Struct` for the URL slots (`path`), a `Struct` for the
 response, and a method name (`read_one`) that maps to `GET`.
 
-The `Struct` requirement is deliberate. JSON request bodies, JSON responses, query
-params, path params, headers, forms, auth users, and response headers all use typed
-contracts. That is what gives jero validation, fast msgspec serialization, startup
-errors for invalid wiring, and the source material for the [OpenAPI generator](guide/openapi.md).
-If a handler returns a raw `dict`, jero can't prove or document its shape, so it is a
-startup error.
+Everything that crosses the wire is a `Struct` — bodies, params, path slots, headers,
+forms, auth users. The `Struct` is what gives jero validation, fast serialization,
+startup checks, and the [OpenAPI spec](guide/openapi.md); a raw `dict` return is a
+startup error. [Philosophy](philosophy.md#struct-everywhere) has the full reasoning.
 
 ## The mental model
 
@@ -129,11 +116,8 @@ def test_read_one():
 ## Where next
 
 - [Resources & Endpoints](guide/resources.md) — the routing model and path templates.
-- [Complete example](guide/complete-example.md) — factory, service, auth, lifecycle,
-  resource methods, typed binding, and typed responses together.
 - [Request binding](guide/binding.md) — every way to get data into a handler.
-- [Responses & headers](guide/responses.md) — typed bodies, typed headers, status codes.
-- [Streaming](guide/streaming.md) — NDJSON, Server-Sent Events, and raw byte streams.
-- [Authentication](guide/auth.md) · [Forms & uploads](guide/forms.md) ·
-  [Wiring & lifecycle](guide/wiring.md) · [Testing](guide/testing.md) ·
-  [REST & error semantics](guide/rest.md).
+- [Complete example](guide/complete-example.md) — factory, auth, lifecycle, and typed
+  responses together.
+
+Everything else — streaming, forms, auth, errors, deployment — is in the Guide.

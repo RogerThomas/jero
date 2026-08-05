@@ -18,8 +18,8 @@ single app plays three roles at once:
 3. **A typed consumer of the public API.** Because `demo_app` uses jero exactly the way
    you would, it is type-checked alongside `./tests` by every major type checker.
 
-Keeping all three in one artifact is deliberate: it makes `demo_app` a **single source of
-truth** for what jero is and how it behaves.
+Keeping all three in one artifact makes `demo_app` a **single source of truth** for what
+jero is and how it behaves.
 
 ## Test only the public interface
 

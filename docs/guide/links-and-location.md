@@ -54,7 +54,7 @@ app = App()
 
 `POST /widgets` with `{"id": "w1"}` returns `201` and `Location: /widgets/w1`. URLs are
 **relative** by default — always RFC-valid and free of proxy-host ambiguity. See
-[Behind a proxy](#behind-a-proxy-x-forwarded-) below to emit absolute public URLs instead.
+[Behind a proxy](#behind-a-proxy) below to emit absolute public URLs instead.
 
 ## Links
 
@@ -114,7 +114,7 @@ root-relative path that picks up the app's URL base just like a reversed operati
 goes absolute under a configured proxy) — and **`from_url(url)`** — a fully-qualified URL
 used verbatim, never rewritten.
 
-## Loud and fast
+## Validated at construction
 
 `from_operation(Class.operation, path=...)` validates the `path` Struct **at construction**,
 introspected from the operation's own `path` annotation — so the wrong Struct fails the
@@ -129,36 +129,13 @@ Location.from_operation(WidgetResource.read_one, path=WrongPath(...))
 (A bare method reference can't carry the `path` type to pyrefly statically, so this is a
 hard *runtime* check at construction — immediate, not deferred to a served request.)
 
-## Behind a proxy (`X-Forwarded-*`)
+## Behind a proxy
 
-Relative URLs are correct for a directly-served app, but behind a reverse proxy or load
-balancer two things change: the client sees a different scheme/host than your app does,
-and the proxy may strip a path prefix. Reversed URLs become **absolute** when either of
-two environment variables is set (read once when the app is constructed — no code change):
-
-| Variable | Effect |
-| --- | --- |
-| `JERO_BASE_URL` | A static public origin (e.g. `https://api.example.com`, may include a prefix). Absolute against it, with no header trust — safest when your origin is fixed. |
-| `JERO_TRUST_FORWARDED` | Truthy (`1`/`true`/`yes`/`on`). Rebuild the origin **per request** from `X-Forwarded-Proto` / `-Host` / `-Port`, and restore the stripped path with `X-Forwarded-Prefix`. |
-
-They're **mutually exclusive** — setting both is a startup `WiringError` (one source for
-the base). With `JERO_TRUST_FORWARDED=1`, the same `create` above — for a request carrying
-`X-Forwarded-Proto: https`, `X-Forwarded-Host: api.example.com`, `X-Forwarded-Prefix: /api`
-— emits:
-
-```
-Location: https://api.example.com/api/widgets/w1
-```
-
-(`X-Forwarded-For` is the *client IP* — it never shapes a URL, so it plays no part here.)
-Operation, ref, and `from_path(...)` links are rewritten against the base; `from_url(...)`
-links are left exactly as you wrote them.
-
-Both default **off** (relative), and that matters for `JERO_TRUST_FORWARDED`: honoring
-`X-Forwarded-*` when you are *not* behind a trusted proxy lets any client spoof
-`X-Forwarded-Host` and poison your `Location` URLs. Setting it is your explicit statement
-that everything reaching the app comes through a proxy you control. `JERO_BASE_URL` has no
-such risk — it's a constant you set, never client input.
+Behind a reverse proxy you usually want **absolute** public URLs instead. Set
+`JERO_BASE_URL` (a static public origin) or `JERO_TRUST_FORWARDED` (rebuild the origin
+per request from `X-Forwarded-*`) and every reversed URL goes absolute — no code
+change. Details, and the trust warning that comes with forwarded headers, are on
+[Deployment](deployment.md#behind-a-reverse-proxy).
 
 ## Circular imports: the `ref` escape hatch
 
@@ -203,7 +180,7 @@ class App(BaseApp):
 app = App()
 ```
 
-The `ref` form trades away some safety, by design: the string can't carry the `params`
+The `ref` form trades away some safety: the string can't carry the `params`
 type to pyrefly, so its type check is deferred to resolution rather than construction, and
 a typo'd or unmounted ref surfaces when the response is sent rather than at startup. So
 **prefer `from_operation`** — reach for `ref` only to break a genuine import cycle (often,

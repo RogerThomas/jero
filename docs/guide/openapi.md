@@ -155,7 +155,7 @@ the same component name is a startup `WiringError`.
 ### Error responses
 
 jero returns errors as RFC 9457 Problem Details (`{"type", "title", "status", "docs?"}`,
-see [REST & error semantics](rest.md)) with consistent statuses, so the generator
+see [Errors](errors.md)) with consistent statuses, so the generator
 documents the errors an operation can *actually* produce — no false entries:
 
 | Status | Documented when the operation… |
@@ -264,16 +264,21 @@ Problem family's `title`; a `StructHTTPError`'s `description`), and the **body s
 finally says *which* codes an operation emits (clients dispatch on `type`), plus the
 `params` schema for parameterized errors. A `StructHTTPError` documents its composed
 wire model — its `consts` and status appear as enum consts —
-and with an [error body adapter](rest.md#house-wide-error-format) registered, the
+and with an [error body adapter](errors.md#house-wide-error-format) registered, the
 Problem family — derived responses included — documents the adapter's body instead.
 
-`exceptions` also lives on `EndpointMeta` / `ResourceMeta`; the class-level entries
-*extend* the operation's (both remain raiseable), unlike `responses` where the specific
-level overrides. Several declared errors sharing a status merge into one entry with a
-`oneOf` of their bodies. Precedence per status: derived responses < declared
-`exceptions` < explicit `responses` — a `ResponseSpec` always has the last word.
-Entries are validated at wiring: anything that isn't a concrete jero error class is a
-startup `WiringError`.
+`exceptions` also lives on `EndpointMeta` / `ResourceMeta`. How the three response
+sources combine, per status:
+
+| Source | Class level vs operation level | Precedence per status |
+| :-- | :-- | :-- |
+| explicit `responses` (`ResponseSpec`) | operation **overrides** class | highest — always the last word |
+| declared `exceptions` (error classes) | class **extends** operation (both remain raiseable) | middle |
+| derived (from the operation's sources) | — | baseline |
+
+Several declared errors sharing a status merge into one entry with a `oneOf` of their
+bodies. Entries are validated at wiring: anything that isn't a concrete jero error
+class is a startup `WiringError`.
 
 **Tags** are the groups an operation belongs to. A `meta` tag entry is either a bare
 `str` (the tag name — this is the OpenAPI operation-tag shape) or a `Tag` to define that
@@ -289,8 +294,11 @@ meta_delete=OperationMeta(tags=("danger",)),             # tuple -> ["danger"]  
 meta_read_one=OperationMeta(operation_id="getWidget"),   # no tags -> inherits ["widgets"]
 ```
 
-A `list` extends the class tags (union, de-duplicated, order preserved); a non-empty
-`tuple` replaces them; the default inherits.
+| `meta_<op>.tags` | Result |
+| :-- | :-- |
+| not set | inherits the class tags |
+| a `list` | **extends** them (union, de-duplicated, order preserved) |
+| a non-empty `tuple` | **replaces** them |
 
 ### Tag descriptions and order
 
@@ -386,18 +394,12 @@ self._include_openapi(
 
 ### Favicon
 
-Without it, the docs page has no icon and `/favicon.ico` 404s. `favicon` takes either:
-
-- **A `Path`** (the primary case): the file is read **once at wiring** — a missing or
-  unreadable file, or a suffix other than `.ico`/`.png`/`.svg`, is a startup
-  `WiringError` — and served as a precomputed response at `/favicon.ico`. No runtime
-  file I/O, no static-file subsystem. The default docs page gets
-  `<link rel="icon" href="/favicon.ico">`.
-- **A `str`**: treated as a URL (a `data:` URI works too) and emitted verbatim in the
-  `<link>`; nothing is served.
-
-Like the spec routes, `/favicon.ico` never appears in the generated document. A custom
-`docs_html` page is never modified — reference the favicon yourself there.
+Without it, the docs page has no icon and `/favicon.ico` 404s. `favicon` takes a
+`Path` — read **once at wiring** (a missing or unreadable file, or a suffix other than
+`.ico`/`.png`/`.svg`, is a `WiringError`) and served precomputed at `/favicon.ico` — or
+a `str` URL (`data:` URIs work), emitted verbatim in the `<link>` with nothing served.
+Like the spec routes, `/favicon.ico` never appears in the generated document, and a
+custom `docs_html` page is never modified — reference the favicon yourself there.
 
 At startup jero logs where the docs are served (at `INFO` on the `jero` logger):
 
@@ -405,11 +407,10 @@ At startup jero logs where the docs are served (at `INFO` on the `jero` logger):
 [INFO] jero: Serving API docs at http://127.0.0.1:8000/docs
 ```
 
-jero is the ASGI app, not the server, so it doesn't know the bound host/port — the line
-is a full, clickable URL only when [`JERO_BASE_URL`](wiring.md) names the public origin;
-otherwise it's the relative path (`/docs`), and your server prints its own `Listening
-at …` line with the host. With the UI disabled (`docs_path=None`) it points at the spec
-instead.
+The line is a full, clickable URL when
+[`JERO_BASE_URL`](deployment.md#behind-a-reverse-proxy) names the public origin;
+otherwise it's the relative path (jero doesn't know the server's bound host). With the
+UI disabled it points at the spec instead.
 
 The `demo_app/` package serves a live spec — wire it up, open `/docs`, and browse the
 widgets API in Scalar.

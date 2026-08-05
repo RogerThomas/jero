@@ -8,10 +8,6 @@ Python web development forward. jero is not a rejection of that work. It is a di
 set of bets: fewer extension points, fewer runtime decisions, stronger static
 contracts, and a narrower idea of what a JSON API framework should be.
 
-The short version: jero gives you one framework answer to common API questions. Don't
-fight the framework. Trust the shape for a while, build something real, and see whether
-the tradeoff pays for itself.
-
 ## No decorators, no DI container
 
 Route decorators are the common default, and what most frameworks reach for:
@@ -22,19 +18,21 @@ async def read_widget(widget_id: str) -> Widget:
     ...
 ```
 
-For a single handler this reads cleanly: path, verb, and function sit together. But it
-carries tradeoffs, and they surface not in any one route but across a whole API: in how
-operations are grouped, and above all in how handlers get their dependencies. A plain
-function carries no state, so with no `self` to hold what a
-handler depends on (a database pool, an HTTP client, a service etc.), those dependencies must
-arrive some other way. There are only two: module-level globals (Flask's `current_app` /
-`g`), or a framework-specific dependency-injection system (FastAPI's
-[`Depends`](https://fastapi.tiangolo.com/tutorial/dependencies/), Litestar's
-[`Provide`](https://docs.litestar.dev/latest/usage/dependency-injection.html), to name but
-a few). Grouping
-is loose for the same reason: the operations on one collection are separate functions
-sharing a path prefix, but nothing *is* the collection. A router to group routes and a DI
-layer to feed them are largely recovering what a plain class gives for free.
+For a single handler this reads cleanly: path, verb, and function sit together. The
+tradeoffs surface across a whole API, and the deepest one is dependencies. A plain
+function has no `self` to hold what a handler depends on (a database pool, an HTTP
+client, a service), so those dependencies must arrive some other way. There are only
+two:
+
+- module-level globals (Flask's `current_app` / `g`), or
+- a framework-specific dependency-injection system (FastAPI's
+  [`Depends`](https://fastapi.tiangolo.com/tutorial/dependencies/), Litestar's
+  [`Provide`](https://docs.litestar.dev/latest/usage/dependency-injection.html)).
+
+Grouping is loose for the same reason: the operations on one collection are separate
+functions sharing a path prefix, but nothing *is* the collection. A router to group
+routes and a DI layer to feed them are largely recovering what a plain class gives for
+free.
 
 jero starts from that class. A route is a `Resource` for a REST collection or an
 `Endpoint` for a one-off route; the path lives on the class, method names carry the HTTP
@@ -66,26 +64,22 @@ The framework adds one thing plain Python does not: lifecycle. Enter a resource 
 be opened and closed with `_enter` or `_aenter`, and the app closes it in reverse order at
 shutdown; for larger apps a `BaseFactory` groups construction in the same explicit style.
 
-None of this makes decorators wrong. They are lighter for a handful of one-off routes.
-jero takes the other side: for a typed, REST-shaped JSON API, a class can be the better
-unit of design, and it doubles as a stable thing the framework attaches to: a shape to
-validate at startup, the target for reverse-routed `Location` / `Link` headers, and the
-anchor for OpenAPI generation.
+Decorators are lighter for a handful of one-off routes. For a typed, REST-shaped JSON
+API, the class is the better unit of design, and it doubles as a stable thing the
+framework attaches to: a shape to validate at startup, the target for reverse-routed
+`Location` / `Link` headers, and the anchor for OpenAPI generation.
 
 ## msgspec first
 
 jero is built on msgspec for performance.
 
-The framework's hot path is intentionally small: route lookup, msgspec decode, handler
-call, msgspec encode. msgspec's `Struct` types give jero fast validation and
-serialization without translating between separate framework models and wire models.
-That matters because JSON APIs spend a lot of time turning bytes into objects and
-objects back into bytes.
+The hot path is small: route lookup, msgspec decode, handler call, msgspec encode.
+msgspec's `Struct` types give jero fast validation and serialization without
+translating between separate framework models and wire models. That matters because
+JSON APIs spend a lot of time turning bytes into objects and objects back into bytes.
 
-Pydantic is excellent software and has had an enormous influence on Python API
-development. jero makes a different bet: if the framework is going to be strict,
-typed, and JSON-focused, msgspec is the better foundation for the performance profile
-jero is trying to hit.
+Pydantic shaped modern Python API development. jero bets differently: for a strict,
+typed, JSON-focused framework, msgspec is the better foundation.
 
 ## Struct everywhere
 
@@ -101,7 +95,7 @@ validation, serialization, startup checks, and the OpenAPI generator. A raw
 `dict` does not carry enough information. It may be convenient in the moment, but it
 turns the framework blind at exactly the boundary where the contract matters most.
 
-The rule is intentionally strict. JSON is typed or it is rejected at startup.
+JSON is typed or it is rejected at startup.
 
 ## Startup validation
 
@@ -145,7 +139,7 @@ enough for the framework to enforce at startup.
 
 Less freedom, but more shape. jero is comfortable with that tradeoff.
 
-## Opinionated by design
+## Opinionated
 
 Opinionated does not mean "arbitrary." It means the framework has an answer.
 
@@ -179,4 +173,4 @@ points and let every project invent a local style.
 It is not trying to be the most flexible Python web toolkit. It is not trying to make
 dynamic JSON blobs feel effortless. It is not trying to hide Python behind a container.
 
-jero is narrow on purpose. That is the point.
+jero is narrow. That is the point.

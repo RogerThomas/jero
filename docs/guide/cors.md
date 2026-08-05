@@ -23,18 +23,6 @@ Everything is validated loud at startup: `allow_credentials=True` with `"*"` is
 spec-forbidden and a `WiringError`, as are malformed origins (`https://app.example/` is
 a URL, not an origin) and unknown methods.
 
-## What it costs
-
-Which tier a policy compiles to depends only on `allow_origins`:
-
-| policy | per-request cost |
-| :-- | :-- |
-| `allow_origins="*"` | zero — constant pairs baked into each covered route's header block at wiring |
-| an origin tuple | one header scan + a memoized verdict per origin (the first sighting pays the lookup + echo build), plus a constant `Vary: Origin` pair |
-
-Preflights (`OPTIONS` with `Access-Control-Request-Method`) ride the existing cold
-OPTIONS branch and never touch the hot path.
-
 ## A complete example
 
 ```python
@@ -126,6 +114,18 @@ is pure opt-in, and includes can still opt in individually with their own `cors=
 - **The docs routes are covered too.** `/openapi.json`, `/docs`, and the favicon
   carry the app-default policy (and global middleware headers), so a hosted tool on
   another origin can fetch the spec.
+
+## What it costs
+
+Which tier a policy compiles to depends only on `allow_origins`:
+
+| policy | per-request cost |
+| :-- | :-- |
+| `allow_origins="*"` | zero — constant pairs baked into each covered route's header block at wiring |
+| an origin tuple | one header scan + a memoized verdict per origin (the first sighting pays the lookup + echo build), plus a constant `Vary: Origin` pair |
+
+Preflights (`OPTIONS` with `Access-Control-Request-Method`) ride the existing cold
+OPTIONS branch and never touch the hot path.
 
 CORS is the first consumer of the compiled middleware machinery — the
 [middleware guide](middleware.md) shows the same tiers as a user-facing protocol,

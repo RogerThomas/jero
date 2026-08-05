@@ -13,31 +13,45 @@ nav = [
     { "Getting Started" = "getting-started.md" },
     { "Philosophy" = "philosophy.md" },
     { "Guide" = [
-        { "Resources & Endpoints" = "guide/resources.md" },
-        { "Complete example" = "guide/complete-example.md" },
-        { "Request binding" = "guide/binding.md" },
-        { "Responses & headers" = "guide/responses.md" },
-        { "Links & Location" = "guide/links-and-location.md" },
-        { "Streaming" = "guide/streaming.md" },
-        { "Background tasks" = "guide/background-tasks.md" },
-        { "Forms & uploads" = "guide/forms.md" },
-        { "Authentication" = "guide/auth.md" },
-        { "CORS" = "guide/cors.md" },
-        { "Middleware" = "guide/middleware.md" },
-        { "OpenAPI & docs" = "guide/openapi.md" },
-        { "Wiring & lifecycle" = "guide/wiring.md" },
-        { "Testing" = "guide/testing.md" },
-        { "Testing approach" = "guide/testing-approach.md" },
-        { "REST & error semantics" = "guide/rest.md" },
+        { "Core" = [
+            { "Resources & Endpoints" = "guide/resources.md" },
+            { "Complete example" = "guide/complete-example.md" },
+            { "Project structure" = "guide/project-structure.md" },
+            { "Request binding" = "guide/binding.md" },
+            { "Responses & headers" = "guide/responses.md" },
+            { "Errors" = "guide/errors.md" },
+            { "REST semantics" = "guide/rest.md" },
+        ] },
+        { "Features" = [
+            { "Streaming" = "guide/streaming.md" },
+            { "Background tasks" = "guide/background-tasks.md" },
+            { "Forms & uploads" = "guide/forms.md" },
+            { "Authentication" = "guide/auth.md" },
+            { "Links & Location" = "guide/links-and-location.md" },
+            { "CORS" = "guide/cors.md" },
+            { "Middleware" = "guide/middleware.md" },
+        ] },
+        { "Operating" = [
+            { "Wiring & lifecycle" = "guide/wiring.md" },
+            { "OpenAPI & docs" = "guide/openapi.md" },
+            { "Testing" = "guide/testing.md" },
+            { "Deployment" = "guide/deployment.md" },
+        ] },
     ] },
     { "Comparison" = "comparison.md" },
+    { "Migrating from FastAPI" = "migration-from-fastapi.md" },
     { "Performance" = "performance.md" },
+    { "FAQ" = "faq.md" },
     { "API Reference" = "modules.md" },
-    { "AI usage" = "note-on-ai-usage.md" },
+    { "About" = [
+        { "Testing approach" = "guide/testing-approach.md" },
+        { "AI usage" = "note-on-ai-usage.md" },
+    ] },
 ]
 
 [project.plugins.mkdocstrings.handlers.python]
 paths = ["jero"]
+options.filters = ["!^__"]
 
 [project.theme]
 language = "en"

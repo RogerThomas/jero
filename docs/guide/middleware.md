@@ -1,29 +1,54 @@
 # Middleware
 
-The classic ASGI middleware shape — an onion of app wrappers, each an async callable
-wrapping `send` — costs a coroutine plus allocations per layer per request, on every
-request, whether or not the layer applies. jero rejects that shape outright. Measured on
-jero's hot path, one onion layer that does nothing but append a single constant CORS
-pair already costs about **1.3×** — a third of the entire per-request budget, before it
-does anything a real middleware does.
+A jero middleware is a **typed, hand-wired object whose hooks are introspected and
+compiled at wiring** (the same pattern as
+[custom exception handlers](errors.md#custom-exception-handlers)): no base class, no
+decorator. It can do three things:
 
-Instead, a jero middleware is a **typed, hand-wired object whose hooks are introspected
-and compiled at wiring** (the same pattern as
-[custom exception handlers](rest.md#custom-exception-handlers)): no base class, no
-decorator. Wiring compiles only what a middleware actually defines, and each hook kind
-has a fixed, known cost.
+- **`intercept`** — answer a request before routing and auth (gates, preflights).
+- **`response_headers`** — add headers to covered responses, constant or computed.
+- **`observe`** — see the outcome after the response starts (timing, audit).
 
-## The tiers and what they cost
+Wiring compiles only what a middleware actually defines, and each hook kind has a
+fixed, known cost. Routes no middleware covers are not wrapped, not branched into, not
+touched — the uncovered request path is byte-for-byte the one an app without
+middleware runs.
 
-| hook | when it runs | per-request cost |
-| :-- | :-- | :-- |
-| `response_headers` (constant attribute) | never — baked into route header blocks at wiring | zero |
-| `intercept` + `intercept_methods` | only on the declared verbs, pre-auth | zero off-scope; one table hit + scan on-scope |
-| `response_headers(...)` (method) | every covered response, as it leaves | one scan + call + merge |
-| `observe(...)` | after the response starts | request view + one call |
+## A first middleware: request timing
 
-Routes no middleware covers are not wrapped, not branched into, not touched — the
-uncovered request path is byte-for-byte the one an app without middleware runs.
+```python
+import logging
+
+from jero import BaseApp, Endpoint, Request, Struct
+
+logger = logging.getLogger("app.timing")
+
+
+class Status(Struct):
+    ok: bool
+
+
+class TimingMiddleware:
+    def observe(self, request: Request, status: int, duration: float) -> None:
+        logger.info("%s %s -> %d in %.1fms", request.method, request.path, status, duration * 1e3)
+
+
+class HealthEndpoint(Endpoint, path="/healthz"):
+    def get(self) -> Status:
+        return Status(ok=True)
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        self._include_middleware(TimingMiddleware())
+        self._include_endpoint(HealthEndpoint())
+
+
+app = App()
+```
+
+`duration` is measured from dispatch to response-start. `observe` may be sync or async;
+either way it runs after the response has left, so it never adds latency a caller sees.
 
 ## The protocol
 
@@ -72,14 +97,29 @@ compiles a scanner for just the keys your fields name. Annotate a bare `Request`
 no headers at all. `received_at` is `time.perf_counter()` at dispatch, stamped on routes
 a dynamic hook covers.
 
-**The capability boundary is deliberate.** Middleware can *answer* a request
+**The capability boundary:** middleware can *answer* a request
 (`intercept`), *add response headers* (`response_headers`), and *watch* (`observe`). It
 can never rewrite a handler's body or status: that requires buffering or wrapping every
 response — the onion price — and belongs in granian or your reverse proxy (compression,
-caching, ETags). jero refuses it on principle rather than covering it slowly. Passing
+caching, ETags). jero refuses it rather than covering it slowly. Passing
 state from middleware to handlers (`request.state.tenant`) is also not offered: the
 idiom is jero's existing typed sources — bind the header in the handler, or carry it on
 the auth `user`.
+
+## The tiers and what they cost
+
+| hook | when it runs | per-request cost |
+| :-- | :-- | :-- |
+| `response_headers` (constant attribute) | never — baked into route header blocks at wiring | zero |
+| `intercept` + `intercept_methods` | only on the declared verbs, pre-auth | zero off-scope; one table hit + scan on-scope |
+| `response_headers(...)` (method) | every covered response, as it leaves | one scan + call + merge |
+| `observe(...)` | after the response starts | request view + one call |
+
+The tiers order the design: reach for the constant tier when a value is fixed, scope
+intercepts to the verbs that need them, and treat the method tier as the last resort it
+is. Every cost is opt-in and per-covered-route — uncovered routes pay nothing.
+[Measured numbers](../performance.md#what-middleware-and-cors-cost) are on the
+Performance page.
 
 ## Registration: global and per-include
 
@@ -157,43 +197,7 @@ exceptions are logged and swallowed. Middleware can never emit `content-length` 
 the same header name fail wiring loud; dynamic pairs can't be checked and append per
 HTTP semantics.
 
-## A complete example: request timing
-
-```python
-import logging
-
-from jero import BaseApp, Endpoint, Request, Struct
-
-logger = logging.getLogger("app.timing")
-
-
-class Status(Struct):
-    ok: bool
-
-
-class TimingMiddleware:
-    def observe(self, request: Request, status: int, duration: float) -> None:
-        logger.info("%s %s -> %d in %.1fms", request.method, request.path, status, duration * 1e3)
-
-
-class HealthEndpoint(Endpoint, path="/healthz"):
-    def get(self) -> Status:
-        return Status(ok=True)
-
-
-class App(BaseApp):
-    async def wire(self) -> None:
-        self._include_middleware(TimingMiddleware())
-        self._include_endpoint(HealthEndpoint())
-
-
-app = App()
-```
-
-`duration` is measured from dispatch to response-start. `observe` may be sync or async;
-either way it runs after the response has left, so it never adds latency a caller sees.
-
-## A complete example: an interception gate
+## An interception gate
 
 An admin include gated on a header, scoped at the mount — the rest of the app never
 pays for it:
@@ -309,21 +313,14 @@ built-in (`self._include_cors(CORS())`): it also handles origin allow-lists, per
 preflight policy, and validation. But when you need a cross-cutting behavior jero
 doesn't ship, this is the shape it takes.
 
-## Measured cost
+## Why not onion middleware
 
-From the in-process hot-path benchmark (`bench.py`'s harness; POST echo, ~1.3µs/request
-baseline — in-process numbers amplify framework deltas relative to a real server, where
-socket I/O dominates):
-
-| configuration | relative cost |
-| :-- | :-- |
-| no middleware, no CORS | 1.00× |
-| wildcard CORS / constant `response_headers` | ~1.02× |
-| allow-list CORS | ~1.15× |
-| on-scope `intercept` (falling through) | ~1.4× |
-| `observe` | ~1.6× |
-| `response_headers` method | ~1.9× |
-
-The tiers order the design: reach for the constant tier when a value is fixed, scope
-intercepts to the verbs that need them, and treat the method tier as the last resort it
-is. Every cost above is opt-in and per-covered-route — uncovered routes stay at 1.00×.
+The classic ASGI middleware shape — an onion of app wrappers, each an async callable
+wrapping `send` — costs a coroutine plus allocations per layer per request, on every
+request, whether or not the layer applies. Measured on jero's hot path, one onion layer
+that does nothing but append a single constant CORS pair already costs about **1.3×** —
+a third of the entire per-request budget, before it does anything a real middleware
+does. jero rejects that shape: the compiled tiers above have a floor of zero and a
+known ceiling, and only covered routes pay. The
+[measured per-tier numbers](../performance.md#what-middleware-and-cors-cost) are on the
+Performance page.

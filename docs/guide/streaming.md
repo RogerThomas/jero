@@ -2,7 +2,7 @@
 
 For long or open-ended responses, return one of three streaming wrappers instead of a
 buffered body. Each is typed end-to-end — the generic `T` carries the per-item schema
-(which the OpenAPI work will read), and an optional `H` carries typed response headers
+(documented in the [OpenAPI spec](openapi.md)), and an optional `H` carries typed response headers
 just like the [buffered responses](responses.md).
 
 | Wrapper                          | Content type            | Yields                       |
@@ -102,12 +102,10 @@ The wire output is one tagged line per item:
 {"type": "FooterChunk", "total_chunks": 2}
 ```
 
-Strictly, the tags are only *required* when an OpenAPI document is built — msgspec
-must be able to tell the members apart to schema the union, so an untagged union of
-several Structs fails loud at startup once `_include_openapi` is wired. Without a spec,
-an untagged union streams fine. Tag them anyway: without a discriminator, clients have
-to guess each line's shape from its fields, and the tag is what makes the stream
-self-describing and cleanly decodable on the wire.
+Tag every union member. The tag is what makes the stream self-describing — without a
+discriminator, clients have to guess each line's shape from its fields — and once
+`_include_openapi` is wired, an untagged union of several Structs fails loud at startup
+(msgspec needs the discriminator to schema the union).
 
 The same union form works for `SSEResponse[T]` and `JSONResponse[T]`.
 
@@ -241,8 +239,8 @@ Hit `GET /movies/export` and the worker logs `cursor opened` before the rows str
 `cursor closed` once it's done — the teardown half of the one-yield generator running for
 real.
 
-This is the one blessed way to scope a resource to a stream: a simple stream if you
-don't need lifecycle, a one-yield generator if you do.
+That's the whole model: a plain stream if you don't need lifecycle, a one-yield
+generator if you do.
 
 ## Disconnect handling
 

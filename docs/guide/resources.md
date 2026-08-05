@@ -147,18 +147,13 @@ parent resource. State-transition actions (*cancel*, *archive*) often fit even m
 simply as an `update_partial` flipping a status field. Fall back to an `Endpoint`
 only when no noun works — a webhook receiver, a health probe, a legacy path.
 
-## Declaring the path
-
-A route declares its path **on the class**, at definition time:
-
-```python
-class WidgetResource(Resource, path="/widgets"):
-    ...
-```
-
-jero reads it once at wiring, so registering is just `self._include_resource(WidgetResource())` — no path passed at the call site. The class is the **single source of truth** for its path, which is exactly what URL reversal ([`Link` / `Location`](links-and-location.md)) and the OpenAPI work read off it.
-
 ## Path templates
+
+A route declares its path **on the class**, at definition time. jero reads it once at
+wiring — no path passed at the call site — so the class is the **single source of
+truth** for its path, which is exactly what URL reversal
+([`Link` / `Location`](links-and-location.md)) and the [OpenAPI generator](openapi.md)
+read off it.
 
 The mount path is a template: static segments plus `{slot}` params in `snake_case`.
 A handler binds the slots through a `path` Struct whose fields must cover **every**

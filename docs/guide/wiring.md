@@ -1,9 +1,8 @@
 # Wiring & lifecycle
 
-jero has **no DI container** — and that's deliberate, not a gap. You hand-wire classes
-in `wire`; a dependency is just a constructor argument. The one thing plain Python
-doesn't give you for free — resource *lifecycle* — is the only thing the framework
-adds.
+jero has **no DI container**. You hand-wire classes in `wire`; a dependency is just a
+constructor argument. The one thing plain Python doesn't give you for free — resource
+*lifecycle* — is the only thing the framework adds.
 
 ## `wire`
 
@@ -75,7 +74,7 @@ token map, say) can live directly in `wire`.
 ### Standalone use
 
 A factory isn't tied to an app. For scripts, cron jobs, and notebooks,
-`Factory.open()` is the blessed entry point: it creates the exit-stack pair, builds
+`Factory.open()` is the entry point: it creates the exit-stack pair, builds
 the factory on them exactly as an app does at startup, and unwinds everything on
 exit — even if the block raises:
 

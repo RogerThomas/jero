@@ -1,7 +1,7 @@
 # Responses & headers
 
 What a handler returns is part of its type signature, so the response schema is known
-at startup (and to the coming OpenAPI spec). There are two levels: return a plain
+at startup (and to the [OpenAPI spec](openapi.md)). There are two levels: return a plain
 value when you just want a body, or a response wrapper when you want to control
 headers or status.
 
@@ -245,21 +245,17 @@ class App(BaseApp):
 app = App()
 ```
 
-All three document one 200 whose schema refs `Widget`, with `cache-control` in `headers`. The
-name you chose appears nowhere in the spec, so pick whichever reads better in your code:
-an alias when you only want the name, a subclass when it should also carry defaults. Aliases
-of aliases resolve, and either form works as a union member (`WidgetResponse | NoContent`).
+All three document one 200 whose schema refs `Widget`, with `cache-control` in `headers` —
+the name you chose appears nowhere in the spec. Pick whichever reads better: an alias when
+you only want the name, a subclass when it should also carry defaults. Aliases of aliases
+resolve, either form works as a union member (`WidgetResponse | NoContent`), and a subclass
+may stay generic like the alias (`class Envelope[T: Struct](JSONResponse[T, CacheHeaders])`,
+written `-> Envelope[Widget]`).
 
-A subclass may stay generic the way the alias does — `class Envelope[T: Struct](JSONResponse[T,
-CacheHeaders])`, written `-> Envelope[Widget]`. It is classified by the wrapper it derives from,
-so it takes that wrapper's status and sender, and both type arguments resolve: the one the
-annotation supplies and the one the subclass pins.
-
-A wrapper still has to *say* what its body is: `-> JSONResponse` with no `[Widget]` anywhere in
-the chain fails at startup with `must name its body type`, since there would be no schema to
-derive. Like the other spec-shape checks below, it runs when `_include_openapi` is enabled, which
-is where the schema is actually needed. `SSEResponse` is the exception, its `T` defaulting
-to `str`.
+One rule: a wrapper must *say* what its body is. `-> JSONResponse` with no `[Widget]`
+anywhere in the chain fails at startup with `must name its body type` — checked when
+`_include_openapi` is wired, like the other spec-shape checks below. `SSEResponse` is the
+exception, its `T` defaulting to `str`.
 
 ## Dynamic success status
 
@@ -319,11 +315,16 @@ has no body. Reach for a wrapper on a branch only when that branch needs one —
 Note what the 204 branch is *not* for. A widget that doesn't exist is a `404`, which
 `read_one` already derives from having a `path` source — returning 204 for it would document
 two statuses meaning the same thing. A union of success wrappers is for outcomes the caller
-asked for; failures stay [errors you raise](rest.md).
+asked for; failures stay [errors you raise](errors.md).
 
 Each member's status is the one it would have on its own: a plain `Struct`,
 `list[Struct]`, `bytes`, `JSONResponse`, or `BytesResponse` takes the verb's default
 (201 for `create`, else 200); `NoContent` / `Created` / `Accepted` take their own.
+
+## Union reference
+
+The precise merge and rejection rules, for when a union gets more ambitious than the
+common case above.
 
 ### Members that share a status
 
@@ -424,5 +425,6 @@ when `_include_openapi` is enabled — like the streaming item-type checks.
 ## Errors
 
 Raise a typed `HTTPError` subclass from a handler to short-circuit with a Problem
-Details response. See [REST & error semantics](rest.md) for static and parameterized
-errors, custom exception handlers, and the full status-code map.
+Details response. See [Errors](errors.md) for static and parameterized errors, custom
+error bodies, and exception handlers, and [REST semantics](rest.md) for the full
+status-code map.

@@ -15,46 +15,19 @@ uv add jero
 
 ## What is jero?
 
-jero is an AI-powered ([a note on AI usage](note-on-ai-usage.md)), [msgspec](https://msgspec.dev/)-first [ASGI](https://asgi.readthedocs.io/en/latest/) framework where your type hints are the API contract.
+jero is a [msgspec](https://msgspec.dev/)-first [ASGI](https://asgi.readthedocs.io/en/latest/)
+framework where your type hints are the API contract ([a note on AI usage](note-on-ai-usage.md)).
 Routing, binding, validation, serialization, auth checks, and [OpenAPI
 generation](guide/openapi.md) all derive from statically declared types — introspected
 once, at startup — so the request path stays minimal: dict lookup → msgspec decode →
 handler call → encode.
 
 There are no route decorators and no dependency-injection container. Routes are plain
-classes (`Resource` for REST collections, `Endpoint` for one-off routes); the method
-name *is* the HTTP operation, and dependencies are ordinary constructor arguments you
-wire by hand.
-
-Almost everything that flows in and out of jero is a
-msgspec `Struct`: request and response bodies,
-headers, path params, query params, and multipart forms alike. You don't pass or return
-raw `dict`s; the `Struct` is what gives jero validation, serialization, precise startup
-checks, [schema generation](guide/openapi.md), and (most importantly) maximum performance
-from msgspec's compiled codecs (whose [benchmarks](https://msgspec.dev/benchmarks) are
-almost hard to believe).
-
-## Core principles
-
-jero is opinionated on purpose. It makes one bet: being aggressively prescriptive,
-rather than flexible, is how a framework can be *both* extremely fast *and* a joy to
-build on.
-
-| Principle          | What it means |
-| ------------------ | ------------- |
-| **Speed**          | Introspection happens once, at startup. The per-request path stays minimal and predictable. |
-| **Opinionated&nbsp;DX** | One blessed way to do each thing, encoded so you can't get it wrong. Contracts fail loud at startup with a precise `WiringError`, never quietly at runtime. |
-| **Strict typing**  | Fully static under pyrefly, with the public interface checked by every major type checker. Types are the contract, the validation source, and the source of the [OpenAPI spec](guide/openapi.md). |
-
-jero leans hard into modern Python typing: [PEP 695](https://peps.python.org/pep-0695) generics
-(`JSONResponse[Body, Headers]`, `BaseApp[Factory]`,
-`NDJSONStreamingResponse[Movie]`), bounded type parameters with defaults, generic
-inheritance, and `Protocol`s, so a handler's signature *is* its schema. If you don't
-like typing, this isn't your framework.
-
-For the reasoning behind those choices, read [Philosophy](philosophy.md). For a
-feature-by-feature contrast with other Python frameworks, read
-[Comparison](comparison.md).
+classes (`Resource` for REST collections, `Endpoint` for one-off routes), the method
+name *is* the HTTP operation, and dependencies are ordinary constructor arguments.
+Everything that crosses the wire — bodies, headers, path and query params, forms — is a
+msgspec `Struct`: one contract driving validation, serialization, startup checks,
+schema generation, and msgspec's compiled-codec performance.
 
 ## Quickstart
 
@@ -96,34 +69,49 @@ Run it under any ASGI server, e.g. [granian](https://github.com/emmett-framework
 granian --interface asgi myapp:app
 ```
 
+In our four-scenario benchmark against seven frameworks — Python, Go, and Bun — jero is
+the **fastest Python framework in every one**, methodology included. [→ Performance](performance.md)
+
 New here? Start with [Getting Started](getting-started.md).
+
+## Core principles
+
+jero makes one bet: being aggressively prescriptive, rather than flexible, is how a
+framework can be *both* extremely fast *and* a joy to build on.
+
+| Principle          | What it means |
+| ------------------ | ------------- |
+| **Speed**          | Introspection happens once, at startup. The request path stays minimal and predictable. |
+| **Opinionated&nbsp;DX** | One way to do each thing. Contracts fail loud at startup with a precise `WiringError`, never quietly at runtime. |
+| **Strict typing**  | Types are the contract, the validation source, and the [OpenAPI](guide/openapi.md) source — and the public interface is checked by every major type checker. |
+
+jero leans hard into modern Python typing: [PEP 695](https://peps.python.org/pep-0695)
+generics (`JSONResponse[Body, Headers]`, `NDJSONStreamingResponse[Movie]`), bounded
+type parameters with defaults, and `Protocol`s, so a handler's signature *is* its
+schema. If you don't like typing, this isn't your framework.
+
+For the reasoning behind those choices, read [Philosophy](philosophy.md). For a
+feature-by-feature contrast with other Python frameworks, read
+[Comparison](comparison.md).
 
 ## Highlights
 
-- **Resources & Endpoints** — CRUD by method name, or bare verbs for one-off routes.
-  [→](guide/resources.md)
-- **Bind by name, validated by msgspec** — `json`, `params`, `path`, `headers`, `form`,
-  `user`, plus raw `content` / `raw_headers`. [→](guide/binding.md)
-- **Typed responses *and* typed headers** — `JSONResponse[Body, Headers]` keeps both
-  schemas; `status_code` overrides the status; `raw_headers` is the escape hatch for
-  cookies and exotic names. [→](guide/responses.md)
-- **Streaming, typed end-to-end** — NDJSON, Server-Sent Events, and raw byte streams,
-  with lifecycle teardown and disconnect handling handled for you. [→](guide/streaming.md)
-- **Multipart forms & uploads** — typed parts, file uploads, per-part headers.
-  [→](guide/forms.md)
-- **Background tasks** — drop a typed `Struct` on an in-process queue; a worker dispatches
-  it to the handler registered for its type, drained at shutdown. [→](guide/background-tasks.md)
-- **Auth that's checked at startup** — the `user` type is verified against the
-  authenticator before the app serves a request; return `User | None` from it and anonymous
-  callers bind `user=None` while bad credentials are still a 401. [→](guide/auth.md)
-- **Lifecycle without a DI container** — hand-wire in `wire`, open resources on exit
-  stacks, group construction in a `BaseFactory`. [→](guide/wiring.md)
-- **REST semantics for free** — 404/400/422/401/405, auto `HEAD` + `OPTIONS`, camelCase
-  on the wire. [→](guide/rest.md)
+- **Startup validation** — invalid apps can't boot: every contract is checked at wiring
+  with a precise `WiringError`. [→](philosophy.md#startup-validation)
+- **Typed responses *and* headers** — `JSONResponse[Body, Headers]` keeps both schemas;
+  unions of responses document every status. [→](guide/responses.md)
+- **Typed streaming** — NDJSON, SSE, and raw bytes, with lifecycle teardown and
+  disconnect handling done for you. [→](guide/streaming.md)
+- **Auth checked at startup** — the `user` type is verified against the authenticator
+  before a single request is served. [→](guide/auth.md)
+- **Reverse routing** — `Location` / `Link` headers built from the route class,
+  validated at construction. [→](guide/links-and-location.md)
+- **Compiled middleware & CORS** — fixed per-tier costs, zero on uncovered routes.
+  [→](guide/middleware.md)
+- **OpenAPI from your types** — a 3.1 spec plus Scalar docs UI, no duplicate schema
+  definitions. [→](guide/openapi.md)
 - **In-process `TestClient`** — sync, no socket, full lifespan, streaming support.
   [→](guide/testing.md)
-- **Benchmark-led performance claims** — benchmarked side by side against Python, Go,
-  and Bun frameworks, with the full methodology shown. [→](performance.md)
 
 ## API reference
 
