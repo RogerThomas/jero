@@ -73,18 +73,12 @@ tasks:
       - task: clean-build
       - uv build
 
-  publish:
-    desc: Publish a release to PyPI
-    cmd: uv publish
-
-  build-and-publish:
-    desc: Build and publish
-    cmds:
-      - task: build
-      - task: publish
-
   release:
-    desc: 'Bump the version and cut a GitHub release (defaults to patch). Usage: task release [-- major|minor|patch]'
+    # Publishing to PyPI is not done here: the GitHub release fires
+    # .github/workflows/on-release-main.yml, which re-checks the tag against the
+    # pyproject version, builds, uploads via PyPI Trusted Publishing (OIDC, no token),
+    # then deploys the docs to Pages.
+    desc: 'Bump the version (defaults to patch) and cut a GitHub release; PyPI publish + docs deploy follow in CI (on-release-main.yml). Usage: task release [-- major|minor|patch]'
     cmds:
       - |
         set -eu
