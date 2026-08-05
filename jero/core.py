@@ -1641,7 +1641,10 @@ class _WebSocketRoute:
             with contextlib.suppress(OSError):
                 await websocket.close(code=1011, reason="internal error")
             return
-        await websocket.close()
+        # The peer may disappear after the handler returns but before this best-effort
+        # close frame reaches the transport; an ordinary disconnect is not an app error.
+        with contextlib.suppress(OSError):
+            await websocket.close()
 
 
 type _Sender = Callable[[Scope, Receive, Send, Any], Awaitable[None]]

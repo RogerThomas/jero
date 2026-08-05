@@ -497,6 +497,22 @@ class FailingWebSocketTransport:
         raise OSError("transport closed")
 
 
+class NormalReturnWebSocket(WebSocketEndpoint, path="/returning-normally"):
+    """Return normally without reading or writing a frame."""
+
+    async def handle(self, websocket: WebSocket[str, str]) -> None:
+        """Leave teardown to the framework after an ordinary return."""
+        del websocket
+
+
+class ReturningWebSocketApp(BaseApp):
+    """Mount the normally returning transport-failure endpoint."""
+
+    async def wire(self) -> None:
+        """Wire the endpoint whose automatic close is under test."""
+        self._include_websocket(NormalReturnWebSocket())
+
+
 @dataclass
 class RoomWebSocket(WebSocketEndpoint, path="/room"):
     """Attach each connection to the shared global room."""
@@ -551,6 +567,15 @@ async def test_handler_transport_failure_is_contained() -> None:
     transport = FailingWebSocketTransport('{"type":"tiny-message","value":"ok"}')
     with TestClient(app):
         await app(_failing_scope("/tiny"), transport.receive, transport.send)
+
+
+@pytest.mark.asyncio
+async def test_normal_websocket_teardown_transport_failure_is_contained() -> None:
+    """A vanished transport cannot escape through the automatic final close."""
+    app = ReturningWebSocketApp()
+    transport = FailingWebSocketTransport("")
+    with TestClient(app):
+        await app(_failing_scope("/returning-normally"), transport.receive, transport.send)
 
 
 @pytest.mark.asyncio
