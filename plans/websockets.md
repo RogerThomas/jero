@@ -89,8 +89,10 @@ concerns here, and forgetting-to-accept ceases to be a representable bug.
 Two rejection paths, split by who is being told what:
 
 - **Trust/protocol failures** (auth failure, path that doesn't bind, malformed
-  handshake) → rejected **before upgrade** with the ordinary HTTP error. No
-  socket is established; no upgrade is spent on an untrusted client.
+  handshake) → rejected **before upgrade** with the ordinary HTTP error when the
+  server advertises ASGI's optional denial-response extension, otherwise with a
+  pre-accept close (normally surfaced by the server as a bodyless HTTP 403). No socket
+  is established; no upgrade is spent on an untrusted client.
 - **Application-state rejections** ("room full", duplicate session) → `handle`
   accepts, optionally sends one typed farewell message (part of `Outbound`,
   e.g. `RoomFull(retry_after_seconds=30)`), and closes with an application

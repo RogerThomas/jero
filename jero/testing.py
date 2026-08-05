@@ -339,6 +339,9 @@ class TestWebSocket[Inbound, Outbound]:
         message = self._cycle.from_app.get()
         if message["type"] == "websocket.close":
             self._closed = True
+            self._submit(self._put({"type": "websocket.disconnect", "code": message["code"]}))
+            with contextlib.suppress(Exception):
+                self._submit(self._wait_task())
             raise WebSocketClosedError(message["code"], message.get("reason", ""))
         if self._outbound_kind == "bytes":
             return cast("Outbound", message["bytes"])
@@ -536,6 +539,7 @@ class TestClient:
         *,
         params: dict[str, str] | None,
         headers: dict[str, str] | None,
+        denial_response_extension: bool,
     ) -> tuple[_WebSocketCycle, asyncio.Task[None]]:
         wire_headers = {key.lower(): value for key, value in (headers or {}).items()}
         scope: dict[str, Any] = {
@@ -547,6 +551,7 @@ class TestClient:
                 for key, value in wire_headers.items()
             ],
             "subprotocols": [],
+            "extensions": ({"websocket.http.response": {}} if denial_response_extension else {}),
         }
         cycle = _WebSocketCycle()
         task = asyncio.create_task(self._app(scope, cycle.receive, cycle.send))
@@ -554,6 +559,9 @@ class TestClient:
         first = await asyncio.to_thread(cycle.from_app.get)
         if first["type"] == "websocket.accept":
             return cycle, task
+        if first["type"] == "websocket.close":
+            await task
+            raise WebSocketClosedError(first["code"], first.get("reason", ""))
         if first["type"] != "websocket.http.response.start":
             raise RuntimeError(f"unexpected WebSocket handshake event {first['type']!r}")
         body_message = await asyncio.to_thread(cycle.from_app.get)
@@ -603,9 +611,17 @@ class TestClient:
         outbound: TypeForm[Outbound],
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        denial_response_extension: bool = True,
     ) -> TestWebSocket[Inbound, Outbound]:
         """Open a typed in-process WebSocket connection."""
-        cycle, task = self._submit(self._open_websocket(path, params=params, headers=headers))
+        cycle, task = self._submit(
+            self._open_websocket(
+                path,
+                params=params,
+                headers=headers,
+                denial_response_extension=denial_response_extension,
+            )
+        )
         return TestWebSocket(self._submit, cycle, task, inbound, outbound)
 
     def stream_request(

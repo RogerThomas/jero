@@ -84,8 +84,10 @@ names such as `Tick` or `Departed`.
 
 `handle` may bind `path`, `params`, `headers`, `raw_headers`, and `user` exactly like an
 HTTP handler. Authentication and binding run before the upgrade. A failure is returned
-as an ordinary HTTP rejection; only a valid handshake receives `websocket.accept` and
-enters the handler.
+as an ordinary typed HTTP rejection when the ASGI server advertises the WebSocket denial
+response extension. Without that optional extension, jero sends a pre-accept close and
+the server rejects the upgrade (normally as HTTP 403, without the typed body). Only a
+valid handshake receives `websocket.accept` and enters the handler.
 
 Acceptance is therefore implicit—there is no `websocket.accept()`. Reject application
 state that a browser must understand after acceptance by sending a typed message and
@@ -103,6 +105,10 @@ message, `1011` for an uncaught handler error, and `1013` for a channel overflow
 Inbound frames default to at most 1 MiB; override this per mount with
 `max_frame_size=`. Ping/pong keepalive belongs to the ASGI server because standard ASGI
 does not expose ping frames to applications.
+
+`close()` accepts jero's standard protocol codes or application codes `4000–4999`.
+Close reasons are limited to the WebSocket protocol's 123 UTF-8 bytes; invalid values
+raise before a close event is sent.
 
 ## Framing
 

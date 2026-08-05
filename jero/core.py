@@ -591,14 +591,47 @@ class _WebSocketDenialSend:
     """Translate an HTTP middleware answer into ASGI's pre-upgrade denial events."""
 
     _send: Send
+    _supported: bool
+    _closed: bool = False
 
     async def __call__(self, message: dict[str, Any]) -> None:
+        if not self._supported:
+            if not self._closed:
+                self._closed = True
+                await self._send(
+                    {"type": "websocket.close", "code": 1008, "reason": "handshake rejected"}
+                )
+            return
         event_type = message["type"]
         if event_type == "http.response.start":
             message = {**message, "type": "websocket.http.response.start"}
         elif event_type == "http.response.body":
             message = {**message, "type": "websocket.http.response.body"}
         await self._send(message)
+
+
+def _supports_websocket_denial(scope: Scope) -> bool:
+    """Whether the server advertised ASGI's optional denial-response extension."""
+    extensions = scope.get("extensions")
+    return isinstance(extensions, Mapping) and "websocket.http.response" in extensions
+
+
+async def _send_websocket_rejection(scope: Scope, send: Send, status: int, payload: bytes) -> None:
+    """Reject before upgrade, preserving a body only when the server supports it."""
+    if not _supports_websocket_denial(scope):
+        await send({"type": "websocket.close", "code": 1008, "reason": "handshake rejected"})
+        return
+    await send(
+        {
+            "type": "websocket.http.response.start",
+            "status": status,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(payload)).encode()),
+            ],
+        }
+    )
+    await send({"type": "websocket.http.response.body", "body": payload})
 
 
 def _raw_headers(scope: Scope) -> dict[str, str]:
@@ -1562,19 +1595,9 @@ class _WebSocketRoute:
         self._tail = tail
         self._arity = sources.arity
 
-    async def _reject(self, send: Send, error: BaseHTTPError) -> None:
+    async def _reject(self, scope: Scope, send: Send, error: BaseHTTPError) -> None:
         payload = self._exceptions.encode_error(error)
-        await send(
-            {
-                "type": "websocket.http.response.start",
-                "status": error.status,
-                "headers": [
-                    (b"content-type", b"application/problem+json"),
-                    (b"content-length", str(len(payload)).encode()),
-                ],
-            }
-        )
-        await send({"type": "websocket.http.response.body", "body": payload})
+        await _send_websocket_rejection(scope, send, error.status, payload)
 
     async def __call__(
         self, scope: Scope, receive: Receive, send: Send, path_values: dict[str, str]
@@ -1583,7 +1606,7 @@ class _WebSocketRoute:
             self._intercepts,
             scope,
             receive,
-            _WebSocketDenialSend(send),
+            _WebSocketDenialSend(send, _supports_websocket_denial(scope)),
             exceptions=self._exceptions,
             tail=self._tail,
         ):
@@ -1597,11 +1620,11 @@ class _WebSocketRoute:
                 else self._bind.bind_sync(scope, path_values)
             )
         except BaseHTTPError as error:
-            await self._reject(send, error)
+            await self._reject(scope, send, error)
             return
         except Exception:  # pylint: disable=broad-exception-caught
             logger.exception("error binding WebSocket handshake for %s", scope["path"])
-            await self._reject(send, InternalServerError())
+            await self._reject(scope, send, InternalServerError())
             return
         await send({"type": "websocket.accept"})
         websocket: WebSocket[object, object] = self._spec.open(receive, send)
@@ -4159,7 +4182,7 @@ class BaseApp[FactoryT = None](ABC):
                 runners,
                 scope,
                 receive,
-                _WebSocketDenialSend(send),
+                _WebSocketDenialSend(send, _supports_websocket_denial(scope)),
                 exceptions=self.__exceptions,
                 tail=self.__app_tail,
             ):
@@ -4176,17 +4199,7 @@ class BaseApp[FactoryT = None](ABC):
             return
         error = NotFoundError()
         payload = self.__exceptions.encode_error(error)
-        await send(
-            {
-                "type": "websocket.http.response.start",
-                "status": error.status,
-                "headers": [
-                    (b"content-type", b"application/problem+json"),
-                    (b"content-length", str(len(payload)).encode()),
-                ],
-            }
-        )
-        await send({"type": "websocket.http.response.body", "body": payload})
+        await _send_websocket_rejection(scope, send, error.status, payload)
 
     async def __handle_non_http(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "lifespan":

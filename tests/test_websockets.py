@@ -11,6 +11,8 @@ from demo_app.models import PingRequest, PingResponse
 from jero import (
     BaseApp,
     Channel,
+    ErrorBodyAdapter,
+    HTTPError,
     HTTPMethod,
     JSONResponse,
     Request,
@@ -48,6 +50,19 @@ def test_websocket_auth_rejects_before_upgrade(client: TestClient) -> None:
     with pytest.raises(WebSocketUpgradeError) as caught:
         client.websocket("/websocket/client-id", inbound=PingRequest, outbound=PingResponse)
     assert caught.value.response.status_code == 401
+    assert caught.value.response.headers["content-type"] == "application/json"
+
+
+def test_websocket_rejection_without_denial_extension(client: TestClient) -> None:
+    """A server without the optional denial extension receives a pre-accept close."""
+    with pytest.raises(WebSocketClosedError) as caught:
+        client.websocket(
+            "/websocket/client-id",
+            inbound=PingRequest,
+            outbound=PingResponse,
+            denial_response_extension=False,
+        )
+    assert caught.value.code == 1008
 
 
 def _send_malformed_json(websocket: TestWebSocket[PingRequest, PingResponse]) -> None:
@@ -145,10 +160,57 @@ class RawFramingApp(BaseApp):
         self._include_websocket(TextToBinaryWebSocket())
 
 
+class InvalidCodeWebSocket(WebSocketEndpoint, path="/invalid-code"):
+    """Attempt an invalid close code so the framework must fall back to 1011."""
+
+    async def handle(self, websocket: WebSocket[str, str]) -> None:
+        """Try to close with a reserved, unsendable code."""
+        await websocket.close(code=1005)
+
+
+class InvalidReasonWebSocket(WebSocketEndpoint, path="/invalid-reason"):
+    """Attempt an overlong close reason so the framework must fall back to 1011."""
+
+    async def handle(self, websocket: WebSocket[str, str]) -> None:
+        """Try to close with more than 123 UTF-8 bytes."""
+        await websocket.close(reason="é" * 62)
+
+
+class InvalidCloseApp(BaseApp):
+    """Mount both invalid-close handlers."""
+
+    async def wire(self) -> None:
+        """Wire invalid close attempts for strict validation tests."""
+        self._include_websocket(InvalidCodeWebSocket())
+        self._include_websocket(InvalidReasonWebSocket())
+
+
 class Denied(Struct):
     """A typed middleware handshake-denial body."""
 
     reason: str
+
+
+class HouseError(Struct):
+    """A non-Problem app-wide error body."""
+
+    code: str
+
+
+class HouseErrorAdapter(ErrorBodyAdapter[HouseError]):
+    """Render Problem-family failures in the house shape."""
+
+    def compose(self, error: HTTPError) -> HouseError:
+        """Translate the error's machine type into the house body."""
+        return HouseError(code=error.type)
+
+
+class AdapterApp(BaseApp):
+    """Install a house error adapter for unmatched WebSocket handshakes."""
+
+    async def wire(self) -> None:
+        """Wire only the error adapter, leaving every WebSocket path unmatched."""
+        self._include_error_adapter(HouseErrorAdapter())
 
 
 class DenyHandshake:
@@ -201,6 +263,26 @@ def test_websocket_frame_kinds_are_independent() -> None:
         with client.websocket("/text-binary", inbound=str, outbound=bytes) as text_binary:
             text_binary.send("message")
             assert text_binary.receive() == b"message"
+
+
+@pytest.mark.parametrize("path", ["/invalid-code", "/invalid-reason"])
+def test_invalid_close_becomes_internal_error(path: str) -> None:
+    """Invalid public close arguments remain sendable as the handler's 1011 failure."""
+    with TestClient(InvalidCloseApp()) as client:
+        websocket: TestWebSocket[str, str]
+        with client.websocket(path, inbound=str, outbound=str) as websocket:
+            with pytest.raises(WebSocketClosedError) as caught:
+                websocket.receive()
+            assert caught.value.code == 1011
+
+
+def test_websocket_rejection_uses_adapter_body_and_json_media_type() -> None:
+    """A handshake rejection preserves the configured house error representation."""
+    with TestClient(AdapterApp()) as client:
+        with pytest.raises(WebSocketUpgradeError) as caught:
+            client.websocket("/missing", inbound=str, outbound=str)
+        assert caught.value.response.headers["content-type"] == "application/json"
+        assert caught.value.response.json() == {"code": "not-found"}
 
 
 @pytest.mark.parametrize("app", [GlobalMiddlewareApp(), ScopedMiddlewareApp()])

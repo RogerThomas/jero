@@ -21,6 +21,10 @@ type _PayloadKind = Literal["json", "text", "bytes"]
 type _Overflow = Literal["close", "drop-oldest"]
 type _QueuedFrame = tuple[Literal["frame"], bytes] | tuple[Literal["close"], int]
 
+_STANDARD_CLOSE_CODES = frozenset(
+    {1000, 1001, 1002, 1003, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014}
+)
+
 
 def _union_members(annotation: object) -> tuple[object, ...]:
     annotation = unwrap_alias(annotation)
@@ -128,8 +132,15 @@ class WebSocket[Inbound, Outbound](AsyncIterator[Inbound]):
         """Close the connection once."""
         if self._closed:
             return
-        self._closed = True
+        if code not in _STANDARD_CLOSE_CODES and not 4000 <= code <= 4999:
+            raise ValueError(
+                "WebSocket close code must be a standard sendable code or in "
+                "jero's 4000-4999 application range"
+            )
+        if len(reason.encode()) > 123:
+            raise ValueError("WebSocket close reason must be at most 123 UTF-8 bytes")
         await self._send({"type": "websocket.close", "code": code, "reason": reason})
+        self._closed = True
 
     async def send(self, message: Outbound) -> None:
         """Encode and send one outbound message according to the declared framing."""

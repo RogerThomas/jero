@@ -264,10 +264,14 @@ These pull against each other constantly; keep all three in mind on every change
 - **WebSockets**: subclass `WebSocketEndpoint` with a required class `path` and one
   async `handle(websocket: WebSocket[Inbound, Outbound], ...) -> None`; mount it with
   `_include_websocket`. Handshake `path`/`params`/`headers`/`raw_headers`/`user` bind
-  and auth run before implicit acceptance. Each direction is exactly one framing kind:
+  and auth run before implicit acceptance. Rejections preserve the typed HTTP body via
+  ASGI's optional denial-response extension when advertised; otherwise they fall back
+  to a pre-accept close. Each direction is exactly one framing kind:
   a tagged Struct union as strict JSON, raw `str` text, or raw `bytes` binary; wrong
   frames close `1003`, malformed/invalid JSON `1007`/`1008`, oversized frames `1009`
   (1 MiB default, configurable per mount), and uncaught handler errors `1011`.
+  Public closes accept the sendable standard codes or `4000–4999`, with reasons capped
+  at 123 UTF-8 bytes and validated before transport state changes.
   OpenAPI does not model sockets. `Channel[T]` is the typed, per-process broadcast
   primitive: one encode per publish, bounded writer queue per attachment, synchronous
   `join`/`leave`/`publish`, and `"close"` (`1013`) or `"drop-oldest"` overflow.
