@@ -1638,7 +1638,8 @@ class _WebSocketRoute:
                 await self._fn(websocket)
         except Exception:  # pylint: disable=broad-exception-caught
             logger.exception("error in WebSocket handler for %s", scope["path"])
-            await websocket.close(code=1011, reason="internal error")
+            with contextlib.suppress(OSError):
+                await websocket.close(code=1011, reason="internal error")
             return
         await websocket.close()
 

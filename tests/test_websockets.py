@@ -1,8 +1,9 @@
 """Typed WebSockets through the public TestClient ASGI boundary."""
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import ClassVar, cast
+from typing import Any, ClassVar, cast
 
 import pytest
 from msgspec import Struct
@@ -15,6 +16,7 @@ from jero import (
     HTTPError,
     HTTPMethod,
     JSONResponse,
+    RawHeaders,
     Request,
     WebSocket,
     WebSocketEndpoint,
@@ -274,6 +276,38 @@ class ScopedMiddlewareApp(BaseApp):
         self._include_websocket(TinyWebSocket(), middleware=(DenyHandshake(),))
 
 
+class HeaderOnlyMiddleware:
+    """A scoped middleware without an intercept capability."""
+
+    response_headers = Denied(reason="constant")
+
+
+class PostOnlyHandshake:
+    """Declare an intercept that cannot run on a GET handshake."""
+
+    intercept_methods: ClassVar[tuple[HTTPMethod, ...]] = ("POST",)
+
+    def intercept(self, request: Request) -> JSONResponse[Denied]:
+        """Return a response if the invalid method scope were reachable."""
+        return JSONResponse(json=Denied(reason=request.path), status_code=403)
+
+
+class HeaderMiddlewareApp(BaseApp):
+    """Mount a socket with non-intercepting scoped middleware."""
+
+    async def wire(self) -> None:
+        """Wire the middleware whose irrelevant capability is skipped."""
+        self._include_websocket(TinyWebSocket(), middleware=(HeaderOnlyMiddleware(),))
+
+
+class PostOnlyMiddlewareApp(BaseApp):
+    """Attempt to mount a socket with a POST-only intercept."""
+
+    async def wire(self) -> None:
+        """Wire the invalid handshake intercept scope."""
+        self._include_websocket(TinyWebSocket(), middleware=(PostOnlyHandshake(),))
+
+
 def test_websocket_max_frame_size() -> None:
     """An oversized inbound frame closes with message-too-big code 1009."""
     with TestClient(TinyApp()) as client:
@@ -313,6 +347,12 @@ def test_repeated_websocket_close_is_idempotent() -> None:
             with pytest.raises(WebSocketClosedError) as caught:
                 websocket.receive()
             assert caught.value.code == 4000
+            with pytest.raises(RuntimeError, match="closed test WebSocket"):
+                websocket.send("late")
+            with pytest.raises(RuntimeError, match="closed test WebSocket"):
+                websocket.send_text("late")
+            with pytest.raises(RuntimeError, match="closed test WebSocket"):
+                websocket.send_bytes(b"late")
 
 
 def test_websocket_rejects_send_after_close() -> None:
@@ -353,6 +393,41 @@ def test_middleware_intercepts_websocket_handshake(app: BaseApp) -> None:
             client.websocket("/tiny", inbound=TinyMessage, outbound=TinyReply)
         assert caught.value.response.status_code == 403
         assert caught.value.response.json() == {"reason": "/tiny"}
+
+
+def test_middleware_denial_without_extension_closes_once() -> None:
+    """Middleware denial falls back to one close when denial responses are unsupported."""
+    with TestClient(GlobalMiddlewareApp()) as client:
+        with pytest.raises(WebSocketClosedError) as caught:
+            client.websocket(
+                "/tiny",
+                inbound=TinyMessage,
+                outbound=TinyReply,
+                denial_response_extension=False,
+            )
+        assert caught.value.code == 1008
+
+
+def test_websocket_skips_middleware_without_intercept() -> None:
+    """A scoped middleware with no intercept does not alter the socket protocol."""
+    with TestClient(HeaderMiddlewareApp()) as client:
+        websocket: TestWebSocket[TinyMessage, TinyReply]
+        with client.websocket("/tiny", inbound=TinyMessage, outbound=TinyReply) as websocket:
+            websocket.send(TinyMessage(value="ok"))
+            assert websocket.receive() == TinyReply(value="ok")
+
+
+def test_websocket_rejects_intercept_without_get_scope() -> None:
+    """A scoped intercept must include GET to affect a WebSocket handshake."""
+    with pytest.raises(RuntimeError, match="expected GET"):
+        TestClient(PostOnlyMiddlewareApp())
+
+
+def test_dynamic_websocket_static_mismatch_is_not_found(client: TestClient) -> None:
+    """A same-length dynamic route with different static segments does not match."""
+    with pytest.raises(WebSocketUpgradeError) as caught:
+        client.websocket("/not-websocket/client-id", inbound=PingRequest, outbound=PingResponse)
+    assert caught.value.response.status_code == 404
 
 
 class Untagged(Struct):
@@ -396,6 +471,32 @@ class Event(Struct, tag="event"):
     index: int
 
 
+class FailingWebSocketTransport:
+    """ASGI transport that disappears after accepting one inbound frame."""
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+        self._received = 0
+        self._failed = asyncio.Event()
+
+    async def receive(self) -> dict[str, Any]:
+        """Produce connect, one data frame, then disconnect after the failed send."""
+        self._received += 1
+        if self._received == 1:
+            return {"type": "websocket.connect"}
+        if self._received == 2:
+            return {"type": "websocket.receive", "text": self._text}
+        await self._failed.wait()
+        return {"type": "websocket.disconnect", "code": 1006}
+
+    async def send(self, message: dict[str, Any]) -> None:
+        """Accept the upgrade, then fail every attempted transport write."""
+        if message["type"] == "websocket.accept":
+            return
+        self._failed.set()
+        raise OSError("transport closed")
+
+
 @dataclass
 class RoomWebSocket(WebSocketEndpoint, path="/room"):
     """Attach each connection to the shared global room."""
@@ -429,6 +530,36 @@ class ClosingRoomApp(BaseApp):
         """Wire a one-frame close-on-overflow channel."""
         room = Channel(Event, overflow="close", queue_size=1)
         self._include_websocket(RoomWebSocket(room))
+
+
+def _failing_scope(path: str) -> dict[str, Any]:
+    """Build one minimal ASGI WebSocket scope for transport-failure tests."""
+    return {
+        "type": "websocket",
+        "path": path,
+        "query_string": b"",
+        "headers": [],
+        "subprotocols": [],
+        "extensions": {},
+    }
+
+
+@pytest.mark.asyncio
+async def test_handler_transport_failure_is_contained() -> None:
+    """A vanished transport cannot escape through handler recovery close."""
+    app = TinyApp()
+    transport = FailingWebSocketTransport('{"type":"tiny-message","value":"ok"}')
+    with TestClient(app):
+        await app(_failing_scope("/tiny"), transport.receive, transport.send)
+
+
+@pytest.mark.asyncio
+async def test_channel_writer_transport_failure_is_contained() -> None:
+    """A channel writer exits quietly when its subscriber transport vanishes."""
+    app = RoomApp()
+    transport = FailingWebSocketTransport('{"type":"publish","count":1}')
+    with TestClient(app):
+        await app(_failing_scope("/room"), transport.receive, transport.send)
 
 
 def test_channel_fans_out_and_drops_oldest() -> None:
@@ -468,3 +599,196 @@ def test_channel_publish_without_subscribers_is_a_noop() -> None:
     """Publishing to an empty topic returns without encoding or queue work."""
     channel = Channel(Event)
     channel.publish("missing", Event(index=1))
+
+
+class MixedWebSocket(WebSocketEndpoint, path="/mixed"):
+    """Declare a protocol whose inbound union mixes framing kinds."""
+
+    async def handle(self, websocket: WebSocket[TinyMessage | str, TinyReply]) -> None:
+        """Consume messages if the invalid protocol were wired."""
+        async for _ in websocket:
+            pass
+
+
+class NoWebSocketArgument(WebSocketEndpoint, path="/bad-first"):
+    """Declare a handler without the required first WebSocket argument."""
+
+    async def handle(self, params: TinyMessage) -> None:
+        """Exist only to exercise startup contract validation."""
+
+
+class BareWebSocketArgument(WebSocketEndpoint, path="/bare"):
+    """Declare a handler with an imprecise WebSocket annotation."""
+
+    async def handle(self, websocket: object) -> None:
+        """Exist only to exercise startup contract validation."""
+
+
+class ReturningWebSocket(WebSocketEndpoint, path="/returning"):
+    """Declare a WebSocket handler with a value return contract."""
+
+    async def handle(self, websocket: WebSocket[str, str]) -> str:
+        """Return a value if the invalid protocol were invoked."""
+        del websocket
+        return "invalid"
+
+
+class SyncWebSocket(WebSocketEndpoint, path="/sync"):
+    """Declare a synchronous WebSocket handler."""
+
+    def handle(self, websocket: WebSocket[str, str]) -> None:
+        """Exist only to exercise startup contract validation."""
+        del websocket
+
+
+class BodyWebSocket(WebSocketEndpoint, path="/body"):
+    """Declare an unsupported post-upgrade body source."""
+
+    async def handle(self, websocket: WebSocket[str, str], json: TinyMessage) -> None:
+        """Exist only to exercise startup contract validation."""
+
+
+class BadRawHeadersWebSocket(WebSocketEndpoint, path="/bad-raw-headers"):
+    """Declare raw headers with the wrong annotation."""
+
+    async def handle(self, websocket: WebSocket[str, str], raw_headers: bytes) -> None:
+        """Exist only to exercise startup contract validation."""
+
+
+class MissingHandle:
+    """Endpoint-shaped object with a path but no protocol handler."""
+
+    path = "/missing-handle"
+
+
+class InvalidEndpointApp(BaseApp):
+    """Mount one endpoint supplied by a wiring-contract test."""
+
+    def __init__(self, endpoint: WebSocketEndpoint) -> None:
+        super().__init__()
+        self._endpoint = endpoint
+
+    async def wire(self) -> None:
+        """Attempt to mount the supplied endpoint."""
+        self._include_websocket(self._endpoint)
+
+
+class InvalidFrameLimitApp(BaseApp):
+    """Attempt to wire a socket with a supplied frame limit."""
+
+    def __init__(self, frame_limit: object) -> None:
+        super().__init__()
+        self._frame_limit = frame_limit
+
+    async def wire(self) -> None:
+        """Pass the deliberately invalid limit through the public mount API."""
+        include = cast("Callable[..., None]", self._include_websocket)
+        include(TinyWebSocket(), max_frame_size=self._frame_limit)
+
+
+class DuplicateStaticApp(BaseApp):
+    """Attempt to register one static WebSocket path twice."""
+
+    async def wire(self) -> None:
+        """Wire two endpoints with the same static route shape."""
+        self._include_websocket(TinyWebSocket())
+        self._include_websocket(TinyWebSocket())
+
+
+class OtherPath(Struct):
+    """Path source for the deliberately colliding dynamic route."""
+
+    other: str
+
+
+class OtherDynamicWebSocket(WebSocketEndpoint, path="/websocket/{other}"):
+    """Declare a route colliding with the demo socket's dynamic shape."""
+
+    async def handle(self, websocket: WebSocket[str, str], path: OtherPath) -> None:
+        """Exist only to exercise duplicate route validation."""
+
+
+class DuplicateDynamicApp(BaseApp):
+    """Attempt to register two equivalent dynamic WebSocket routes."""
+
+    async def wire(self) -> None:
+        """Wire both colliding dynamic route shapes."""
+        self._include_websocket(OtherDynamicWebSocket())
+        self._include_websocket(OtherDynamicWebSocket())
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "message"),
+    [
+        (MixedWebSocket(), "tagged msgspec.Struct union"),
+        (NoWebSocketArgument(), "first argument"),
+        (BareWebSocketArgument(), "must be annotated"),
+        (ReturningWebSocket(), "must return None"),
+        (SyncWebSocket(), "must be async"),
+        (BodyWebSocket(), "unsupported argument"),
+        (BadRawHeadersWebSocket(), "must be annotated as RawHeaders"),
+        (cast("WebSocketEndpoint", object()), "no path"),
+        (cast("WebSocketEndpoint", MissingHandle()), "must define handle"),
+    ],
+)
+def test_websocket_rejects_invalid_handler_contracts(
+    endpoint: WebSocketEndpoint, message: str
+) -> None:
+    """Invalid framing and handshake declarations fail during startup."""
+    with pytest.raises(RuntimeError, match=message):
+        TestClient(InvalidEndpointApp(endpoint))
+
+
+@pytest.mark.parametrize("frame_limit", [0, True, 1.5])
+def test_websocket_rejects_invalid_frame_limits(frame_limit: object) -> None:
+    """A frame limit must be a positive, non-boolean integer."""
+    with pytest.raises(RuntimeError, match="positive integer"):
+        TestClient(InvalidFrameLimitApp(frame_limit))
+
+
+@pytest.mark.parametrize("app", [DuplicateStaticApp(), DuplicateDynamicApp()])
+def test_websocket_rejects_duplicate_routes(app: BaseApp) -> None:
+    """Static and dynamic WebSocket route shapes may be registered only once."""
+    with pytest.raises(RuntimeError, match="already registered"):
+        TestClient(app)
+
+
+class RawHeadersWebSocket(WebSocketEndpoint, path="/raw-headers"):
+    """Read the opaque handshake headers source."""
+
+    async def handle(self, websocket: WebSocket[str, str], raw_headers: RawHeaders) -> None:
+        """Return the first raw header value."""
+        await websocket.send(cast("str", raw_headers.get("x-test")))
+
+
+class RawHeadersApp(BaseApp):
+    """Mount the raw-header handshake binding example."""
+
+    async def wire(self) -> None:
+        """Wire the raw-header endpoint."""
+        self._include_websocket(RawHeadersWebSocket())
+
+
+def test_websocket_binds_raw_headers() -> None:
+    """The opaque raw handshake headers bag reaches the handler."""
+    with TestClient(RawHeadersApp()) as client:
+        websocket: TestWebSocket[str, str]
+        with client.websocket(
+            "/raw-headers", inbound=str, outbound=str, headers={"x-test": "value"}
+        ) as websocket:
+            assert websocket.receive() == "value"
+
+
+@pytest.mark.parametrize("message_type", [str, bytes])
+def test_channel_rejects_raw_message_types(message_type: object) -> None:
+    """Channels accept only tagged JSON Struct protocols."""
+    channel_factory = cast("Callable[..., Channel[Event]]", Channel)
+    with pytest.raises(WiringError, match=r"tagged msgspec\.Struct union"):
+        channel_factory(message_type)
+
+
+def test_channel_rejects_unknown_overflow_policy() -> None:
+    """Channel overflow policy is a closed enumeration."""
+    channel_factory = cast("Callable[..., Channel[Event]]", Channel)
+    with pytest.raises(WiringError, match="overflow"):
+        channel_factory(Event, overflow="discard")

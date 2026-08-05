@@ -318,6 +318,8 @@ class TestWebSocket[Inbound, Outbound]:
 
     def send(self, message: Inbound) -> None:
         """Encode one typed client-to-server message."""
+        if self._closed:
+            raise RuntimeError("cannot send on a closed test WebSocket")
         if self._inbound_kind == "bytes":
             event = {"type": "websocket.receive", "bytes": cast("bytes", message)}
         elif self._inbound_kind == "text":
@@ -328,10 +330,14 @@ class TestWebSocket[Inbound, Outbound]:
 
     def send_text(self, text: str) -> None:
         """Send a raw text frame, including malformed input for protocol tests."""
+        if self._closed:
+            raise RuntimeError("cannot send on a closed test WebSocket")
         self._submit(self._put({"type": "websocket.receive", "text": text}))
 
     def send_bytes(self, data: bytes) -> None:
         """Send a raw binary frame, including a deliberately wrong frame kind."""
+        if self._closed:
+            raise RuntimeError("cannot send on a closed test WebSocket")
         self._submit(self._put({"type": "websocket.receive", "bytes": data}))
 
     def receive(self) -> Outbound:

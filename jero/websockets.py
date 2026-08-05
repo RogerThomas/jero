@@ -256,12 +256,15 @@ class Channel[T]:
         self._topics: dict[str, set[_Subscriber[T]]] = {}
 
     async def _write(self, subscriber: _Subscriber[T]) -> None:
-        while True:
-            item = await subscriber.queue.get()
-            if item[0] == "close":
-                await subscriber.websocket.close(code=item[1], reason="channel overflow")
-                return
-            await subscriber.websocket.send_encoded(item[1])
+        try:
+            while True:
+                item = await subscriber.queue.get()
+                if item[0] == "close":
+                    await subscriber.websocket.close(code=item[1], reason="channel overflow")
+                    return
+                await subscriber.websocket.send_encoded(item[1])
+        except OSError:
+            return
 
     def _attach(self, websocket: WebSocket[object, T]) -> _Subscriber[T]:
         subscriber = _Subscriber(websocket, asyncio.Queue(self._queue_size))
