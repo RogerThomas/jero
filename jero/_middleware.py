@@ -16,7 +16,7 @@ lives in :mod:`jero.core` alongside the response senders it depends on (mirrorin
 
 import inspect
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, MutableMapping, Sequence
 from types import NoneType
 from typing import Any, ClassVar, Literal, cast, get_args, get_origin, get_type_hints
 from urllib.parse import urlsplit
@@ -89,7 +89,7 @@ class HeaderScanner:
         # share one instance and skip the scan and convert entirely.
         self._empty = struct_type() if not self._keys else None
 
-    def __call__(self, scope: dict[str, Any]) -> Struct:
+    def __call__(self, scope: MutableMapping[str, Any]) -> Struct:
         if self._empty is not None:
             return self._empty
         keys = self._keys
@@ -104,7 +104,7 @@ class HeaderScanner:
             raise MalformedRequestError(ErrorReason(reason=str(e))) from e
 
 
-def request_origin(scope: dict[str, Any]) -> str | None:
+def request_origin(scope: MutableMapping[str, Any]) -> str | None:
     """The request's ``Origin`` header, or ``None`` when the caller sent none
     (a same-origin or non-browser request — not a CORS request at all)."""
     for key, value in scope["headers"]:
@@ -113,7 +113,7 @@ def request_origin(scope: dict[str, Any]) -> str | None:
     return None
 
 
-def requested_method(scope: dict[str, Any]) -> str | None:
+def requested_method(scope: MutableMapping[str, Any]) -> str | None:
     """The ``Access-Control-Request-Method`` header of a CORS preflight, or ``None``
     when the OPTIONS request is not a preflight."""
     for key, value in scope["headers"]:
@@ -188,7 +188,7 @@ class _OriginEcho:
         )
         self._cache: dict[bytes, tuple[tuple[bytes, bytes], ...]] = {}
 
-    def __call__(self, scope: dict[str, Any]) -> Sequence[tuple[bytes, bytes]]:
+    def __call__(self, scope: MutableMapping[str, Any]) -> Sequence[tuple[bytes, bytes]]:
         for key, value in scope["headers"]:
             if key == b"origin":
                 pairs = self._cache.get(value)
@@ -274,7 +274,7 @@ class CompiledCORS:
             self._preflight_block = tuple(block)
 
     def preflight_pairs(
-        self, scope: dict[str, Any], requested: str
+        self, scope: MutableMapping[str, Any], requested: str
     ) -> list[tuple[bytes, bytes]] | None:
         """The CORS half of a preflight answer for one covered route, or ``None`` when
         this policy does not allow the requested method or origin (the plain 204 with
@@ -298,7 +298,7 @@ class CompiledCORS:
         ]
 
 
-def build_request(scope: dict[str, Any], scanner: HeaderScanner) -> Request[Any]:
+def build_request(scope: MutableMapping[str, Any], scanner: HeaderScanner) -> Request[Any]:
     """The :class:`Request` a hook receives. ``received_at`` reads the dispatch stamp a
     covered route wrote into the scope (``0.0`` when the route wasn't stamped)."""
     return Request(
@@ -388,7 +388,7 @@ class HeadersHook:
         self.returns: type[Struct] = returns
         self._fn = fn
 
-    def __call__(self, scope: dict[str, Any]) -> Struct | None:
+    def __call__(self, scope: MutableMapping[str, Any]) -> Struct | None:
         result = self._fn(build_request(scope, self._scanner))
         return cast("Struct | None", result)
 
@@ -413,7 +413,7 @@ class InterceptHook:
         self._fn = fn
         self._is_async = inspect.iscoroutinefunction(fn)
 
-    async def __call__(self, scope: dict[str, Any]) -> object | None:
+    async def __call__(self, scope: MutableMapping[str, Any]) -> object | None:
         result = self._fn(build_request(scope, self._scanner))
         if self._is_async:
             return await cast("Any", result)
@@ -445,7 +445,7 @@ class ObserveHook:
         self._fn = fn
         self._is_async = inspect.iscoroutinefunction(fn)
 
-    async def __call__(self, scope: dict[str, Any], status: int, duration: float) -> None:
+    async def __call__(self, scope: MutableMapping[str, Any], status: int, duration: float) -> None:
         try:
             result = self._fn(build_request(scope, self._scanner), status, duration)
             if self._is_async:

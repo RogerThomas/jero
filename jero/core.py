@@ -57,6 +57,7 @@ from collections.abc import (
     Awaitable,
     Callable,
     Mapping,
+    MutableMapping,
     Sequence,
 )
 from contextlib import (
@@ -180,8 +181,19 @@ if sys.version_info >= (3, 14):
 # own child name, since background tasks are a user-facing subsystem.)
 logger = logging.getLogger("jero")
 
-type Scope = dict[str, Any]
-type Receive = Callable[[], Awaitable[dict[str, Any]]]
+# The ASGI triple. ``Scope``/``Receive`` are the ecosystem-standard ``MutableMapping``
+# (asgiref, Starlette, httpx) rather than ``dict``: jero *consumes* those, so it accepts
+# the widest mapping shape a caller may hand it, and narrowing them to ``dict`` would
+# make ``__call__`` un-assignable to every standard-typed ``ASGIApp`` alias.
+#
+# ``Send`` is deliberately *not* widened to match. There jero is the producer: it only
+# ever passes dict literals, so ``dict`` is the weakest precondition it can place on the
+# callable it is given, and it accepts strictly more senders than ``MutableMapping``
+# would (a ``send`` annotated ``dict`` is not assignable to a ``MutableMapping``
+# parameter). Only ``[]`` and ``.get`` are ever used on a scope or a received message,
+# so the wide reads are honest; see ``tests/test_asgi_typing.py``.
+type Scope = MutableMapping[str, Any]
+type Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
 type Send = Callable[[dict[str, Any]], Awaitable[None]]
 
 # A compiled per-request handler: decode -> call -> encode.
@@ -2100,7 +2112,7 @@ async def _anext[T](iterator: AsyncIterator[T]) -> T:
     return await anext(iterator)
 
 
-async def _receive(receive: Receive) -> dict[str, Any]:
+async def _receive(receive: Receive) -> MutableMapping[str, Any]:
     return await receive()
 
 
@@ -2120,7 +2132,9 @@ async def _next_or_disconnect[T](
     next_task: asyncio.Task[T] = asyncio.create_task(_anext(iterator))
     try:
         while True:
-            receive_task: asyncio.Task[dict[str, Any]] = asyncio.create_task(_receive(receive))
+            receive_task: asyncio.Task[MutableMapping[str, Any]] = asyncio.create_task(
+                _receive(receive)
+            )
             tasks: set[asyncio.Task[Any]] = {next_task, receive_task}
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             if receive_task in done:
@@ -2267,7 +2281,9 @@ class _SSEStreamSender(_StreamSender):
         next_task: asyncio.Task[object] = asyncio.create_task(_anext(iterator))
         try:
             while True:
-                receive_task: asyncio.Task[dict[str, Any]] = asyncio.create_task(_receive(receive))
+                receive_task: asyncio.Task[MutableMapping[str, Any]] = asyncio.create_task(
+                    _receive(receive)
+                )
                 keepalive_task = (
                     asyncio.create_task(asyncio.sleep(keepalive)) if keepalive is not None else None
                 )
