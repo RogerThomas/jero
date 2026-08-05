@@ -102,6 +102,8 @@ feature-by-feature contrast with other Python frameworks, read
   unions of responses document every status. [→](guide/responses.md)
 - **Typed streaming** — NDJSON, SSE, and raw bytes, with lifecycle teardown and
   disconnect handling done for you. [→](guide/streaming.md)
+- **Typed WebSockets** — compiled framing in both directions and bounded local fan-out
+  through `Channel`. [→](guide/websockets.md)
 - **Auth checked at startup** — the `user` type is verified against the authenticator
   before a single request is served. [→](guide/auth.md)
 - **Reverse routing** — `Location` / `Link` headers built from the route class,
@@ -110,7 +112,7 @@ feature-by-feature contrast with other Python frameworks, read
   [→](guide/middleware.md)
 - **OpenAPI from your types** — a 3.1 spec plus Scalar docs UI, no duplicate schema
   definitions. [→](guide/openapi.md)
-- **In-process `TestClient`** — sync, no socket, full lifespan, streaming support.
+- **In-process `TestClient`** — sync, no network, full lifespan, streaming and WebSockets.
   [→](guide/testing.md)
 
 ## API reference

@@ -8,9 +8,10 @@ should be async.
 
 ## Does jero support WebSockets?
 
-Not yet. jero streams one-way today — [NDJSON and Server-Sent Events](guide/streaming.md)
-cover most live-update cases (and SSE reconnects for free). If you need bidirectional
-sockets now, jero isn't your framework yet.
+Yes—jero provides typed bidirectional [WebSockets](guide/websockets.md) and an
+in-process typed `Channel` for fan-out. For one-way server push, prefer
+[NDJSON or Server-Sent Events](guide/streaming.md), which cover most live-update cases
+and give SSE clients automatic reconnection.
 
 ## Can I serve static files?
 

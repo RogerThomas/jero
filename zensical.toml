@@ -24,6 +24,7 @@ nav = [
         ] },
         { "Features" = [
             { "Streaming" = "guide/streaming.md" },
+            { "WebSockets" = "guide/websockets.md" },
             { "Background tasks" = "guide/background-tasks.md" },
             { "Forms & uploads" = "guide/forms.md" },
             { "Authentication" = "guide/auth.md" },

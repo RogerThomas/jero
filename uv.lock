@@ -421,6 +421,7 @@ source = { editable = "." }
 dependencies = [
     { name = "msgspec" },
     { name = "multipart" },
+    { name = "typing-extensions" },
 ]
 
 [package.optional-dependencies]
@@ -458,6 +459,7 @@ requires-dist = [
     { name = "granian", marker = "extra == 'granian'", specifier = ">=2.7" },
     { name = "msgspec", specifier = ">=0.21.1" },
     { name = "multipart", specifier = ">=1.0" },
+    { name = "typing-extensions", specifier = ">=4.15" },
 ]
 provides-extras = ["granian"]
 

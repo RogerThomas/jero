@@ -19,7 +19,11 @@ classifiers = [
     "Framework :: AsyncIO",
     "Typing :: Typed",
 ]
-dependencies = ["msgspec>=0.21.1", "multipart>=1.0"]
+dependencies = [
+    "msgspec>=0.21.1",
+    "multipart>=1.0",
+    "typing-extensions>=4.15",
+]
 
 [project.optional-dependencies]
 # `uv add "jero[granian]"` — jero plus the recommended ASGI server in one step.

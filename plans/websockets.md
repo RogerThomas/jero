@@ -1,11 +1,7 @@
 # Plan: WebSockets (typed sockets and Channel fan-out)
 
-Status: **designed, not built.** The surface, framing rules, handshake semantics,
-and the `Channel` primitive are locked (DECIDED notes throughout); five OPEN items
-remain, none blocking. Build in the staged order at the bottom.
-
-Note: member spellings here (`include_socket`) predate the `public-surface.md`
-naming rule — final spellings follow that rule at build time.
+Status: **built.** The surface, framing rules, handshake semantics, typed test
+harness, and the `Channel` primitive ship as designed below.
 
 ## Goal
 
@@ -19,8 +15,8 @@ server→client push is already first-class via SSE/NDJSON — WebSockets are fo
 **genuinely bidirectional** protocols. Most "we need websockets" cases are SSE
 cases; the guide says so explicitly.
 
-The surface is four names: `SocketEndpoint`, `Socket[In, Out]`,
-`include_socket`, `Channel[T]`.
+The surface is four names: `WebSocketEndpoint`, `WebSocket[In, Out]`,
+`_include_websocket`, `Channel[T]`.
 
 ## Public API
 
@@ -43,27 +39,27 @@ type Outbound = WeatherResponse | ...
 
 
 @dataclass
-class TriviaSocket(SocketEndpoint, path="/trivia/{client_id}"):
+class TriviaWebSocket(WebSocketEndpoint, path="/trivia/{client_id}"):
     _weather_service: WeatherService
 
-    async def handle(self, socket: Socket[Inbound, Outbound], path: TriviaPath) -> None:
-        async for message in socket:
+    async def handle(self, websocket: WebSocket[Inbound, Outbound], path: TriviaPath) -> None:
+        async for message in websocket:
             match message:
                 case WeatherRequest(request_id=rid, city=city):
                     report = await self._weather_service.for_city(city)
-                    await socket.send(WeatherResponse(request_id=rid, ...))
+                    await websocket.send(WeatherResponse(request_id=rid, ...))
                 case _:
                     assert_never(message)
 
 
 class App(BaseApp[Factory]):
     async def wire(self) -> None:
-        self.include_socket(
-            TriviaSocket(self._factory.weather_service()), auth=self._factory.auth()
+        self._include_websocket(
+            TriviaWebSocket(self._factory.weather_service()), auth=self._factory.auth()
         )
 ```
 
-- `SocketEndpoint` mounts with the same `{slot}` path templates as `Endpoint`;
+- `WebSocketEndpoint` mounts with the same `{slot}` path templates as `Endpoint`;
   routing gets a websocket table beside the HTTP verb tables.
 - `handle` declares its sources like any handler: `path`/`params`/`headers`/`user`
   bind with the existing compiled sources machinery at the handshake.
@@ -93,8 +89,10 @@ concerns here, and forgetting-to-accept ceases to be a representable bug.
 Two rejection paths, split by who is being told what:
 
 - **Trust/protocol failures** (auth failure, path that doesn't bind, malformed
-  handshake) → rejected **before upgrade** with the ordinary HTTP error. No
-  socket is established; no upgrade is spent on an untrusted client.
+  handshake) → rejected **before upgrade** with the ordinary HTTP error when the
+  server advertises ASGI's optional denial-response extension, otherwise with a
+  pre-accept close (normally surfaced by the server as a bodyless HTTP 403). No socket
+  is established; no upgrade is spent on an untrusted client.
 - **Application-state rejections** ("room full", duplicate session) → `handle`
   accepts, optionally sends one typed farewell message (part of `Outbound`,
   e.g. `RoomFull(retry_after_seconds=30)`), and closes with an application
@@ -117,7 +115,7 @@ DECIDED — middleware `intercept` sees handshakes (they are requests); the
 middleware plan's verb scoping applies. `observe` for sockets is out of scope
 for v1.
 
-## Framing: `Socket[In, Out]`
+## Framing: `WebSocket[In, Out]`
 
 DECIDED — each direction declares **exactly one** payload kind:
 
@@ -127,9 +125,9 @@ DECIDED — each direction declares **exactly one** payload kind:
 | `str` | raw text, verbatim | close `1003` |
 | `bytes` | close `1003` | raw bytes, verbatim |
 
-Nine combinations, each direction independent (`Socket[bytes, Union]` is the
-audio-in/transcripts-out shape; `Socket[str, str]` is a raw text protocol;
-`Socket[bytes, bytes]` is the full escape hatch). **No mixed unions in v1** —
+Nine combinations, each direction independent (`WebSocket[bytes, Union]` is the
+audio-in/transcripts-out shape; `WebSocket[str, str]` is a raw text protocol;
+`WebSocket[bytes, bytes]` is the full escape hatch). **No mixed unions in v1** —
 `Union | str` / `Union | bytes` are a `WiringError`. Widening later is
 backwards-compatible; narrowing never is, so v1 starts narrow and needs no
 frame-dispatch rules at all.
@@ -174,13 +172,13 @@ class Factory(BaseFactory):
 
 
 @dataclass
-class ChatSocket(SocketEndpoint, path="/chat/{client_id}"):
+class ChatWebSocket(WebSocketEndpoint, path="/chat/{client_id}"):
     _room: Channel[Outbound]
 
-    async def handle(self, socket: Socket[Inbound, Outbound], path: ChatPath) -> None:
-        async with self._room.attach(socket) as subscription:
+    async def handle(self, websocket: WebSocket[Inbound, Outbound], path: ChatPath) -> None:
+        async with self._room.attach(websocket) as subscription:
             subscription.join(topic="global")
-            async for message in socket:
+            async for message in websocket:
                 ...
                 self._room.publish("global", ChatMessage(...))
         self._room.publish("global", Departed(client_id=path.client_id))
@@ -224,9 +222,9 @@ A typed test socket client on `TestClient` is in-scope and is a large fraction
 of the work (jero's testing bar, not an afterthought):
 
 ```python
-async with client.socket("/trivia/abc", inbound=Inbound, outbound=Outbound) as sock:
-    await sock.send(WeatherRequest(request_id="request-id", city="city"))
-    response = await sock.receive()          # decoded Outbound, typed
+with client.websocket("/trivia/abc", inbound=Inbound, outbound=Outbound) as websocket:
+    websocket.send(WeatherRequest(request_id="request-id", city="city"))
+    response = websocket.receive()          # decoded Outbound, typed
 ```
 
 Must cover: handshake auth pass/reject (pre-upgrade status visible to tests),
@@ -238,37 +236,41 @@ assertions, `Channel` fan-out and overflow policies, disconnect teardown.
 
 Per-message hot path: one prebuilt `Decoder(Inbound)` decode (tagged dispatch is
 O(1) in C), the handler, one encode per send. Handshake cost is the existing
-compiled HTTP machinery. Accept/close frames precomputed at wiring.
-`Channel.publish` is one encode + N queue puts. Benchmark at build time with the
+compiled HTTP machinery. The framing contract and typed decoder are precomputed
+at wiring. `Channel.publish`
+is one encode + N queue puts. Benchmark at build time with the
 in-process harness (a websocket scenario added to `bench.py`): target is that
 jero's per-message overhead over a raw ASGI websocket echo stays within the
 same ~2× envelope as the HTTP path.
 
-## OPEN
+Validated 2026-08-05 (200k messages × 7 trials): jero median 1.32m msg/s versus
+2.63m msg/s for an equivalent raw ASGI loop using the same prebuilt typed decoder
+and encoder — 1.98×, inside the target envelope.
 
-1. Defaults: `Channel.queue_size` (64?), server ping/keepalive interval (mirror
-   SSE's `keepalive` shape?), pick at build time.
-2. **Max inbound frame size** — needs a default limit and a close code (`1009`
-   message-too-big); undiscussed, must not ship unbounded.
+## V1 decisions and deferred work
+
+1. `Channel.queue_size` defaults to 64. Ping/pong keepalive is delegated to the
+   ASGI server because standard ASGI exposes no ping-frame API.
+2. Inbound frames default to a 1 MiB maximum, configurable per mount; oversized
+   frames close with `1009` (message too big).
 3. **Full-duplex handlers** — v1 is receive-driven (`async for`) plus `Channel`
    writer tasks, which covers push+ask/answer. A handler that needs its own
    concurrent send loop (not via `Channel`) needs a task-group escape hatch;
    design pass deferred.
-4. Subprotocol negotiation — likely a `SocketEndpoint` class option; likely
-   deferred entirely.
-5. Exact `attach`/`join`/`leave` subscription-object surface (sketched above,
-   not locked).
+4. Subprotocol negotiation is deferred from v1.
+5. `Channel.attach(websocket)` returns an async context-managed subscription;
+   `join(topic)` and `leave(topic)` are synchronous.
 
 ## Staged build order
 
-1. **Transport core**: websocket scope routing (`include_socket`, path tables),
-   handshake binding + auth reuse, implicit accept, `Socket[In, Out]` with the
+1. **Transport core**: websocket scope routing (`_include_websocket`, path tables),
+   handshake binding + auth reuse, implicit accept, `WebSocket[In, Out]` with the
    nine framing combinations, close-code mapping, uncaught-exception → `1011`.
-2. **Test client**: `client.socket(...)` typed harness (nothing else is
+2. **Test client**: `client.websocket(...)` typed harness (nothing else is
    verifiable to jero's standards without it); first demo_app socket.
 3. **`Channel`**: attach/join/leave, encode-once publish, per-socket writer
    tasks, overflow policies; fan-out tests incl. slow-consumer behavior.
-4. **Hardening**: max frame size (OPEN #2), keepalive/ping defaults (OPEN #1),
+4. **Hardening**: max frame size and server-owned keepalive behavior,
    benchmark scenario in the in-process harness.
 5. **Docs**: `docs/guide/websockets.md` (SSE-first guidance, the framing table,
    ask/answer + correlation idiom, the FastAPI chat-example comparison, the

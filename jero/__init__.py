@@ -20,6 +20,7 @@ from jero.core import (
     OperationMeta,
     Resource,
     ResourceMeta,
+    WebSocketEndpoint,
     WiringError,
 )
 from jero.errors import (
@@ -50,6 +51,7 @@ from jero.links import Link, Location
 from jero.openapi import ModelMeta, ResponseSpec, ScalarConfig, SecurityScheme, Tag
 from jero.streaming import NDJSONStreamingResponse, ServerSentEvent, SSEResponse, StreamingResponse
 from jero.structs import Struct
+from jero.websockets import Channel, WebSocket
 
 __all__ = [
     "CORS",
@@ -63,6 +65,7 @@ __all__ = [
     "BasicAuth",
     "BearerAuth",
     "BytesResponse",
+    "Channel",
     "ConflictError",
     "Created",
     "DataclassHTTPError",
@@ -108,6 +111,8 @@ __all__ = [
     "TooManyRequestsError",
     "UnsupportedMediaTypeError",
     "ValidationFailedError",
+    "WebSocket",
+    "WebSocketEndpoint",
     "WiringError",
     "msgspec_decoder",
     "msgspec_encoder",

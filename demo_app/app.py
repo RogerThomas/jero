@@ -18,6 +18,7 @@ from demo_app.operations.system_operations import (
     SpotlightEndpoint,
     WhoAmIEndpoint,
 )
+from demo_app.operations.websocket_operations import PingWebSocket
 from demo_app.operations.widget_operations import WidgetResource
 from jero import CORS, BaseApp
 
@@ -57,6 +58,7 @@ class DemoApp(BaseApp[Factory]):
         self._include_endpoint(FeaturedWidgetEndpoint())
         self._include_endpoint(QuestionsEndpoint(question_service))
         self._include_endpoint(NotificationsEndpoint())
+        self._include_websocket(PingWebSocket(), auth=token_auth)
         # Serve the auto-generated OpenAPI 3.1 spec at /openapi.json and a Scalar UI at /docs.
         # Tag descriptions are defined on the resources/endpoints themselves (see their meta);
         # pass tags=[Tag(...)] here only for app-level tags or to pin the section order.

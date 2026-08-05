@@ -13,12 +13,13 @@ server where socket I/O dominates — treat deltas as directional, not absolute.
 import asyncio
 import statistics
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from msgspec import Struct
-from msgspec.json import encode
+from msgspec.json import Decoder, Encoder, encode
 
-from jero import BaseApp, Endpoint
+from jero import BaseApp, Endpoint, WebSocket, WebSocketEndpoint
 
 
 class Movie(Struct):
@@ -41,11 +42,27 @@ class MoviesEndpoint(Endpoint, path="/movies"):
         return json
 
 
+class EchoMessage(Struct, tag="echo-message"):
+    """The typed payload used in both WebSocket directions."""
+
+    text: str
+
+
+class EchoWebSocket(WebSocketEndpoint, path="/echo"):
+    """Echo typed messages for the framework WebSocket benchmark."""
+
+    async def handle(self, websocket: WebSocket[EchoMessage, EchoMessage]) -> None:
+        """Decode and re-encode every inbound message."""
+        async for message in websocket:
+            await websocket.send(message)
+
+
 class App(BaseApp):
     """The benchmark app: one POST endpoint."""
 
     async def wire(self) -> None:
         self._include_endpoint(MoviesEndpoint())
+        self._include_websocket(EchoWebSocket())
 
 
 _BODY = encode(
@@ -66,6 +83,16 @@ _SCOPE: dict[str, Any] = {
     "query_string": b"",
     "headers": [(b"content-type", b"application/json")],
 }
+_WEBSOCKET_TEXT = encode(EchoMessage(text="text")).decode()
+_RAW_WEBSOCKET_DECODER = Decoder(EchoMessage)
+_RAW_WEBSOCKET_ENCODER = Encoder()
+_WEBSOCKET_SCOPE: dict[str, Any] = {
+    "type": "websocket",
+    "path": "/echo",
+    "query_string": b"",
+    "headers": [],
+    "subprotocols": [],
+}
 
 
 async def _receive() -> dict[str, Any]:
@@ -76,24 +103,63 @@ async def _send(message: dict[str, Any]) -> None:
     _ = message
 
 
+class _WebSocketCycle:
+    """Feed a fixed number of frames to one benchmark connection."""
+
+    def __init__(self, messages: int) -> None:
+        self._remaining = messages
+        self._connected = False
+
+    async def receive(self) -> dict[str, Any]:
+        """Produce connect, receive, then disconnect events."""
+        if not self._connected:
+            self._connected = True
+            return {"type": "websocket.connect"}
+        if self._remaining:
+            self._remaining -= 1
+            return {"type": "websocket.receive", "text": _WEBSOCKET_TEXT}
+        return {"type": "websocket.disconnect", "code": 1000}
+
+    async def send(self, message: dict[str, Any]) -> None:
+        """Discard one benchmark response event."""
+        _ = message
+
+
+class _Lifespan:
+    """Keep one benchmark app's real ASGI lifespan open around a measurement."""
+
+    def __init__(self, app: App) -> None:
+        self._app = app
+        self._to_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._started = asyncio.Event()
+        self._task: asyncio.Task[None] | None = None
+
+    async def receive(self) -> dict[str, Any]:
+        """Return the next lifespan event."""
+        return await self._to_app.get()
+
+    async def send(self, message: dict[str, Any]) -> None:
+        """Record completion of application startup."""
+        if message["type"] == "lifespan.startup.complete":
+            self._started.set()
+
+    async def start(self) -> None:
+        """Start the application's lifespan task and await startup."""
+        self._task = asyncio.create_task(self._app({"type": "lifespan"}, self.receive, self.send))
+        await self._to_app.put({"type": "lifespan.startup"})
+        await self._started.wait()
+
+    async def close(self) -> None:
+        """Request clean shutdown and await the lifespan task."""
+        await self._to_app.put({"type": "lifespan.shutdown"})
+        if self._task is not None:
+            await self._task
+
+
 async def _measure(requests: int, trials: int) -> list[float]:
     app = App()
-
-    # Wire the app via the real ASGI lifespan (keeps the lifespan task alive for the
-    # run, then shuts it down cleanly), so we touch only the public interface.
-    to_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-    started = asyncio.Event()
-
-    async def lifespan_receive() -> dict[str, Any]:
-        return await to_app.get()
-
-    async def lifespan_send(message: dict[str, Any]) -> None:
-        if message["type"] == "lifespan.startup.complete":
-            started.set()
-
-    lifespan = asyncio.create_task(app({"type": "lifespan"}, lifespan_receive, lifespan_send))
-    await to_app.put({"type": "lifespan.startup"})
-    await started.wait()
+    lifespan = _Lifespan(app)
+    await lifespan.start()
 
     for _ in range(2000):  # warm up
         await app(_SCOPE, _receive, _send)
@@ -105,8 +171,49 @@ async def _measure(requests: int, trials: int) -> list[float]:
             await app(_SCOPE, _receive, _send)
         rates.append(requests / (time.perf_counter() - start))
 
-    await to_app.put({"type": "lifespan.shutdown"})
-    await lifespan
+    await lifespan.close()
+    return rates
+
+
+async def _measure_websocket(messages: int, trials: int) -> list[float]:
+    app = App()
+    lifespan = _Lifespan(app)
+    await lifespan.start()
+    rates: list[float] = []
+    for _ in range(trials):
+        cycle = _WebSocketCycle(messages)
+        start = time.perf_counter()
+        await app(_WEBSOCKET_SCOPE, cycle.receive, cycle.send)
+        rates.append(messages / (time.perf_counter() - start))
+    await lifespan.close()
+    return rates
+
+
+async def _raw_websocket(
+    scope: dict[str, Any],
+    receive: Callable[[], Awaitable[dict[str, Any]]],
+    send: Callable[[dict[str, Any]], Awaitable[None]],
+) -> None:
+    _ = scope
+    await receive()
+    await send({"type": "websocket.accept"})
+    while True:
+        message = await receive()
+        if message["type"] == "websocket.disconnect":
+            return
+        decoded = _RAW_WEBSOCKET_DECODER.decode(message["text"])
+        await send(
+            {"type": "websocket.send", "text": _RAW_WEBSOCKET_ENCODER.encode(decoded).decode()}
+        )
+
+
+async def _measure_raw_websocket(messages: int, trials: int) -> list[float]:
+    rates: list[float] = []
+    for _ in range(trials):
+        cycle = _WebSocketCycle(messages)
+        start = time.perf_counter()
+        await _raw_websocket(_WEBSOCKET_SCOPE, cycle.receive, cycle.send)
+        rates.append(messages / (time.perf_counter() - start))
     return rates
 
 
@@ -117,3 +224,13 @@ def main(requests: int = 200_000, trials: int = 7) -> None:
     print(f"requests={requests:,}  trials={trials}  body={len(_BODY)}B")
     print(f"best:   {best:>12,.0f} req/s   ({1e9 / best:6.0f} ns/req)")
     print(f"median: {med:>12,.0f} req/s   ({1e9 / med:6.0f} ns/req)")
+    websocket_rates = asyncio.run(_measure_websocket(requests, trials))
+    websocket_best = max(websocket_rates)
+    websocket_med = statistics.median(websocket_rates)
+    raw_websocket_med = statistics.median(asyncio.run(_measure_raw_websocket(requests, trials)))
+    print(f"websocket best:   {websocket_best:>12,.0f} msg/s")
+    print(f"websocket median: {websocket_med:>12,.0f} msg/s")
+    print(
+        f"raw typed ASGI:   {raw_websocket_med:>12,.0f} msg/s   "
+        f"({raw_websocket_med / websocket_med:.2f}x jero)"
+    )

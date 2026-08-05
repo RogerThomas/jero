@@ -101,7 +101,8 @@ only lifecycle — the one thing plain Python doesn't give you.
   stacks, group construction in a `BaseFactory`.
 - **REST semantics for free** — 404/400/422/401/405, auto `HEAD` + `OPTIONS`, camelCase
   on the wire.
-- **A real test story** — a sync, in-process `TestClient` (no socket), streaming support,
+- **A real test story** — a sync, in-process `TestClient` (no network), streaming and
+  typed WebSocket support,
   and a `factory=` seam for mocking.
 
 Start with **[Getting Started](https://RogerThomas.github.io/jero/getting-started/)**, or
