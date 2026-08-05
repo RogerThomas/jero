@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, cast
 
 import pytest
 from msgspec import Struct
@@ -18,6 +18,7 @@ from jero import (
     Request,
     WebSocket,
     WebSocketEndpoint,
+    WiringError,
 )
 from jero.testing import (
     TestClient,
@@ -151,6 +152,28 @@ class TextToBinaryWebSocket(WebSocketEndpoint, path="/text-binary"):
             await websocket.send(message.encode())
 
 
+class ClosingWebSocket(WebSocketEndpoint, path="/closing"):
+    """Close twice to prove repeated close calls are harmless."""
+
+    async def handle(self, websocket: WebSocket[str, str]) -> None:
+        """Send one close event even when called twice."""
+        await websocket.close(code=4000, reason="closed")
+        await websocket.close(code=4000, reason="closed")
+
+
+class SendAfterCloseWebSocket(WebSocketEndpoint, path="/send-after-close"):
+    """Exercise the guard against a data frame after the close event."""
+
+    async def handle(self, websocket: WebSocket[str, str]) -> None:
+        """Close, then verify that a later send is rejected locally."""
+        await websocket.close(code=4000)
+        try:
+            await websocket.send("late")
+        except RuntimeError:
+            return
+        raise AssertionError("send after close unexpectedly succeeded")
+
+
 class RawFramingApp(BaseApp):
     """Mount both cross-kind raw framing protocols."""
 
@@ -158,6 +181,8 @@ class RawFramingApp(BaseApp):
         """Wire the binary/text framing combinations."""
         self._include_websocket(BinaryToTextWebSocket())
         self._include_websocket(TextToBinaryWebSocket())
+        self._include_websocket(ClosingWebSocket())
+        self._include_websocket(SendAfterCloseWebSocket())
 
 
 class InvalidCodeWebSocket(WebSocketEndpoint, path="/invalid-code"):
@@ -176,6 +201,14 @@ class InvalidReasonWebSocket(WebSocketEndpoint, path="/invalid-reason"):
         await websocket.close(reason="é" * 62)
 
 
+class ClientOnlyCodeWebSocket(WebSocketEndpoint, path="/client-only-code"):
+    """Attempt the client-only extension-negotiation close code 1010."""
+
+    async def handle(self, websocket: WebSocket[str, str]) -> None:
+        """Try to emit code 1010 from the server side."""
+        await websocket.close(code=1010)
+
+
 class InvalidCloseApp(BaseApp):
     """Mount both invalid-close handlers."""
 
@@ -183,6 +216,7 @@ class InvalidCloseApp(BaseApp):
         """Wire invalid close attempts for strict validation tests."""
         self._include_websocket(InvalidCodeWebSocket())
         self._include_websocket(InvalidReasonWebSocket())
+        self._include_websocket(ClientOnlyCodeWebSocket())
 
 
 class Denied(Struct):
@@ -264,8 +298,34 @@ def test_websocket_frame_kinds_are_independent() -> None:
             text_binary.send("message")
             assert text_binary.receive() == b"message"
 
+        with client.websocket("/binary-text", inbound=bytes, outbound=str) as binary_text:
+            binary_text.send_text("wrong-kind")
+            with pytest.raises(WebSocketClosedError) as caught:
+                binary_text.receive()
+            assert caught.value.code == 1003
 
-@pytest.mark.parametrize("path", ["/invalid-code", "/invalid-reason"])
+
+def test_repeated_websocket_close_is_idempotent() -> None:
+    """Only the first close call emits an event and fixes the application code."""
+    with TestClient(RawFramingApp()) as client:
+        websocket: TestWebSocket[str, str]
+        with client.websocket("/closing", inbound=str, outbound=str) as websocket:
+            with pytest.raises(WebSocketClosedError) as caught:
+                websocket.receive()
+            assert caught.value.code == 4000
+
+
+def test_websocket_rejects_send_after_close() -> None:
+    """A handler cannot emit a data frame after its close event."""
+    with TestClient(RawFramingApp()) as client:
+        websocket: TestWebSocket[str, str]
+        with client.websocket("/send-after-close", inbound=str, outbound=str) as websocket:
+            with pytest.raises(WebSocketClosedError) as caught:
+                websocket.receive()
+            assert caught.value.code == 4000
+
+
+@pytest.mark.parametrize("path", ["/invalid-code", "/invalid-reason", "/client-only-code"])
 def test_invalid_close_becomes_internal_error(path: str) -> None:
     """Invalid public close arguments remain sendable as the handler's 1011 failure."""
     with TestClient(InvalidCloseApp()) as client:
@@ -345,6 +405,8 @@ class RoomWebSocket(WebSocketEndpoint, path="/room"):
     async def handle(self, websocket: WebSocket[Publish, Event]) -> None:
         """Publish the requested burst to every attached connection."""
         async with self._room.attach(websocket) as subscription:
+            subscription.leave("missing")
+            subscription.join("global")
             subscription.join("global")
             async for message in websocket:
                 for index in range(message.count):
@@ -392,3 +454,17 @@ def test_channel_closes_overflowing_consumer() -> None:
             with pytest.raises(WebSocketClosedError) as caught:
                 websocket.receive()
             assert caught.value.code == 1013
+
+
+@pytest.mark.parametrize("queue_size", [0, True, 1.5, "1"])
+def test_channel_rejects_invalid_queue_size(queue_size: object) -> None:
+    """Channel queue size must be a positive, non-boolean integer."""
+    channel_factory = cast("Callable[..., Channel[Event]]", Channel)
+    with pytest.raises(WiringError, match="queue_size"):
+        channel_factory(Event, queue_size=queue_size)
+
+
+def test_channel_publish_without_subscribers_is_a_noop() -> None:
+    """Publishing to an empty topic returns without encoding or queue work."""
+    channel = Channel(Event)
+    channel.publish("missing", Event(index=1))

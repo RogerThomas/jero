@@ -108,7 +108,9 @@ does not expose ping frames to applications.
 
 `close()` accepts jero's standard protocol codes or application codes `4000–4999`.
 Close reasons are limited to the WebSocket protocol's 123 UTF-8 bytes; invalid values
-raise before a close event is sent.
+raise before a close event is sent. Code `1010` is client-only and therefore rejected
+for these server-originated closes. Sending after the connection starts closing is also
+rejected locally rather than emitting an invalid ASGI event.
 
 ## Framing
 
@@ -172,6 +174,7 @@ app = App()
 `publish` is synchronous and fire-and-forget. On a full queue, `"close"` closes that
 consumer with `1013`; `"drop-oldest"` replaces stale queued data, which suits tickers.
 The attachment context always removes the connection and its topic memberships.
+`queue_size` must be a positive, non-boolean integer.
 
 A channel is per process. With multiple workers, relay an external pub/sub subscription
 into each worker's local channel:

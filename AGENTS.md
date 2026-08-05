@@ -271,10 +271,12 @@ These pull against each other constantly; keep all three in mind on every change
   frames close `1003`, malformed/invalid JSON `1007`/`1008`, oversized frames `1009`
   (1 MiB default, configurable per mount), and uncaught handler errors `1011`.
   Public closes accept the sendable standard codes or `4000–4999`, with reasons capped
-  at 123 UTF-8 bytes and validated before transport state changes.
+  at 123 UTF-8 bytes and validated before transport state changes (`1010` is client-only
+  and rejected); sends after closing are rejected locally.
   OpenAPI does not model sockets. `Channel[T]` is the typed, per-process broadcast
   primitive: one encode per publish, bounded writer queue per attachment, synchronous
   `join`/`leave`/`publish`, and `"close"` (`1013`) or `"drop-oldest"` overflow.
+  `queue_size` is a positive, non-boolean integer (default 64).
   Cross-worker pub/sub and ping/pong keepalive belong to the user's backplane and ASGI
   server respectively. `TestClient.websocket(...)` is the synchronous typed harness.
 - REST error semantics throughout (404/400/422/401/405, auto HEAD + OPTIONS);

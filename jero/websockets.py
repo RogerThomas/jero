@@ -22,7 +22,7 @@ type _Overflow = Literal["close", "drop-oldest"]
 type _QueuedFrame = tuple[Literal["frame"], bytes] | tuple[Literal["close"], int]
 
 _STANDARD_CLOSE_CODES = frozenset(
-    {1000, 1001, 1002, 1003, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014}
+    {1000, 1001, 1002, 1003, 1007, 1008, 1009, 1011, 1012, 1013, 1014}
 )
 
 
@@ -139,11 +139,19 @@ class WebSocket[Inbound, Outbound](AsyncIterator[Inbound]):
             )
         if len(reason.encode()) > 123:
             raise ValueError("WebSocket close reason must be at most 123 UTF-8 bytes")
-        await self._send({"type": "websocket.close", "code": code, "reason": reason})
         self._closed = True
+        sent = False
+        try:
+            await self._send({"type": "websocket.close", "code": code, "reason": reason})
+            sent = True
+        finally:
+            if not sent:
+                self._closed = False
 
     async def send(self, message: Outbound) -> None:
         """Encode and send one outbound message according to the declared framing."""
+        if self._closed:
+            raise RuntimeError("cannot send on a closed WebSocket")
         if self._outbound_kind == "bytes":
             await self._send({"type": "websocket.send", "bytes": cast("bytes", message)})
             return
@@ -154,6 +162,8 @@ class WebSocket[Inbound, Outbound](AsyncIterator[Inbound]):
 
     async def send_encoded(self, payload: bytes) -> None:
         """Send pre-encoded JSON; the package boundary used by :class:`Channel`."""
+        if self._closed:
+            raise RuntimeError("cannot send on a closed WebSocket")
         await self._send({"type": "websocket.send", "text": payload.decode()})
 
 
@@ -239,8 +249,8 @@ class Channel[T]:
             raise WiringError("Channel message type must be a tagged msgspec.Struct union")
         if overflow not in ("close", "drop-oldest"):
             raise WiringError("Channel overflow must be 'close' or 'drop-oldest'")
-        if queue_size < 1:
-            raise WiringError("Channel queue_size must be at least 1")
+        if not isinstance(queue_size, int) or isinstance(queue_size, bool) or queue_size < 1:
+            raise WiringError("Channel queue_size must be a positive integer")
         self._overflow = overflow
         self._queue_size = queue_size
         self._topics: dict[str, set[_Subscriber[T]]] = {}
