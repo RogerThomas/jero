@@ -15,19 +15,19 @@ uv add jero
 
 ## What is jero?
 
-jero is a [msgspec](https://msgspec.dev/)-first [ASGI](https://asgi.readthedocs.io/en/latest/)
-framework where your type hints are the API contract ([a note on AI usage](note-on-ai-usage.md)).
-Routing, binding, validation, serialization, auth checks, and [OpenAPI
-generation](guide/openapi.md) all derive from statically declared types — introspected
-once, at startup — so the request path stays minimal: dict lookup → msgspec decode →
-handler call → encode.
+jero is an AI-powered ([a note on AI usage](note-on-ai-usage.md)),
+[msgspec](https://msgspec.dev/)-first [ASGI](https://asgi.readthedocs.io/en/latest/)
+framework where your type hints are the API contract. Routing, binding, validation,
+serialization, auth checks, and [OpenAPI generation](guide/openapi.md) all derive from
+statically declared types, introspected once at startup. The request path stays
+minimal: dict lookup, msgspec decode, handler call, encode.
 
 There are no route decorators and no dependency-injection container. Routes are plain
 classes (`Resource` for REST collections, `Endpoint` for one-off routes), the method
 name *is* the HTTP operation, and dependencies are ordinary constructor arguments.
-Everything that crosses the wire — bodies, headers, path and query params, forms — is a
-msgspec `Struct`: one contract driving validation, serialization, startup checks,
-schema generation, and msgspec's compiled-codec performance.
+Everything that crosses the wire is a msgspec `Struct`: bodies, headers, path and
+query params, forms. That single contract drives validation, serialization, startup
+checks, schema generation, and msgspec's compiled-codec speed.
 
 ## Quickstart
 
@@ -69,10 +69,13 @@ Run it under any ASGI server, e.g. [granian](https://github.com/emmett-framework
 granian --interface asgi myapp:app
 ```
 
-In our four-scenario benchmark against seven frameworks — Python, Go, and Bun — jero is
-the **fastest Python framework in every one**, methodology included. [→ Performance](performance.md)
-
 New here? Start with [Getting Started](getting-started.md).
+
+## jero is fast
+
+jero was written for speed and performance: in our four-scenario benchmark against
+seven frameworks across Python, Go, and Bun, jero is the **fastest Python framework in
+every one**, methodology included. [→ Performance](performance.md)
 
 ## Core principles
 
