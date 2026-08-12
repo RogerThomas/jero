@@ -87,6 +87,20 @@ def _validate_domain(domain: str) -> None:
         )
 
 
+# The only three values RFC 6265bis defines for SameSite. An allow-list, not a
+# character check, because it's a closed set — anything outside it is simply wrong,
+# not merely differently-shaped, and a caller building it from a non-literal source
+# (config, an env var, a `cast` to satisfy the type checker) gets the same construction-
+# time rejection as a hand-typed typo. It also closes the header-injection angle a
+# character check would (same_site is interpolated verbatim into the Set-Cookie value).
+_SAME_SITE_VALUES = frozenset({"strict", "lax", "none"})
+
+
+def _validate_same_site(same_site: str) -> None:
+    if same_site not in _SAME_SITE_VALUES:
+        raise ValueError(f"SetCookie: same_site {same_site!r} must be 'strict', 'lax', or 'none'")
+
+
 def _imf_fixdate(moment: datetime) -> str:
     """``moment`` as an RFC 9110 IMF-fixdate in GMT (``Wdy, DD Mon YYYY HH:MM:SS GMT``).
 
@@ -139,6 +153,8 @@ class SetCookie:
             _validate_path(self.path)
         if self.domain is not None:
             _validate_domain(self.domain)
+        if self.same_site is not None:
+            _validate_same_site(self.same_site)
         if self.same_site == "none" and not self.secure:
             raise ValueError("SetCookie: same_site='none' requires secure=True")
         if self.partitioned and not self.secure:

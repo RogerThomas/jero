@@ -8,7 +8,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Self, cast
+from typing import Any, Literal, Self, cast
 
 import pytest
 from msgspec import Struct, field
@@ -369,6 +369,11 @@ def test_testclient_cookies_and_explicit_cookie_header_conflict() -> None:
             {"name": "session", "domain": "evil.com\r\nX-Injected: 1"},
             "domain .* contains characters",
         ),
+        ({"name": "session", "same_site": "Lax"}, "same_site .* must be"),
+        (
+            {"name": "session", "same_site": "lax\r\nSet-Cookie: injected=1"},
+            "same_site .* must be",
+        ),
         ({"name": "session", "same_site": "none", "secure": False}, "same_site='none' requires"),
         ({"name": "session", "partitioned": True, "secure": False}, "partitioned=True requires"),
         ({"name": "__Host-session", "secure": False}, "'__Host-' cookie requires"),
@@ -398,6 +403,12 @@ def test_setcookie_construction_accepts_valid_host_and_secure_prefixes() -> None
     SetCookie("__Host-session", "value")
     SetCookie("__Secure-session", "value")
     SetCookie("session", "value", domain="sub.example.com", path="/app/sub-path")
+
+
+@pytest.mark.parametrize("same_site", ["strict", "lax", "none"])
+def test_setcookie_construction_accepts_every_valid_same_site_value(same_site: str) -> None:
+    """Each of the three RFC-defined SameSite values constructs without raising."""
+    SetCookie("session", "value", same_site=cast(Literal["strict", "lax", "none"], same_site))
 
 
 # --- Response side: SetCookie on every wrapper kind ---
