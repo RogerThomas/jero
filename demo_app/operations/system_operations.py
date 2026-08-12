@@ -1,8 +1,21 @@
 """Standalone endpoints: the authenticated identity probe, the optionally-authenticated
-spotlight, health checks, a raw-form echo, and a cross-module ``from_ref`` link demo."""
+spotlight, health checks, a raw-form echo, a cross-module ``from_ref`` link demo, and the
+cookie-session login/logout/profile trio."""
 
-from demo_app.models import Health, RawForm, RawFormHeaders, Spotlight, User, Widget, WidgetPath
-from jero import Endpoint, EndpointMeta, JSONResponse, Link, NoContent, RawHeaders, Tag
+from dataclasses import dataclass
+
+from demo_app.errors import InvalidTokenError
+from demo_app.models import (
+    Health,
+    LoginRequest,
+    RawForm,
+    RawFormHeaders,
+    Spotlight,
+    User,
+    Widget,
+    WidgetPath,
+)
+from jero import Endpoint, EndpointMeta, JSONResponse, Link, NoContent, RawHeaders, SetCookie, Tag
 
 
 class WhoAmIEndpoint(Endpoint, path="/me"):
@@ -92,3 +105,30 @@ class FeaturedWidgetEndpoint(Endpoint, path="/featured-widget"):
                 )
             ],
         )
+
+
+@dataclass
+class SessionEndpoint(Endpoint, path="/session"):
+    """Unauthenticated cookie-session login/logout, over the same token map ``TokenAuth``
+    validates against — the browser-facing sibling of the bearer flow."""
+
+    _users: dict[str, User]
+
+    async def post(self, json: LoginRequest) -> NoContent:
+        """Log in: verify the token and set the session cookie."""
+        if json.token not in self._users:
+            raise InvalidTokenError()
+        return NoContent(cookies=[SetCookie("session_id", json.token)])
+
+    async def delete(self) -> NoContent:
+        """Log out: expire the session cookie."""
+        return NoContent(cookies=[SetCookie.expire("session_id")])
+
+
+class ProfileEndpoint(Endpoint, path="/profile"):
+    """Cookie-gated read, mounted behind ``SessionAuth`` — the session-cookie counterpart
+    to the bearer-gated ``/me``."""
+
+    async def get(self, user: User) -> User:
+        """Return the session-authenticated caller."""
+        return user

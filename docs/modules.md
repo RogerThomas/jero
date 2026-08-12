@@ -45,6 +45,10 @@ The full public surface, grouped by area. Everything here is importable from `je
 ::: jero.SSEResponse
 ::: jero.ServerSentEvent
 
+## Cookies
+
+::: jero.SetCookie
+
 ## Errors
 
 ::: jero.BaseHTTPError
@@ -75,6 +79,8 @@ The full public surface, grouped by area. Everything here is importable from `je
 ## Authentication
 
 ::: jero.Auth
+::: jero.CookieAuth
+::: jero.HybridAuth
 ::: jero.BearerAuth
 ::: jero.BasicAuth
 ::: jero.SecurityScheme
@@ -102,5 +108,6 @@ The full public surface, grouped by area. Everything here is importable from `je
 
 ::: jero.testing.TestClient
 ::: jero.testing.TestResponse
+::: jero.testing.TestCookie
 ::: jero.testing.TestSSEEvent
 ::: jero.testing.FactoryHarness

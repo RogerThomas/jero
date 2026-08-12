@@ -19,9 +19,11 @@ import asyncio
 import contextlib
 import queue
 import threading
-from collections.abc import Callable, Coroutine, Sequence
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any, Self, cast
 from urllib.parse import urlencode
 
@@ -36,6 +38,83 @@ type _DataValue = str | bytes
 type _DataValues = _DataValue | list[_DataValue]
 type _FileValue = tuple[str | None, bytes] | tuple[str | None, bytes, str]
 type _FileValues = _FileValue | list[_FileValue]
+
+
+@dataclass(frozen=True, slots=True)
+class TestCookie:
+    """One parsed ``Set-Cookie`` response header. Attribute names parse
+    case-insensitively; ``expires`` is the raw wire value, unparsed."""
+
+    __test__ = False
+
+    value: str
+    max_age: int | None = None
+    expires: str | None = None
+    path: str | None = None
+    domain: str | None = None
+    secure: bool = False
+    http_only: bool = False
+    same_site: str | None = None
+    partitioned: bool = False
+
+
+def _parse_set_cookie(header_value: str) -> tuple[str, TestCookie]:
+    """One ``Set-Cookie`` header value as its cookie name and parsed :class:`TestCookie`."""
+    name_pair, *attr_parts = header_value.split(";")
+    name, _, value = name_pair.strip().partition("=")
+    max_age: int | None = None
+    expires: str | None = None
+    path: str | None = None
+    domain: str | None = None
+    secure = False
+    http_only = False
+    same_site: str | None = None
+    partitioned = False
+    for part in attr_parts:
+        attr_name, _, attr_value = part.strip().partition("=")
+        lower = attr_name.lower()
+        if lower == "max-age":
+            max_age = int(attr_value)
+        elif lower == "expires":
+            expires = attr_value
+        elif lower == "path":
+            path = attr_value
+        elif lower == "domain":
+            domain = attr_value
+        elif lower == "secure":
+            secure = True
+        elif lower == "httponly":
+            http_only = True
+        elif lower == "samesite":
+            same_site = attr_value
+        elif lower == "partitioned":
+            partitioned = True
+    return name.strip(), TestCookie(
+        value=value,
+        max_age=max_age,
+        expires=expires,
+        path=path,
+        domain=domain,
+        secure=secure,
+        http_only=http_only,
+        same_site=same_site,
+        partitioned=partitioned,
+    )
+
+
+def _cookie_is_expired(cookie: TestCookie) -> bool:
+    """Whether ``cookie`` clears itself: ``Max-Age=0`` or a past ``Expires``."""
+    if cookie.max_age is not None and cookie.max_age <= 0:
+        return True
+    if cookie.expires is None:
+        return False
+    try:
+        expires = parsedate_to_datetime(cookie.expires)
+    except (TypeError, ValueError):
+        return False
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=UTC)
+    return expires <= datetime.now(UTC)
 
 
 @dataclass(slots=True)
@@ -58,6 +137,15 @@ class TestResponse:
     def json(self) -> Any:
         """The response body decoded as JSON."""
         return msgspec_decoder.decode(self.content)
+
+    @property
+    def cookies(self) -> dict[str, TestCookie]:
+        """The response's ``Set-Cookie`` headers, parsed and keyed by cookie name."""
+        return dict(
+            _parse_set_cookie(value)
+            for key, value in self.multi_headers
+            if key.lower() == "set-cookie"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -365,12 +453,24 @@ class TestWebSocket[Inbound, Outbound]:
 
 
 class TestClient:
-    """Synchronous in-process client. Prefer ``with TestClient(app) as c``."""
+    """Synchronous in-process client. Prefer ``with TestClient(app) as c``.
+
+    ``cookie_jar=True`` opts into automatic cookie persistence across requests (off by
+    default — every request then sends only what you explicitly pass). When on, each
+    response's ``Set-Cookie`` values are stored in ``client.cookie_jar`` (a plain,
+    directly inspectable and mutable ``dict[str, str]``) and attached to subsequent
+    requests and WebSocket handshakes; an expiring ``Set-Cookie`` (``Max-Age=0`` or a
+    past ``Expires``) removes its entry. Per-request ``cookies=`` merges *over* the jar
+    (explicit wins on name collisions). The jar is name -> value only, with no
+    path/domain scoping — the harness is single-origin and in-process, so RFC 6265
+    scoping rules would be dead code here."""
 
     __test__ = False  # stop pytest from collecting this as a test case
 
-    def __init__(self, app: BaseApp[Any]) -> None:
+    def __init__(self, app: BaseApp[Any], *, cookie_jar: bool = False) -> None:
         self._app = app
+        self._jar_enabled = cookie_jar
+        self.cookie_jar: dict[str, str] = {}
         self._loop_thread = _LoopThread()
         self._to_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._from_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -383,6 +483,41 @@ class TestClient:
 
     def _submit[T](self, coro: Coroutine[Any, Any, T]) -> T:
         return self._loop_thread.submit(coro)
+
+    @staticmethod
+    def _merge_cookies(
+        headers: Mapping[str, str] | None, cookies: Mapping[str, str] | None
+    ) -> dict[str, str]:
+        """``headers`` with ``cookies`` folded in as one ``Cookie`` header. Passing both
+        ``cookies=`` and an explicit ``Cookie`` entry in ``headers=`` is ambiguous."""
+        merged = dict(headers or {})
+        if not cookies:
+            return merged
+        if any(key.lower() == "cookie" for key in merged):
+            raise ValueError("TestClient: pass cookies= or a 'Cookie' header, not both")
+        merged["Cookie"] = "; ".join(f"{name}={value}" for name, value in cookies.items())
+        return merged
+
+    def _outgoing_cookies(self, cookies: Mapping[str, str] | None) -> Mapping[str, str] | None:
+        """``cookies`` merged over the jar (explicit wins on a name collision), when the
+        jar is enabled; ``cookies`` unchanged otherwise."""
+        if not self._jar_enabled:
+            return cookies
+        return {**self.cookie_jar, **(cookies or {})}
+
+    def _apply_response_cookies(self, multi_headers: list[tuple[str, str]]) -> None:
+        """Fold a response's ``Set-Cookie`` headers into the jar, when enabled: store a
+        live cookie, drop one that expires itself (``Max-Age=0`` or a past ``Expires``)."""
+        if not self._jar_enabled:
+            return
+        for key, value in multi_headers:
+            if key.lower() != "set-cookie":
+                continue
+            name, cookie = _parse_set_cookie(value)
+            if _cookie_is_expired(cookie):
+                self.cookie_jar.pop(name, None)
+            else:
+                self.cookie_jar[name] = cookie.value
 
     @staticmethod
     def _part_content(value: str | bytes) -> bytes:
@@ -465,9 +600,11 @@ class TestClient:
         data: dict[str, _DataValues] | None,
         files: dict[str, _FileValues] | None,
         headers: dict[str, str] | None,
+        cookies: Mapping[str, str] | None,
     ) -> TestResponse:
         body = b""
-        wire_headers = {k.lower(): v for k, v in (headers or {}).items()}
+        outgoing = self._merge_cookies(headers, self._outgoing_cookies(cookies))
+        wire_headers = {k.lower(): v for k, v in outgoing.items()}
         if json is not None:
             body = msgspec_encoder.encode(json)
             wire_headers.setdefault("content-type", "application/json")
@@ -490,6 +627,7 @@ class TestClient:
 
         cycle = _RequestCycle(body)
         await self._app(scope, cycle.receive, cycle.send)
+        self._apply_response_cookies(cycle.multi_headers)
         return TestResponse(
             status_code=cycle.status,
             headers=cycle.headers,
@@ -508,9 +646,11 @@ class TestClient:
         data: dict[str, _DataValues] | None,
         files: dict[str, _FileValues] | None,
         headers: dict[str, str] | None,
+        cookies: Mapping[str, str] | None,
     ) -> _StreamSession:
         body = b""
-        wire_headers = {k.lower(): v for k, v in (headers or {}).items()}
+        outgoing = self._merge_cookies(headers, self._outgoing_cookies(cookies))
+        wire_headers = {k.lower(): v for k, v in outgoing.items()}
         if json is not None:
             body = msgspec_encoder.encode(json)
             wire_headers.setdefault("content-type", "application/json")
@@ -545,9 +685,11 @@ class TestClient:
         *,
         params: dict[str, str] | None,
         headers: dict[str, str] | None,
+        cookies: Mapping[str, str] | None,
         denial_response_extension: bool,
     ) -> tuple[_WebSocketCycle, asyncio.Task[None]]:
-        wire_headers = {key.lower(): value for key, value in (headers or {}).items()}
+        outgoing = self._merge_cookies(headers, self._outgoing_cookies(cookies))
+        wire_headers = {key.lower(): value for key, value in outgoing.items()}
         scope: dict[str, Any] = {
             "type": "websocket",
             "path": path,
@@ -594,6 +736,7 @@ class TestClient:
         data: dict[str, _DataValues] | None = None,
         files: dict[str, _FileValues] | None = None,
         headers: dict[str, str] | None = None,
+        cookies: Mapping[str, str] | None = None,
     ) -> TestResponse:
         """Issue a request and return the buffered response."""
         return self._submit(
@@ -606,6 +749,7 @@ class TestClient:
                 data=data,
                 files=files,
                 headers=headers,
+                cookies=cookies,
             )
         )
 
@@ -617,6 +761,7 @@ class TestClient:
         outbound: TypeForm[Outbound],
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        cookies: Mapping[str, str] | None = None,
         denial_response_extension: bool = True,
     ) -> TestWebSocket[Inbound, Outbound]:
         """Open a typed in-process WebSocket connection."""
@@ -625,6 +770,7 @@ class TestClient:
                 path,
                 params=params,
                 headers=headers,
+                cookies=cookies,
                 denial_response_extension=denial_response_extension,
             )
         )
@@ -641,6 +787,7 @@ class TestClient:
         data: dict[str, _DataValues] | None = None,
         files: dict[str, _FileValues] | None = None,
         headers: dict[str, str] | None = None,
+        cookies: Mapping[str, str] | None = None,
     ) -> _StreamSession:
         """Issue a request and return a streaming session for its chunks."""
         return self._submit(
@@ -653,6 +800,7 @@ class TestClient:
                 data=data,
                 files=files,
                 headers=headers,
+                cookies=cookies,
             )
         )
 
@@ -662,9 +810,10 @@ class TestClient:
         *,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        cookies: Mapping[str, str] | None = None,
     ) -> TestResponse:
         """Issue a GET request."""
-        return self.request("GET", path, params=params, headers=headers)
+        return self.request("GET", path, params=params, headers=headers, cookies=cookies)
 
     def stream_get(
         self,
@@ -672,9 +821,10 @@ class TestClient:
         *,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        cookies: Mapping[str, str] | None = None,
     ) -> _StreamSession:
         """Open a streaming GET request."""
-        return self.stream_request("GET", path, params=params, headers=headers)
+        return self.stream_request("GET", path, params=params, headers=headers, cookies=cookies)
 
     def head(
         self,
@@ -682,9 +832,10 @@ class TestClient:
         *,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        cookies: Mapping[str, str] | None = None,
     ) -> TestResponse:
         """Issue a HEAD request."""
-        return self.request("HEAD", path, params=params, headers=headers)
+        return self.request("HEAD", path, params=params, headers=headers, cookies=cookies)
 
     def options(
         self,
@@ -692,9 +843,10 @@ class TestClient:
         *,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        cookies: Mapping[str, str] | None = None,
     ) -> TestResponse:
         """Issue an OPTIONS request."""
-        return self.request("OPTIONS", path, params=params, headers=headers)
+        return self.request("OPTIONS", path, params=params, headers=headers, cookies=cookies)
 
     def delete(
         self,
@@ -702,9 +854,10 @@ class TestClient:
         *,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        cookies: Mapping[str, str] | None = None,
     ) -> TestResponse:
         """Issue a DELETE request."""
-        return self.request("DELETE", path, params=params, headers=headers)
+        return self.request("DELETE", path, params=params, headers=headers, cookies=cookies)
 
     def stream_delete(
         self,
@@ -712,9 +865,10 @@ class TestClient:
         *,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        cookies: Mapping[str, str] | None = None,
     ) -> _StreamSession:
         """Open a streaming DELETE request."""
-        return self.stream_request("DELETE", path, params=params, headers=headers)
+        return self.stream_request("DELETE", path, params=params, headers=headers, cookies=cookies)
 
     def post(
         self,
@@ -726,6 +880,7 @@ class TestClient:
         files: dict[str, _FileValues] | None = None,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        cookies: Mapping[str, str] | None = None,
     ) -> TestResponse:
         """Issue a POST request (JSON, raw bytes, or multipart form)."""
         return self.request(
@@ -737,6 +892,7 @@ class TestClient:
             files=files,
             params=params,
             headers=headers,
+            cookies=cookies,
         )
 
     def stream_post(
@@ -749,6 +905,7 @@ class TestClient:
         files: dict[str, _FileValues] | None = None,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        cookies: Mapping[str, str] | None = None,
     ) -> _StreamSession:
         """Open a streaming POST request."""
         return self.stream_request(
@@ -760,6 +917,7 @@ class TestClient:
             files=files,
             params=params,
             headers=headers,
+            cookies=cookies,
         )
 
     def put(
@@ -772,6 +930,7 @@ class TestClient:
         files: dict[str, _FileValues] | None = None,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        cookies: Mapping[str, str] | None = None,
     ) -> TestResponse:
         """Issue a PUT request (JSON, raw bytes, or multipart form)."""
         return self.request(
@@ -783,6 +942,7 @@ class TestClient:
             files=files,
             params=params,
             headers=headers,
+            cookies=cookies,
         )
 
     def stream_put(
@@ -795,6 +955,7 @@ class TestClient:
         files: dict[str, _FileValues] | None = None,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        cookies: Mapping[str, str] | None = None,
     ) -> _StreamSession:
         """Open a streaming PUT request."""
         return self.stream_request(
@@ -806,6 +967,7 @@ class TestClient:
             files=files,
             params=params,
             headers=headers,
+            cookies=cookies,
         )
 
     def patch(
@@ -818,6 +980,7 @@ class TestClient:
         files: dict[str, _FileValues] | None = None,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        cookies: Mapping[str, str] | None = None,
     ) -> TestResponse:
         """Issue a PATCH request (JSON, raw bytes, or multipart form)."""
         return self.request(
@@ -829,6 +992,7 @@ class TestClient:
             files=files,
             params=params,
             headers=headers,
+            cookies=cookies,
         )
 
     def stream_patch(
@@ -841,6 +1005,7 @@ class TestClient:
         files: dict[str, _FileValues] | None = None,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        cookies: Mapping[str, str] | None = None,
     ) -> _StreamSession:
         """Open a streaming PATCH request."""
         return self.stream_request(
@@ -852,6 +1017,7 @@ class TestClient:
             files=files,
             params=params,
             headers=headers,
+            cookies=cookies,
         )
 
     def close(self) -> None:

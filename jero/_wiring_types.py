@@ -247,6 +247,7 @@ class Sources(Struct):
     params: type[Struct] | None = None
     path: type[Struct] | None = None
     headers: type[Struct] | None = None
+    cookies: type[Struct] | None = None
     user: type[Struct] | None = None
     # True when 'user' was declared ``UserStruct | None`` (the anonymous-caller contract). Set
     # together with ``user``; cross-checked at wiring time against whether the route's
@@ -277,3 +278,7 @@ class OperationSpec(Struct):
     class_meta: ResourceMeta | EndpointMeta | None
     op_meta: OperationMeta | None
     operation_id_default: str
+    # The authenticator's class name, carried through only so a derivation failure (a
+    # hybrid or multi-field-cookie authenticator with no explicit openapi_security) can
+    # name it in the WiringError raised when the document is actually built.
+    auth_owner: str | None = None

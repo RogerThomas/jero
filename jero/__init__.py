@@ -3,6 +3,7 @@
 from jero._middleware import CORS, HTTPMethod, NoHeaders, Request
 from jero.background import BackgroundTasks
 from jero.codecs import msgspec_decoder, msgspec_encoder
+from jero.cookies import SetCookie
 from jero.core import (
     Accepted,
     Auth,
@@ -11,10 +12,12 @@ from jero.core import (
     BasicAuth,
     BearerAuth,
     BytesResponse,
+    CookieAuth,
     Created,
     Endpoint,
     EndpointMeta,
     ExceptionResponse,
+    HybridAuth,
     JSONResponse,
     NoContent,
     OperationMeta,
@@ -67,6 +70,7 @@ __all__ = [
     "BytesResponse",
     "Channel",
     "ConflictError",
+    "CookieAuth",
     "Created",
     "DataclassHTTPError",
     "Endpoint",
@@ -80,6 +84,7 @@ __all__ = [
     "GoneError",
     "HTTPError",
     "HTTPMethod",
+    "HybridAuth",
     "InternalServerError",
     "JSONResponse",
     "Link",
@@ -104,6 +109,7 @@ __all__ = [
     "ScalarConfig",
     "SecurityScheme",
     "ServerSentEvent",
+    "SetCookie",
     "StreamingResponse",
     "Struct",
     "StructHTTPError",

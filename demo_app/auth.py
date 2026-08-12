@@ -1,9 +1,11 @@
-"""Bearer-token authentication for the demo app.
+"""Bearer-token and cookie-session authentication for the demo app.
 
-Two authenticators over one shared token lookup, because an authenticator's declared return
-type *is* its routes' auth policy: :class:`TokenAuth` returns ``User`` and gates, while
-:class:`OptionalTokenAuth` returns ``User | None`` and lets an anonymous caller through. A
-route's policy is therefore visible in which one its mount passes.
+Two header-based authenticators over one shared token lookup, because an authenticator's
+declared return type *is* its routes' auth policy: :class:`TokenAuth` returns ``User`` and
+gates, while :class:`OptionalTokenAuth` returns ``User | None`` and lets an anonymous
+caller through. A route's policy is therefore visible in which one its mount passes.
+:class:`SessionAuth` is the cookie-based sibling, over the same token map — the browser
+session-cookie story cookie auth exists for.
 
 A pure in-memory token-to-user map — no lifecycle resource, so they are built directly in
 the app's ``wire`` rather than the factory. Swapping the factory in tests therefore
@@ -13,7 +15,7 @@ replaces only the I/O services and leaves auth wiring intact.
 from dataclasses import dataclass
 
 from demo_app.errors import InvalidTokenError
-from demo_app.models import Credentials, User
+from demo_app.models import Credentials, SessionCookies, User
 from jero import AuthenticationRequiredError, BearerAuth
 
 
@@ -67,3 +69,23 @@ class OptionalTokenAuth(TokenLookup, BearerAuth[Credentials, User]):
     async def authenticate(self, headers: Credentials) -> User | None:  # pylint: disable=invalid-overridden-method
         """Resolve the bearer token to a user, ``None`` if none was presented, or raise 401."""
         return self._resolve(headers)
+
+
+@dataclass
+class SessionAuth:
+    """Cookie-based session auth over the same token lookup ``TokenAuth`` uses.
+
+    Satisfies ``CookieAuth[SessionCookies, User]`` structurally — no base class needed:
+    unlike :class:`BearerAuth`/:class:`BasicAuth`, there is no cookie sugar class, because
+    the OpenAPI apiKey-in-cookie scheme derives automatically from ``SessionCookies``
+    having exactly one field and nothing declared on ``openapi_security``.
+    """
+
+    _users: dict[str, User]
+
+    async def authenticate(self, cookies: SessionCookies) -> User:
+        """Resolve the session cookie to a user, or raise 401."""
+        user = self._users.get(cookies.session_id)
+        if user is None:
+            raise InvalidTokenError()
+        return user

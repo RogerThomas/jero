@@ -6,15 +6,17 @@ link demo. Auth is a pure in-memory token map built in ``wire`` (no lifecycle), 
 the factory in tests replaces only the I/O services and leaves auth intact.
 """
 
-from demo_app.auth import OptionalTokenAuth, TokenAuth
+from demo_app.auth import OptionalTokenAuth, SessionAuth, TokenAuth
 from demo_app.factory import Factory
 from demo_app.models import User
 from demo_app.operations.streaming_operations import NotificationsEndpoint, QuestionsEndpoint
 from demo_app.operations.system_operations import (
     FeaturedWidgetEndpoint,
     HealthEndpoint,
+    ProfileEndpoint,
     RawFormEndpoint,
     RawHealthEndpoint,
+    SessionEndpoint,
     SpotlightEndpoint,
     WhoAmIEndpoint,
 )
@@ -45,6 +47,9 @@ class DemoApp(BaseApp[Factory]):
         # Same token lookup, the other policy: credentials are an input rather than a gate, so
         # an anonymous caller binds user=None. A bad token is still a 401.
         optional_token_auth = OptionalTokenAuth(users)
+        # The cookie-based sibling of TokenAuth, over the same map — the browser session
+        # story: /session sets the cookie SessionAuth then validates on /profile.
+        session_auth = SessionAuth(users)
         self._include_exception_handler(upstream_response_error_handler)
         # Serve browser callers from any origin (the wildcard compiles to constant
         # header pairs — free per request); every include below inherits it.
@@ -52,6 +57,8 @@ class DemoApp(BaseApp[Factory]):
         self._include_resource(WidgetResource(widget_service, background_tasks), auth=token_auth)
         self._include_endpoint(WhoAmIEndpoint(), auth=token_auth)
         self._include_endpoint(SpotlightEndpoint(), auth=optional_token_auth)
+        self._include_endpoint(SessionEndpoint(users))
+        self._include_endpoint(ProfileEndpoint(), auth=session_auth)
         self._include_endpoint(HealthEndpoint())
         self._include_endpoint(RawHealthEndpoint())
         self._include_endpoint(RawFormEndpoint())
