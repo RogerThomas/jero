@@ -498,10 +498,16 @@ class TestClient:
         merged["Cookie"] = "; ".join(f"{name}={value}" for name, value in cookies.items())
         return merged
 
-    def _outgoing_cookies(self, cookies: Mapping[str, str] | None) -> Mapping[str, str] | None:
+    def _outgoing_cookies(
+        self, headers: Mapping[str, str] | None, cookies: Mapping[str, str] | None
+    ) -> Mapping[str, str] | None:
         """``cookies`` merged over the jar (explicit wins on a name collision), when the
-        jar is enabled; ``cookies`` unchanged otherwise."""
-        if not self._jar_enabled:
+        jar is enabled. Skipped when ``headers`` already carries an explicit ``Cookie``
+        entry: that escape hatch must not silently gain jar cookies, and the ambiguity
+        check in :meth:`_merge_cookies` must fire only when the caller actually passed
+        both ``cookies=`` and a header — not merely because the jar happens to hold
+        something."""
+        if not self._jar_enabled or any(key.lower() == "cookie" for key in headers or {}):
             return cookies
         return {**self.cookie_jar, **(cookies or {})}
 
@@ -603,7 +609,7 @@ class TestClient:
         cookies: Mapping[str, str] | None,
     ) -> TestResponse:
         body = b""
-        outgoing = self._merge_cookies(headers, self._outgoing_cookies(cookies))
+        outgoing = self._merge_cookies(headers, self._outgoing_cookies(headers, cookies))
         wire_headers = {k.lower(): v for k, v in outgoing.items()}
         if json is not None:
             body = msgspec_encoder.encode(json)
@@ -649,7 +655,7 @@ class TestClient:
         cookies: Mapping[str, str] | None,
     ) -> _StreamSession:
         body = b""
-        outgoing = self._merge_cookies(headers, self._outgoing_cookies(cookies))
+        outgoing = self._merge_cookies(headers, self._outgoing_cookies(headers, cookies))
         wire_headers = {k.lower(): v for k, v in outgoing.items()}
         if json is not None:
             body = msgspec_encoder.encode(json)
@@ -688,7 +694,7 @@ class TestClient:
         cookies: Mapping[str, str] | None,
         denial_response_extension: bool,
     ) -> tuple[_WebSocketCycle, asyncio.Task[None]]:
-        outgoing = self._merge_cookies(headers, self._outgoing_cookies(cookies))
+        outgoing = self._merge_cookies(headers, self._outgoing_cookies(headers, cookies))
         wire_headers = {key.lower(): value for key, value in outgoing.items()}
         scope: dict[str, Any] = {
             "type": "websocket",

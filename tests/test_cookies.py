@@ -7,6 +7,7 @@ sections below, added as each stage of the cookies plan lands."""
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Self, cast
 
 import pytest
@@ -347,6 +348,58 @@ def test_testclient_cookies_and_explicit_cookie_header_conflict() -> None:
         )
 
 
+# --- SetCookie construction validation ---
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"name": "bad name"}, "name .* contains characters"),
+        ({"name": ""}, "name must be non-empty"),
+        ({"name": "session", "value": "bad;value"}, "value .* contains characters"),
+        ({"name": "session", "value": 'bad"value'}, "value .* contains characters"),
+        ({"name": "session", "max_age": True}, "max_age must be an int"),
+        ({"name": "session", "max_age": 1.5}, "max_age must be an int"),
+        ({"name": "session", "path": "no-leading-slash"}, "path .* must start with"),
+        ({"name": "session", "path": "/a;b"}, "path .* contains characters"),
+        ({"name": "session", "path": "/a\r\nSet-Cookie: pwned=1"}, "path .* contains characters"),
+        ({"name": "session", "domain": ""}, "domain must be non-empty"),
+        ({"name": "session", "domain": "evil.com;X=1"}, "domain .* contains characters"),
+        (
+            {"name": "session", "domain": "evil.com\r\nX-Injected: 1"},
+            "domain .* contains characters",
+        ),
+        ({"name": "session", "same_site": "none", "secure": False}, "same_site='none' requires"),
+        ({"name": "session", "partitioned": True, "secure": False}, "partitioned=True requires"),
+        ({"name": "__Host-session", "secure": False}, "'__Host-' cookie requires"),
+        ({"name": "__Host-session", "domain": "example.com"}, "'__Host-' cookie requires"),
+        ({"name": "__Host-session", "path": "/app"}, "'__Host-' cookie requires"),
+        ({"name": "__Secure-session", "secure": False}, "'__Secure-' cookie requires"),
+    ],
+)
+def test_setcookie_construction_rejects_invalid_input(kwargs: dict[str, Any], match: str) -> None:
+    """Every ``SetCookie`` validation branch raises ``ValueError`` at construction —
+    including the domain/path character checks that guard against header injection."""
+    with pytest.raises(ValueError, match=match):
+        SetCookie(**kwargs)
+
+
+def test_setcookie_construction_naive_expires_is_rejected() -> None:
+    """A timezone-naive ``expires`` is rejected (checked separately: it isn't kwargs-friendly
+    to parametrize alongside the rest, since it needs a real ``datetime``)."""
+    naive = datetime.now(UTC).replace(tzinfo=None)
+    with pytest.raises(ValueError, match="expires must be timezone-aware"):
+        SetCookie("session", expires=naive)
+
+
+def test_setcookie_construction_accepts_valid_host_and_secure_prefixes() -> None:
+    """A compliant ``__Host-``/``__Secure-`` cookie, and a domain/path within the
+    allowed character set, construct without raising."""
+    SetCookie("__Host-session", "value")
+    SetCookie("__Secure-session", "value")
+    SetCookie("session", "value", domain="sub.example.com", path="/app/sub-path")
+
+
 # --- Response side: SetCookie on every wrapper kind ---
 
 
@@ -604,6 +657,29 @@ def test_jar_is_directly_mutable() -> None:
         client.cookie_jar["session_id"] = "manually-set"
         resp = client.get("/whoami")
         assert resp.json()["session_id"] == "manually-set"
+
+
+def test_jar_does_not_falsely_conflict_with_an_explicit_cookie_header() -> None:
+    """A non-empty jar must not turn an explicit 'Cookie' header (with no cookies=)
+    into a false ambiguity error — that header wins outright, jar included."""
+    with TestClient(JarApp(), cookie_jar=True) as client:
+        client.cookie_jar["session_id"] = "jarred-value"
+        resp = client.get("/whoami", headers={"Cookie": "session_id=header-value"})
+        assert resp.status_code == 200
+        assert resp.json()["session_id"] == "header-value"
+
+
+def test_jar_and_explicit_cookies_and_header_together_still_raises() -> None:
+    """Passing cookies= *and* an explicit header is still ambiguous even with the jar
+    enabled — the jar only resolves the no-cookies=-at-all case."""
+    with TestClient(JarApp(), cookie_jar=True) as client:
+        client.cookie_jar["session_id"] = "jarred-value"
+        with pytest.raises(ValueError, match="cookies="):
+            client.get(
+                "/whoami",
+                cookies={"session_id": "explicit-value"},
+                headers={"Cookie": "session_id=header-value"},
+            )
 
 
 # --- Cookie auth: CookieAuth, HybridAuth, and OpenAPI security derivation ---

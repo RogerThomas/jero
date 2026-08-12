@@ -45,6 +45,20 @@ def _is_cookie_octet(char: str) -> bool:
     return 0x21 <= ord(char) <= 0x7E and char not in _VALUE_EXCLUDED
 
 
+def _is_path_char(char: str) -> bool:
+    """RFC 6265's ``path-value``: any character but a control character or ``;``.
+    Unlike a cookie name/value, space is allowed — a real path segment may need one."""
+    return 0x20 <= ord(char) <= 0x7E and char != ";"
+
+
+def _is_domain_char(char: str) -> bool:
+    """ASCII hostname characters only. Not a full RFC 1123 label-length validation —
+    just enough to keep a domain from being anything but a hostname, which is what
+    stops it from being usable as a header-injection vector (embedded CR/LF, another
+    ``Set-Cookie``, and so on)."""
+    return char.isascii() and (char.isalnum() or char in "-.")
+
+
 def _validate_name(name: str) -> None:
     if not name:
         raise ValueError("SetCookie: name must be non-empty")
@@ -55,6 +69,22 @@ def _validate_name(name: str) -> None:
 def _validate_value(value: str) -> None:
     if not all(_is_cookie_octet(char) for char in value):
         raise ValueError(f"SetCookie: value {value!r} contains characters not allowed by RFC 6265")
+
+
+def _validate_path(path: str) -> None:
+    if not path.startswith("/"):
+        raise ValueError(f"SetCookie: path {path!r} must start with '/'")
+    if not all(_is_path_char(char) for char in path):
+        raise ValueError(f"SetCookie: path {path!r} contains characters not allowed by RFC 6265")
+
+
+def _validate_domain(domain: str) -> None:
+    if not domain:
+        raise ValueError("SetCookie: domain must be non-empty (or None)")
+    if not all(_is_domain_char(char) for char in domain):
+        raise ValueError(
+            f"SetCookie: domain {domain!r} contains characters not allowed by RFC 6265"
+        )
 
 
 def _imf_fixdate(moment: datetime) -> str:
@@ -105,10 +135,10 @@ class SetCookie:
             raise ValueError("SetCookie: max_age must be an int")
         if self.expires is not None and self.expires.tzinfo is None:
             raise ValueError("SetCookie: expires must be timezone-aware")
-        if self.path is not None and not self.path.startswith("/"):
-            raise ValueError(f"SetCookie: path {self.path!r} must start with '/'")
-        if self.domain is not None and not self.domain:
-            raise ValueError("SetCookie: domain must be non-empty (or None)")
+        if self.path is not None:
+            _validate_path(self.path)
+        if self.domain is not None:
+            _validate_domain(self.domain)
         if self.same_site == "none" and not self.secure:
             raise ValueError("SetCookie: same_site='none' requires secure=True")
         if self.partitioned and not self.secure:
