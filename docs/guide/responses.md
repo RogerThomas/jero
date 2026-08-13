@@ -104,7 +104,8 @@ for a wrapper never costs you the schema. The header type `H` defaults to `None`
 
 ## Headers
 
-Two ways to set response headers, mirroring how a handler [receives](binding.md#headers-headers-typed-and-raw_headers-opaque) them.
+Three ways to control what a response carries: typed headers, cookies, and the raw
+escape hatch — the typed/raw split mirrors how a handler [receives](binding.md#headers-headers-typed-and-raw_headers-opaque) headers.
 
 ### Typed — `headers`
 
@@ -127,27 +128,43 @@ JSONResponse(json=widget, headers=Headers(x_request_id="abc", x_rate_remaining=4
 
 This is the typed path the OpenAPI spec will describe.
 
+### Cookies — `cookies`
+
+A `Sequence[SetCookie]`, one `Set-Cookie` header per entry, secure by default. This is
+the blessed way to set a cookie — see [Cookies](cookies.md) for the full page
+(`SetCookie`'s secure-by-default attributes, deleting with `SetCookie.expire`, and
+cookie auth):
+
+```python
+from jero import SetCookie
+
+JSONResponse(json=widget, cookies=[SetCookie("session_id", token)])
+```
+
 ### Raw — `raw_headers`
 
-The escape hatch for exotic names: literal underscores, specific casing, or **repeats**
-(e.g. multiple `Set-Cookie`). A plain mapping, or a `RawHeaders` (pass a request's
-straight through to forward it, repeats and all):
+The escape hatch for exotic names now: literal underscores or specific casing. A plain
+mapping, or a `RawHeaders` (pass a request's straight through to forward it, repeats
+and all) — still how you'd hand-roll a repeated header jero has no typed vocabulary
+for:
 
 ```python
 from jero import RawHeaders
 
 JSONResponse(
     json=widget,
-    raw_headers=RawHeaders([("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")]),
+    raw_headers=RawHeaders([("X-Trace-Id", "a"), ("X-Trace-Id", "b")]),
 )
 ```
 
-When both are given, the typed `headers` are emitted first, then `raw_headers` is
-appended — so its repeats survive. `content-type` defaults per kind and
-`content-length` is always managed by the framework (ignored if you supply it).
+Emission order when several are given: typed `headers` first, then one `Set-Cookie`
+pair per `cookies` entry, then `raw_headers` last — so its own repeats still survive.
+`content-type` defaults per kind and `content-length` is always managed by the
+framework (ignored if you supply it).
 
-> The rule of thumb: a typed `Struct` for the conventional case; drop to `raw_headers`
-> for exact wire control — casing, underscores, repeats, anything non-conventional.
+> The rule of thumb: a typed `Struct` for the conventional case, `cookies` for
+> `Set-Cookie` specifically, and `raw_headers` only for exact wire control on anything
+> else non-conventional — casing, underscores, a repeat jero has no typed name for.
 
 ## Status codes
 

@@ -86,6 +86,23 @@ class Credentials(Camel):
     authorization: str | None = None
 
 
+class LoginRequest(Camel):
+    """The token presented to /session to establish a cookie-based session."""
+
+    token: str
+
+
+class SessionCookies(Struct):
+    """The session cookie set by a successful /session login.
+
+    Deliberately a plain ``Struct``, not ``Camel``: cookie names bind verbatim and
+    case-sensitively (see ``jero``'s ``cookies`` binding source docs) — there is no
+    header-style mangle, and camelCasing a cookie name would be unusual in practice.
+    """
+
+    session_id: str
+
+
 class User(Camel):
     """The authenticated caller."""
 

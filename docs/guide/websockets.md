@@ -82,10 +82,14 @@ names such as `Tick` or `Departed`.
 
 ## Handshake binding and authentication
 
-`handle` may bind `path`, `params`, `headers`, `raw_headers`, and `user` exactly like an
-HTTP handler. Authentication and binding run before the upgrade. A failure is returned
-as an ordinary typed HTTP rejection when the ASGI server advertises the WebSocket denial
-response extension. Without that optional extension, jero sends a pre-accept close and
+`handle` may bind `path`, `params`, `headers`, `cookies`, `raw_headers`, and `user`
+exactly like an HTTP handler. `cookies` is the motivating case for cookie auth here: a
+browser's WebSocket API cannot set an `Authorization` header, but it always sends
+cookies — mount a `CookieAuth`/`HybridAuth` authenticator (see
+[Cookies](cookies.md#websockets-the-motivating-case)) and a browser client
+authenticates with the session cookie it already has. Authentication and binding run
+before the upgrade. A failure is returned as an ordinary typed HTTP rejection when the
+ASGI server advertises the WebSocket denial response extension. Without that optional extension, jero sends a pre-accept close and
 the server rejects the upgrade (normally as HTTP 403, without the typed body). Only a
 valid handshake receives `websocket.accept` and enters the handler.
 

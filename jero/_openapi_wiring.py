@@ -111,6 +111,8 @@ def _params_for(sources: Sources) -> tuple[ParamSpec, ...]:
         params.append(ParamSpec("query", sources.params))
     if sources.headers is not None:
         params.append(ParamSpec("header", sources.headers))
+    if sources.cookies is not None:
+        params.append(ParamSpec("cookie", sources.cookies))
     return tuple(params)
 
 
@@ -378,7 +380,12 @@ def _error_responses(
     is registered, the adapter's per-status body (what the wire really carries)."""
     has_body = sources.json_decoder is not None or sources.form is not None
     statuses: list[int] = []
-    if has_body or sources.params is not None or sources.headers is not None:
+    if (
+        has_body
+        or sources.params is not None
+        or sources.headers is not None
+        or sources.cookies is not None
+    ):
         statuses.append(400)
     if has_body:
         statuses.append(422)
@@ -581,6 +588,14 @@ def operation_input(
         if op_meta is not None and op_meta.operation_id is not None
         else spec.operation_id_default
     )
+    # An authed route whose scheme couldn't be derived (a hybrid or multi-field-cookie
+    # authenticator) documents nothing about auth unless caught here — and this only runs
+    # for an app that actually calls _include_openapi, so apps that don't never pay.
+    if spec.auth_mode is not None and spec.security_scheme is None:
+        raise WiringError(
+            f"{operation_id}: no OpenAPI security scheme could be derived for "
+            f"{spec.auth_owner} — declare `openapi_security` on {spec.auth_owner}",
+        )
     # Responses cascade by status: derived (lowest), then declared exceptions, then
     # explicit ResponseSpecs — class-meta before op-meta within each layer.
     responses: dict[int, ResponseEntry] = {}

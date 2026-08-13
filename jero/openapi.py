@@ -21,7 +21,7 @@ from msgspec import Struct
 from msgspec.json import schema_components
 from msgspec.structs import fields as struct_fields
 
-type Location = Literal["path", "query", "header"]  # where a request parameter lives
+type Location = Literal["path", "query", "header", "cookie"]  # where a request parameter lives
 type ApiKeyLocation = Literal["header", "query", "cookie"]  # the OpenAPI apiKey ``in``
 type SchemeType = Literal["http", "apiKey", "oauth2", "openIdConnect"]
 
@@ -579,9 +579,11 @@ def _content(
 
 
 def _parameters(params: tuple[ParamSpec, ...], schemas: _Schemas) -> list[dict[str, Any]]:
-    """Expand each param Struct's fields into individual parameter objects. Path/query
-    names use the wire (encode) name; header names invert the request mangle
-    (``x_token`` -> ``x-token``), mirroring how responses name typed headers."""
+    """Expand each param Struct's fields into individual parameter objects. Path/query/
+    cookie names use the wire (encode) name verbatim — a cookie name is never mangled
+    the way a header is, matching jero's own no-mangle binding rule for ``cookies``; header
+    names invert the request mangle (``x_token`` -> ``x-token``), mirroring how responses
+    name typed headers."""
     parameters: list[dict[str, Any]] = []
     for param in params:
         props = schemas.properties(param.struct)

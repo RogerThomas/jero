@@ -126,7 +126,11 @@ These pull against each other constantly; keep all three in mind on every change
   package-internal boundary-crossers (like `encode_sse`), not public API.
 - Handler args bind **by name**, each a msgspec Struct: `json`, `content` (raw
   bytes), `form` (multipart) — the three body sources are mutually exclusive —
-  `params` (query), `path` (URL template slots), `headers` (typed), `raw_headers`
+  `params` (query), `path` (URL template slots), `headers` (typed), `cookies` (typed,
+  bound **verbatim and case-sensitive** — no header-style mangle, since RFC 6265 names
+  are case-sensitive and routinely not valid identifiers; parsing is lenient — a
+  malformed fragment or an unknown name is skipped, never a 400 — but *your* declared
+  fields are strict, same as headers), `raw_headers`
   (opaque `RawHeaders` bag), `user` (auth result). Return a Struct, `list[Struct]`,
   `bytes`, or a response wrapper to control headers/status: `JSONResponse[T, H]` /
   `BytesResponse[H]` / a streaming response (`NDJSONStreamingResponse[T, H]`, …).
@@ -139,9 +143,14 @@ These pull against each other constantly; keep all three in mind on every change
   never a silent `{}` schema.
 - **Response headers & status**: the wrappers carry a typed `headers` Struct (the
   header *type* is a parameter `H`; field names inverse-mangle `x_trace_id` →
-  `x-trace-id`, scalars stringify, Structs JSON-encode, None fields omit), a
-  `raw_headers` escape hatch (exotic names, casing, repeats — e.g. `Set-Cookie`),
-  and a `status_code` override (else the verb's default). The buffered wrappers are
+  `x-trace-id`, scalars stringify, Structs JSON-encode, None fields omit), `cookies:
+  Sequence[SetCookie]` (`jero/cookies.py`; secure-by-default `Set-Cookie` — `Path=/;
+  Secure; HttpOnly; SameSite=Lax` — validated at construction, `SetCookie.expire(name)`
+  for deletion, two entries sharing a name is a 500), a
+  `raw_headers` escape hatch (exotic names/casing now that cookies has its own typed
+  vocabulary), and a `status_code` override (else the verb's default). Emission order:
+  typed `headers`, then `cookies`, then `raw_headers` last (so its own repeats still
+  survive). The buffered wrappers are
   `@dataclass` (like the streaming ones), generic over body `T` and headers `H` so
   both schemas survive to the OpenAPI spec — a bare `JSONResponse` (no `[T]`) is a
   pyright-strict error on purpose.
@@ -187,13 +196,18 @@ These pull against each other constantly; keep all three in mind on every change
   `@api.get(...) → return {"a": 1}` idiom is gone: a `dict`/blob return is a
   `WiringError` at startup. JSON in and out is a typed Struct, every time — that's
   what gives it validation *and* a schema for the OpenAPI spec. No exceptions.
-- **Auth**: an object with `authenticate(headers: Struct) -> UserStruct`; the
-  user type is checked against handlers at startup. **The authenticator's declared return
+- **Auth**: an object whose `authenticate` binds `headers`, `cookies`, or both
+  (`Auth[THeaders, TUser]` / `CookieAuth[TCookies, TUser]` / `HybridAuth[THeaders,
+  TCookies, TUser]` — three static protocols, one runtime `_CompiledAuth` that
+  introspects the concrete signature) and returns `UserStruct`; the user type is
+  checked against handlers at startup. Cookie auth is what makes browser WebSocket auth
+  possible at all (no `Authorization` header there, but cookies always ride along).
+  **The authenticator's declared return
   type is the route's auth policy**: `-> UserStruct` gates, while `-> UserStruct | None`
   makes credentials an *input* — returning `None` reports **absent** credentials and the
   handler runs with `user=None`, while **present but invalid** ones still raise (401).
   Absence is the authenticator's call, never a heuristic; note `authenticate` only sees what
-  its headers Struct can bind, so the credential field needs a `| None` default for absence
+  its declared Struct(s) can bind, so a credential field needs a `| None` default for absence
   to reach it. Handlers must match (`user: UserStruct | None` against the second), checked
   both directions at startup — **and a handler that omits `user` is a `WiringError` on an
   anonymous-accepting route** (nothing would record that the route is open; behind a gating
@@ -202,6 +216,16 @@ These pull against each other constantly; keep all three in mind on every change
   so a route's policy is visible in what its mount passes. `AuthMode` (`"required" |
   "optional" | None`) carries this on the `OperationSpec`; the spec emits
   `[{scheme: []}, {}]` for an anonymous-accepting operation and keeps its derived 401.
+  Security-scheme derivation (nothing declared on `openapi_security`): headers-only →
+  HTTP bearer; cookies-only with exactly one cookie field → `apiKey` in `cookie`, named
+  for that field; a hybrid authenticator or a multi-field cookies-only one can't be
+  reduced to one scheme — `_include_openapi` raises for it, naming the class, but only
+  if OpenAPI is ever wired. `_include_resource` / `_include_endpoint` /
+  `_include_websocket` spell `auth=` as three `@overload`s (one per protocol) rather
+  than one three-way Union — mypy's structural-match inference can't solve a Union of
+  several generic Protocols each binding its own type parameters (falls back to
+  `Never` and rejects every concrete auth class); `@overload` is the one place this
+  codebase reaches for it, and every other checker handles both forms equally well.
 - **Wiring / DI**: there is **no DI container** — and that's deliberate, not a
   gap. You hand-wire classes in the overridden `wire` (`BaseApp` is an `ABC` and
   `wire` is abstract; subclass `BaseApp[Factory]`, linear async, no yield); a
@@ -263,8 +287,10 @@ These pull against each other constantly; keep all three in mind on every change
   *after* the resources its handlers use, so it drains before they're torn down.
 - **WebSockets**: subclass `WebSocketEndpoint` with a required class `path` and one
   async `handle(websocket: WebSocket[Inbound, Outbound], ...) -> None`; mount it with
-  `_include_websocket`. Handshake `path`/`params`/`headers`/`raw_headers`/`user` bind
-  and auth run before implicit acceptance. Rejections preserve the typed HTTP body via
+  `_include_websocket`. Handshake `path`/`params`/`headers`/`cookies`/`raw_headers`/`user`
+  bind and auth run before implicit acceptance — `cookies` is the motivating case for
+  cookie auth: a browser's WebSocket API cannot set an `Authorization` header, but always
+  sends cookies. Rejections preserve the typed HTTP body via
   ASGI's optional denial-response extension when advertised; otherwise they fall back
   to a pre-accept close. Each direction is exactly one framing kind:
   a tagged Struct union as strict JSON, raw `str` text, or raw `bytes` binary; wrong
@@ -314,6 +340,10 @@ These pull against each other constantly; keep all three in mind on every change
   `Channel[T]` fan-out primitive.
   `jero/links.py` — `Location` / `Link` and their reverse-routing targets (a leaf module
   `core` and `streaming` both import). `jero/headers.py` — the `RawHeaders` opaque bag.
+  `jero/cookies.py` — `SetCookie` (the response-side vocabulary, secure-by-default
+  validation, `expire()`), `encode_set_cookie`, and the request-side `parse_cookie_header`
+  — a leaf module mirroring `headers.py`'s split, imported by `core`, `streaming`, and
+  `_exception_handlers` (all three response-wrapper families carry `cookies=`).
   `jero/errors.py` — typed Problem Details Structs, `HTTPError` foundations, and the
   framework's fixed error types.
   `jero/codecs.py` — the
@@ -333,8 +363,9 @@ These pull against each other constantly; keep all three in mind on every change
 - `tests/` — pytest suite driven through `TestClient` against `demo_app/` (plus small
   local apps for focused cases).
 - `plans/` — design plans for not-yet-built work, fully designed with decisions locked,
-  staged for review before implementation. Currently `websockets.md` (`middleware.md`,
-  `public-surface.md`, and `openapi-security-validation.md` are built).
+  staged for review before implementation. All current plans (`cookies.md`,
+  `websockets.md`, `middleware.md`, `public-surface.md`, `openapi-security-validation.md`)
+  are built.
 - `bugs/` — one markdown note per **not-yet-fixed** bug, tracked in `bugs/README.md`
   (the manifest). **Only write a note for a bug you're leaving unfixed for later** —
   if you fix a bug in the same change, *don't* add a note; the regression test is the
@@ -347,8 +378,10 @@ These pull against each other constantly; keep all three in mind on every change
 ## Status & sharp edges
 
 - **Built**: routing + path-param templates, Resource/Endpoint, all binding sources
-  (incl. typed `headers` and the opaque `raw_headers`), auth (required *and* optional),
-  REST semantics,
+  (incl. typed `headers`, typed `cookies` — verbatim/case-sensitive, lenient parsing,
+  strict binding — and the opaque `raw_headers`), auth (required *and* optional,
+  header/cookie/hybrid sources via `Auth`/`CookieAuth`/`HybridAuth`), cookie responses
+  (`SetCookie` on every wrapper, secure by default, `expire()`), REST semantics,
   response kinds — generic `JSONResponse[T, H]` / `BytesResponse[H]` / streaming
   `[T, H]` with typed response headers, `raw_headers`, and `status_code` overrides, plus
   `NoContent[H]` / `Created[T, H]` / `Accepted[T, H]` (204/201/202 regardless of the

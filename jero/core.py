@@ -12,10 +12,12 @@ The contract:
   template slot; fields beyond the slots extend the route with trailing segments (the item id).
   Path Struct fields cannot have defaults.
 - Handler arguments bind by name: ``json`` (request body), ``params`` (query string), ``path``
-  (URL segments), ``headers``, and ``user`` (the result of auth). Each must be annotated with a
-  msgspec Struct. A handler may instead take the raw body as ``content: bytes`` (mutually exclusive
-  with ``json``). Returns are a Struct, ``list[Struct]``, ``bytes`` (sent as
-  application/octet-stream), or a ``BytesResponse`` / ``JSONResponse`` to control response headers.
+  (URL segments), ``headers``, ``cookies``, and ``user`` (the result of auth). Each must be
+  annotated with a msgspec Struct — ``cookies`` binds by verbatim, case-sensitive cookie name,
+  unlike the snake_case mangle ``headers`` applies. A handler may instead take the raw body as
+  ``content: bytes`` (mutually exclusive with ``json``). Returns are a Struct, ``list[Struct]``,
+  ``bytes`` (sent as application/octet-stream), or a ``BytesResponse`` / ``JSONResponse`` to
+  control response headers.
   msgspec ``rename`` is honored everywhere (e.g. ``Struct, rename="camel"`` for camelCase on the
   wire, snake_case in code) — define your own base Struct for the wire convention.
 - Auth is an object passed to ``_include_resource`` implementing
@@ -85,6 +87,7 @@ from typing import (
     get_args,
     get_origin,
     get_type_hints,
+    overload,
 )
 from urllib.parse import unquote, unquote_plus
 
@@ -128,6 +131,7 @@ from jero._wiring_types import (
 )
 from jero.background import BackgroundTasks
 from jero.codecs import msgspec_encoder
+from jero.cookies import SetCookie, encode_set_cookie, parse_cookie_header
 from jero.errors import (
     AuthenticationRequiredError,
     BaseHTTPError,
@@ -217,7 +221,7 @@ class _WebSocketInterceptRunner(Protocol):
 
 # Argument names the binder understands, shared by every handler kind.
 _SOURCES = frozenset(
-    {"json", "content", "form", "params", "path", "headers", "user", "raw_headers"}
+    {"json", "content", "form", "params", "path", "headers", "cookies", "user", "raw_headers"}
 )
 # HTTP verbs that forbid a request body, whatever the handler is named.
 _BODYLESS_VERBS = frozenset({"GET", "DELETE"})
@@ -247,13 +251,16 @@ class BaseResponse[H: Struct | None = None]:
       (``x_trace_id`` -> ``x-trace-id``); scalar values are stringified (``bool`` as
       ``true``/``false``), Struct/list values are JSON-encoded; None-valued fields
       are omitted. ``H`` defaults to ``None`` (no typed headers).
-    - ``raw_headers`` — the escape hatch for exotic names: literal underscores,
-      specific casing, or repeats (e.g. multiple ``Set-Cookie``). A plain mapping,
-      or a ``RawHeaders`` (pass the request's straight through to forward it,
-      repeats and all).
+    - ``cookies`` — a sequence of :class:`~jero.SetCookie`, one ``Set-Cookie`` header
+      per entry, secure by default. Use :meth:`SetCookie.expire` to clear one.
+    - ``raw_headers`` — the escape hatch for exotic names: literal underscores or
+      specific casing. A plain mapping, or a ``RawHeaders`` (pass the request's
+      straight through to forward it, repeats and all) — still the way to hand-roll a
+      ``Set-Cookie`` during migration, but ``cookies`` is the blessed way now.
 
-    When both are given, the typed ``headers`` are emitted first, then
-    ``raw_headers`` is appended, so its repeats survive.
+    Emission order when several are given: typed ``headers`` first, then one
+    ``Set-Cookie`` pair per ``cookies`` entry, then ``raw_headers`` last — so its own
+    repeats still survive.
 
     ``status_code`` overrides the status this response would otherwise send — the verb's
     default (201 for create, else 200), or the fixed status of a wrapper that has one
@@ -270,6 +277,7 @@ class BaseResponse[H: Struct | None = None]:
     status_code: int | None = None
     location: Location | None = None
     links: Sequence[Link] = ()
+    cookies: Sequence[SetCookie] = ()
 
 
 @dataclass(kw_only=True, slots=True)
@@ -499,7 +507,9 @@ class WebSocketEndpoint(_Routable):
 
     Subclasses define exactly one async ``handle`` method whose first argument is
     ``websocket: WebSocket[Inbound, Outbound]``. Handshake sources use the existing
-    ``path`` / ``params`` / ``headers`` / ``raw_headers`` / ``user`` vocabulary.
+    ``path`` / ``params`` / ``headers`` / ``cookies`` / ``raw_headers`` / ``user``
+    vocabulary. ``cookies`` is the motivating case for auth here: a browser's WebSocket
+    API cannot set an ``Authorization`` header, but always sends cookies.
     """
 
     def __init_subclass__(cls, *, path: str) -> None:
@@ -528,11 +538,52 @@ class Auth[THeaders: Struct, TUser: Struct](Protocol):
     ``authenticate`` only sees credentials your ``THeaders`` Struct can bind: a Struct
     whose fields are all required makes a credential-less request a 401 before your code
     runs. Give the field a ``| None`` default (``authorization: str | None = None``) to
-    have absence reach ``authenticate`` and become your decision.
+    have absence reach ``authenticate`` and become your decision — the same rule applies
+    to a :class:`CookieAuth`/:class:`HybridAuth` cookie field.
     """
 
     def authenticate(self, headers: THeaders) -> TUser | Awaitable[TUser | None] | None:
         """Validate ``headers`` and return the user Struct; raise ``HTTPError`` to reject.
+
+        Return ``None`` only to report that no credentials were presented (see the class
+        docstring); it is never a way to say "these credentials are bad".
+        """
+        ...  # pylint: disable=unnecessary-ellipsis  # Protocol stub; pyright needs the body
+
+
+class CookieAuth[TCookies: Struct, TUser: Struct](Protocol):
+    """Implement ``authenticate``; raise an ``HTTPError`` subclass to reject.
+
+    Session-cookie auth: ``cookies`` binds from the request's ``Cookie`` header into your
+    declared Struct, verbatim and case-sensitively (no snake_case mangle, unlike
+    ``headers`` — see the ``cookies`` binding source). Otherwise identical to
+    :class:`Auth`: the return type is the route's auth policy (``-> TUser`` gates,
+    ``-> TUser | None`` accepts anonymous callers), and both apply on a WebSocket
+    handshake — the motivating case, since a browser's WebSocket API cannot set an
+    ``Authorization`` header but always sends cookies.
+    """
+
+    def authenticate(self, cookies: TCookies) -> TUser | Awaitable[TUser | None] | None:
+        """Validate ``cookies`` and return the user Struct; raise ``HTTPError`` to reject.
+
+        Return ``None`` only to report that no credentials were presented (see the class
+        docstring); it is never a way to say "these credentials are bad".
+        """
+        ...  # pylint: disable=unnecessary-ellipsis  # Protocol stub; pyright needs the body
+
+
+class HybridAuth[THeaders: Struct, TCookies: Struct, TUser: Struct](Protocol):
+    """Implement ``authenticate``; raise an ``HTTPError`` subclass to reject.
+
+    Both ``headers`` and ``cookies`` bind — one app serving bearer-token API clients and
+    cookie-authenticated browser clients on the same routes. Otherwise identical to
+    :class:`Auth`: the return type is the route's auth policy.
+    """
+
+    def authenticate(
+        self, headers: THeaders, cookies: TCookies
+    ) -> TUser | Awaitable[TUser | None] | None:
+        """Validate ``headers``/``cookies`` and return the user Struct; raise to reject.
 
         Return ``None`` only to report that no credentials were presented (see the class
         docstring); it is never a way to say "these credentials are bad".
@@ -563,6 +614,7 @@ class _StreamResult(Protocol):
     status_code: int | None
     location: Location | None
     links: Sequence[Link]
+    cookies: Sequence[SetCookie]
 
 
 def _allow_header(allowed: Sequence[HTTPMethod]) -> bytes:
@@ -644,6 +696,18 @@ def _wire_header_pairs(scope: Scope) -> list[tuple[str, str]]:
     Distinct from _raw_headers, which snake_cases names for msgspec ``convert``.
     """
     return [(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope["headers"]]
+
+
+def _request_cookies(scope: Scope) -> dict[str, str]:
+    """The request's cookies, name -> value. Scans ``scope["headers"]`` directly for
+    ``cookie`` entries rather than building the full header dict — cheap on routes that
+    declared cookies, free everywhere else. HTTP/2 (RFC 9113 §8.2.3) lets a client split
+    the ``Cookie`` header across several field lines, so every occurrence is joined with
+    ``"; "`` before parsing, matching how a single header with the same content would read."""
+    values = [v.decode("latin-1") for k, v in scope["headers"] if k == b"cookie"]
+    if not values:
+        return {}
+    return parse_cookie_header("; ".join(values))
 
 
 def _mangle_headers(headers: dict[str, str]) -> dict[str, str]:
@@ -1342,12 +1406,13 @@ def _bind_websocket_sources(cls: type, fn: Callable[..., Any]) -> tuple[Sources,
     types: dict[str, type[Struct]] = {}
     wants_raw_headers = False
     user_optional = False
-    allowed = frozenset({"params", "path", "headers", "user", "raw_headers"})
+    allowed = frozenset({"params", "path", "headers", "cookies", "user", "raw_headers"})
     for param in params[1:]:
         if param.name not in allowed:
             raise WiringError(
                 f"{cls.__name__}.handle: unsupported argument {param.name!r}; "
-                "allowed handshake sources are path, params, headers, raw_headers, and user",
+                "allowed handshake sources are path, params, headers, cookies, "
+                "raw_headers, and user",
             )
         if param.name == "raw_headers":
             if hints.get("raw_headers") is not RawHeaders:
@@ -1364,6 +1429,7 @@ def _bind_websocket_sources(cls: type, fn: Callable[..., Any]) -> tuple[Sources,
         params=types.get("params"),
         path=types.get("path"),
         headers=types.get("headers"),
+        cookies=types.get("cookies"),
         user=types.get("user"),
         user_optional=user_optional,
         raw_headers=wants_raw_headers,
@@ -1382,22 +1448,48 @@ class _CompiledAuth:
     introspection, so a plain ``__init__`` is the honest shape.
     """
 
-    __slots__ = ("_fn", "_is_async", "headers_type", "owner", "reports_absence", "returns")
+    __slots__ = (
+        "_fn",
+        "_is_async",
+        "cookies_type",
+        "headers_type",
+        "owner",
+        "reports_absence",
+        "returns",
+    )
 
-    def __init__(self, auth: Auth[Any, Any]) -> None:
+    _VALID_ARG_NAMES = frozenset({"headers", "cookies"})
+
+    def __init__(
+        self, auth: "Auth[Any, Any] | CookieAuth[Any, Any] | HybridAuth[Any, Any, Any]"
+    ) -> None:
         self.owner = type(auth).__name__
         fn = getattr(auth, "authenticate", None)
         if not callable(fn):
             raise WiringError(f"{self.owner} must define an 'authenticate' method")
 
         params = list(inspect.signature(fn).parameters.values())
-        if len(params) != 1 or params[0].name != "headers":
+        names = [param.name for param in params]
+        valid = (
+            bool(names)
+            and len(set(names)) == len(names)
+            and all(name in self._VALID_ARG_NAMES for name in names)
+        )
+        if not valid:
             raise WiringError(
-                f"{self.owner}.authenticate must take exactly one argument named 'headers'",
+                f"{self.owner}.authenticate must take 'headers', 'cookies', or both — "
+                f"got {', '.join(names) if names else 'no arguments'}",
             )
         hints = get_type_hints(fn)
-        self.headers_type = _struct_annotation(
-            type(auth), "authenticate", "headers", hints.get("headers")
+        self.headers_type = (
+            _struct_annotation(type(auth), "authenticate", "headers", hints.get("headers"))
+            if "headers" in names
+            else None
+        )
+        self.cookies_type = (
+            _struct_annotation(type(auth), "authenticate", "cookies", hints.get("cookies"))
+            if "cookies" in names
+            else None
         )
 
         returns = hints.get("return")
@@ -1413,12 +1505,16 @@ class _CompiledAuth:
         self._fn: Callable[..., Any] = fn
         self._is_async = inspect.iscoroutinefunction(fn)
 
-    async def __call__(self, raw_headers: dict[str, str]) -> Struct | None:
+    async def __call__(self, raw_headers: dict[str, str], cookies: dict[str, str]) -> Struct | None:
         try:
-            credentials = convert(raw_headers, self.headers_type, strict=False)
+            kwargs: dict[str, Struct] = {}
+            if self.headers_type is not None:
+                kwargs["headers"] = convert(raw_headers, self.headers_type, strict=False)
+            if self.cookies_type is not None:
+                kwargs["cookies"] = convert(cookies, self.cookies_type, strict=False)
         except ValidationError:
             raise AuthenticationRequiredError() from None
-        result = self._fn(credentials)
+        result = self._fn(**kwargs)
         user = (await result) if self._is_async else result
         # None means "no credentials presented" — anonymous on a route whose authenticator
         # declares it. Without that declaration a None return contradicts the annotation the
@@ -1434,10 +1530,12 @@ class _Binder:
     __slots__ = (
         "_arity",
         "_auth",
+        "_cookies_type",
         "_form_spec",
         "_headers_type",
         "_json_decoder",
         "_needs_body",
+        "_needs_cookies",
         "_needs_raw",
         "_params_type",
         "_path_type",
@@ -1454,14 +1552,20 @@ class _Binder:
         self._params_type = sources.params
         self._path_type = sources.path
         self._headers_type = sources.headers
+        self._cookies_type = sources.cookies
         self._auth = auth
         self._wants_content = sources.content
         self._wants_raw_headers = sources.raw_headers
         self._wants_user = sources.user is not None
         self._arity = sources.arity
         self._needs_raw = (
-            auth is not None or sources.headers is not None or sources.form is not None
+            (auth is not None and auth.headers_type is not None)
+            or sources.headers is not None
+            or sources.form is not None
         )
+        self._needs_cookies = (
+            auth is not None and auth.cookies_type is not None
+        ) or sources.cookies is not None
         # The three body sources are mutually exclusive (checked at wiring); read once.
         self._needs_body = (
             sources.json_decoder is not None or sources.form is not None or sources.content
@@ -1476,6 +1580,7 @@ class _Binder:
         self,
         scope: Scope,
         raw_headers: dict[str, str],
+        cookies: dict[str, str],
         path_values: dict[str, str],
         user: Struct | None,
         body: bytes,
@@ -1491,6 +1596,8 @@ class _Binder:
             return _convert_source(path_values, self._path_type, 404)
         if self._headers_type is not None:
             return _convert_source(raw_headers, self._headers_type, 400)
+        if self._cookies_type is not None:
+            return _convert_source(cookies, self._cookies_type, 400)
         if self._params_type is not None:
             return _convert_source(_parse_query(scope["query_string"]), self._params_type, 400)
         if self._wants_raw_headers:
@@ -1501,6 +1608,7 @@ class _Binder:
         self,
         scope: Scope,
         raw_headers: dict[str, str],
+        cookies: dict[str, str],
         path_values: dict[str, str],
         user: Struct | None,
         body: bytes,
@@ -1509,7 +1617,7 @@ class _Binder:
         if self._arity == 0:
             return None
         if self._arity == 1:
-            return self._one(scope, raw_headers, path_values, user, body)
+            return self._one(scope, raw_headers, cookies, path_values, user, body)
         kwargs: dict[str, object] = {}
         if self._wants_user:
             kwargs["user"] = user
@@ -1517,6 +1625,8 @@ class _Binder:
             kwargs["path"] = _convert_source(path_values, self._path_type, 404)
         if self._headers_type is not None:
             kwargs["headers"] = _convert_source(raw_headers, self._headers_type, 400)
+        if self._cookies_type is not None:
+            kwargs["cookies"] = _convert_source(cookies, self._cookies_type, 400)
         if self._params_type is not None:
             kwargs["params"] = _convert_source(
                 _parse_query(scope["query_string"]), self._params_type, 400
@@ -1535,17 +1645,20 @@ class _Binder:
         """``__call__`` without the awaits, valid whenever ``is_sync`` (no auth to run,
         no body to read) — the caller skips a per-request coroutine."""
         raw_headers = _raw_headers(scope) if self._needs_raw else {}
-        return self._finish(scope, raw_headers, path_values, None, b"")
+        cookies = _request_cookies(scope) if self._needs_cookies else {}
+        return self._finish(scope, raw_headers, cookies, path_values, None, b"")
 
     def bind_with_body(self, scope: Scope, path_values: dict[str, str], body: bytes) -> object:
         """``__call__`` for a caller that read the body itself, valid whenever
         ``awaits_only_body`` (no auth to run) — the caller skips a per-request coroutine."""
         raw_headers = _raw_headers(scope) if self._needs_raw else {}
-        return self._finish(scope, raw_headers, path_values, None, body)
+        cookies = _request_cookies(scope) if self._needs_cookies else {}
+        return self._finish(scope, raw_headers, cookies, path_values, None, body)
 
     async def __call__(self, scope: Scope, receive: Receive, path_values: dict[str, str]) -> object:
         raw_headers = _raw_headers(scope) if self._needs_raw else {}
-        user = await self._auth(raw_headers) if self._auth is not None else None
+        cookies = _request_cookies(scope) if self._needs_cookies else {}
+        user = await self._auth(raw_headers, cookies) if self._auth is not None else None
         body = b""
         if self._needs_body:
             chunks: list[bytes] = []  # inlined body read (was _read_body) to save a coroutine hop
@@ -1555,7 +1668,7 @@ class _Binder:
                 if not message.get("more_body"):
                     break
             body = chunks[0] if len(chunks) == 1 else b"".join(chunks)
-        return self._finish(scope, raw_headers, path_values, user, body)
+        return self._finish(scope, raw_headers, cookies, path_values, user, body)
 
 
 class _WebSocketRoute:
@@ -1704,7 +1817,7 @@ def _user_header_items(
     raw_headers: RawHeaders | Mapping[str, str] | None,
 ) -> list[tuple[str, str]]:
     """The raw_headers escape-hatch pairs. A RawHeaders forwards every pair (repeats
-    included, e.g. Set-Cookie); a plain mapping yields its items."""
+    included); a plain mapping yields its items."""
     if raw_headers is None:
         return []
     if isinstance(raw_headers, RawHeaders):
@@ -1712,22 +1825,41 @@ def _user_header_items(
     return list(raw_headers.items())
 
 
+def _set_cookie_items(cookies: Sequence[SetCookie]) -> list[tuple[str, str]]:
+    """One ``set-cookie`` pair per entry. Two entries sharing a name is a programming
+    error — raise loud rather than silently sending whichever the client happens to
+    honor last."""
+    seen: set[str] = set()
+    items: list[tuple[str, str]] = []
+    for cookie in cookies:
+        if cookie.name in seen:
+            raise ValueError(f"duplicate SetCookie name {cookie.name!r} in one response")
+        seen.add(cookie.name)
+        items.append(("set-cookie", encode_set_cookie(cookie)))
+    return items
+
+
 def _header_items(
-    typed: Struct | None, raw: RawHeaders | Mapping[str, str] | None
+    typed: Struct | None,
+    raw: RawHeaders | Mapping[str, str] | None,
+    cookies: Sequence[SetCookie] = (),
 ) -> list[tuple[str, str]]:
-    """Combined response header pairs: typed Struct first, then raw_headers appended."""
-    return _typed_header_items(typed) + _user_header_items(raw)
+    """Combined response header pairs: typed Struct first, then one set-cookie pair per
+    ``cookies`` entry, then raw_headers appended (so its own repeats — a hand-rolled
+    Set-Cookie during migration — still survive)."""
+    return _typed_header_items(typed) + _set_cookie_items(cookies) + _user_header_items(raw)
 
 
 def _response_headers(
     typed: Struct | None,
     raw: RawHeaders | Mapping[str, str] | None,
+    cookies: Sequence[SetCookie],
     default_content_type: bytes,
     payload_length: int,
 ) -> list[tuple[bytes, bytes]]:
     headers: list[tuple[bytes, bytes]] = []
     has_content_type = False
-    for key, value in _header_items(typed, raw):
+    for key, value in _header_items(typed, raw, cookies):
         lower = key.lower()
         if lower == "content-length":
             continue
@@ -1741,7 +1873,10 @@ def _response_headers(
 
 
 def _no_content_headers(
-    typed: Struct | None, raw: RawHeaders | Mapping[str, str] | None, status: int
+    typed: Struct | None,
+    raw: RawHeaders | Mapping[str, str] | None,
+    cookies: Sequence[SetCookie],
+    status: int,
 ) -> list[tuple[bytes, bytes]]:
     """Header pairs for a bodyless response.
 
@@ -1754,7 +1889,7 @@ def _no_content_headers(
     dropped = {"content-length", "content-type"} if forbids_content else {"content-length"}
     headers = [
         (key.encode("latin-1"), value.encode("latin-1"))
-        for key, value in _header_items(typed, raw)
+        for key, value in _header_items(typed, raw, cookies)
         if key.lower() not in dropped
     ]
     if not forbids_content:
@@ -2023,7 +2158,7 @@ class _BytesSender:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send, result: bytes) -> None:
         _ = receive
-        headers = _response_headers(None, None, b"application/octet-stream", len(result))
+        headers = _response_headers(None, None, (), b"application/octet-stream", len(result))
         tail = self._tail
         if tail.active:
             tail.extend(headers, scope)
@@ -2042,7 +2177,11 @@ class _BytesResponseSender:
         _ = receive
         status = result.status_code if result.status_code is not None else self._status
         headers = _response_headers(
-            result.headers, result.raw_headers, b"application/octet-stream", len(result.content)
+            result.headers,
+            result.raw_headers,
+            result.cookies,
+            b"application/octet-stream",
+            len(result.content),
         )
         headers += _link_header_pairs(self._reverser, scope, result.location, result.links)
         tail = self._tail
@@ -2071,7 +2210,7 @@ class _JSONResponseSender:
         status = result.status_code if result.status_code is not None else self._status
         payload = msgspec_encoder.encode(result.json)
         headers = _response_headers(
-            result.headers, result.raw_headers, b"application/json", len(payload)
+            result.headers, result.raw_headers, result.cookies, b"application/json", len(payload)
         )
         headers += _link_header_pairs(self._reverser, scope, result.location, result.links)
         tail = self._tail
@@ -2118,7 +2257,7 @@ class _NoContentSender:
     ) -> None:
         _ = receive
         status = result.status_code if result.status_code is not None else self._status
-        headers = _no_content_headers(result.headers, result.raw_headers, status)
+        headers = _no_content_headers(result.headers, result.raw_headers, result.cookies, status)
         headers += _link_header_pairs(self._reverser, scope, result.location, result.links)
         tail = self._tail
         if tail.active:
@@ -2180,6 +2319,7 @@ class _ExceptionHandlers:
         headers = _response_headers(
             response.headers,
             response.raw_headers,
+            response.cookies,
             b"application/json",
             len(payload),
         )
@@ -2301,11 +2441,12 @@ class _ExceptionHandlers:
 def _stream_headers(
     typed: Struct | None,
     raw: RawHeaders | Mapping[str, str] | None,
+    cookies: Sequence[SetCookie],
     default_content_type: bytes,
 ) -> list[tuple[bytes, bytes]]:
     headers: list[tuple[bytes, bytes]] = []
     has_content_type = False
-    for key, value in _header_items(typed, raw):
+    for key, value in _header_items(typed, raw, cookies):
         lower = key.lower()
         if lower == "content-length":
             continue
@@ -2421,7 +2562,9 @@ class _StreamSender:
     ) -> tuple[int, list[tuple[bytes, bytes]]]:
         """The response status and assembled header list (typed/raw headers, links, tail)."""
         status = result.status_code if result.status_code is not None else self._status
-        headers = _stream_headers(result.headers, result.raw_headers, self._content_type)
+        headers = _stream_headers(
+            result.headers, result.raw_headers, result.cookies, self._content_type
+        )
         headers += _link_header_pairs(self._reverser, scope, result.location, result.links)
         tail = self._tail
         if tail.active:
@@ -3002,6 +3145,22 @@ def _camel(name: str) -> str:
     return head + "".join(part.title() for part in rest)
 
 
+def _derive_security_scheme(compiled_auth: _CompiledAuth) -> SecurityScheme | None:
+    """The OpenAPI security scheme for an authenticator with no explicit
+    ``openapi_security``: HTTP bearer for headers-only (the common case), an
+    apiKey-in-cookie scheme named for the field for a single-field cookies-only Struct.
+    A hybrid authenticator, or a cookies-only one with several fields, derives nothing —
+    ``None``, which ``operation_input`` raises for, but only if ``_include_openapi`` is
+    ever called."""
+    if compiled_auth.headers_type is not None and compiled_auth.cookies_type is None:
+        return SecurityScheme.http_bearer()
+    if compiled_auth.cookies_type is not None and compiled_auth.headers_type is None:
+        cookie_fields = struct_fields(compiled_auth.cookies_type)
+        if len(cookie_fields) == 1:
+            return SecurityScheme.api_key(location="cookie", name=cookie_fields[0].encode_name)
+    return None
+
+
 def _json_doc_handler(config: "_OpenAPIConfig", tail: _RouteTail) -> _Handler:
     """A handler serving the cached OpenAPI document. The payload is filled in at
     ``__finalize`` (after wiring), so the route can be registered before the document
@@ -3379,7 +3538,7 @@ class BaseApp[FactoryT = None](ABC):
         obj: Resource | Endpoint,
         methods: dict[str, _Verb],
         *,
-        auth: Auth[Any, Any] | None,
+        auth: "Auth[Any, Any] | CookieAuth[Any, Any] | HybridAuth[Any, Any, Any] | None",
         cors: CORS | None,
         middleware: Sequence[object],
     ) -> None:
@@ -3418,12 +3577,14 @@ class BaseApp[FactoryT = None](ABC):
         auth_mode: AuthMode = None
         if compiled_auth is not None:
             auth_mode = "optional" if compiled_auth.reports_absence else "required"
-        # An authed route with no declared scheme defaults to HTTP bearer (the common case).
+        # An authed route with no declared scheme derives one from what authenticate()
+        # binds — see _derive_security_scheme; it may derive nothing, which is only a
+        # problem for an app that calls _include_openapi (operation_input raises there).
         security_scheme: SecurityScheme | None = None
-        if auth is not None:
+        if compiled_auth is not None:
             declared: object = getattr(type(auth), "openapi_security", None)
             if declared is None:
-                security_scheme = SecurityScheme.http_bearer()
+                security_scheme = _derive_security_scheme(compiled_auth)
             elif isinstance(declared, SecurityScheme):
                 security_scheme = declared
             else:
@@ -3470,6 +3631,7 @@ class BaseApp[FactoryT = None](ABC):
                     class_meta=cls.meta,
                     op_meta=getattr(cls, f"meta_{name}", None),
                     operation_id_default=f"{cls.__name__}_{_camel(name)}",
+                    auth_owner=compiled_auth.owner if compiled_auth is not None else None,
                 )
             )
             registered = True
@@ -3560,11 +3722,45 @@ class BaseApp[FactoryT = None](ABC):
         """
         self.__middleware.append(CompiledMiddleware(middleware))
 
+    # Three overloads rather than one three-way-union signature: a Union of several
+    # generic Protocols, each binding its own subset of type parameters, is more than
+    # mypy's structural-match inference can solve in one shot (it falls back to `Never`
+    # for every parameter and rejects any concrete auth class); overloads give each
+    # shape its own clean inference, and every other checker (pyright/ty/zuban/pyrefly)
+    # handles both forms equally well. Runtime dispatch is unaffected — the
+    # undecorated implementation below is what actually runs.
+    @overload
     def _include_resource[THeaders: Struct, TUser: Struct](
         self,
         resource: Resource,
         *,
         auth: Auth[THeaders, TUser] | None = None,
+        cors: CORS | None = None,
+        middleware: Sequence[object] = (),
+    ) -> None: ...
+    @overload
+    def _include_resource[TCookies: Struct, TUser: Struct](
+        self,
+        resource: Resource,
+        *,
+        auth: CookieAuth[TCookies, TUser] | None = None,
+        cors: CORS | None = None,
+        middleware: Sequence[object] = (),
+    ) -> None: ...
+    @overload
+    def _include_resource[THeaders: Struct, TCookies: Struct, TUser: Struct](
+        self,
+        resource: Resource,
+        *,
+        auth: HybridAuth[THeaders, TCookies, TUser] | None = None,
+        cors: CORS | None = None,
+        middleware: Sequence[object] = (),
+    ) -> None: ...
+    def _include_resource(
+        self,
+        resource: Resource,
+        *,
+        auth: "Auth[Any, Any] | CookieAuth[Any, Any] | HybridAuth[Any, Any, Any] | None" = None,
         cors: CORS | None = None,
         middleware: Sequence[object] = (),
     ) -> None:
@@ -3582,11 +3778,38 @@ class BaseApp[FactoryT = None](ABC):
         """
         self.__include(resource, Resource.METHODS, auth=auth, cors=cors, middleware=middleware)
 
+    @overload
     def _include_endpoint[THeaders: Struct, TUser: Struct](
         self,
         endpoint: Endpoint,
         *,
         auth: Auth[THeaders, TUser] | None = None,
+        cors: CORS | None = None,
+        middleware: Sequence[object] = (),
+    ) -> None: ...
+    @overload
+    def _include_endpoint[TCookies: Struct, TUser: Struct](
+        self,
+        endpoint: Endpoint,
+        *,
+        auth: CookieAuth[TCookies, TUser] | None = None,
+        cors: CORS | None = None,
+        middleware: Sequence[object] = (),
+    ) -> None: ...
+    @overload
+    def _include_endpoint[THeaders: Struct, TCookies: Struct, TUser: Struct](
+        self,
+        endpoint: Endpoint,
+        *,
+        auth: HybridAuth[THeaders, TCookies, TUser] | None = None,
+        cors: CORS | None = None,
+        middleware: Sequence[object] = (),
+    ) -> None: ...
+    def _include_endpoint(
+        self,
+        endpoint: Endpoint,
+        *,
+        auth: "Auth[Any, Any] | CookieAuth[Any, Any] | HybridAuth[Any, Any, Any] | None" = None,
         cors: CORS | None = None,
         middleware: Sequence[object] = (),
     ) -> None:
@@ -3606,11 +3829,38 @@ class BaseApp[FactoryT = None](ABC):
         """
         self.__include(endpoint, Endpoint.METHODS, auth=auth, cors=cors, middleware=middleware)
 
+    @overload
     def _include_websocket[THeaders: Struct, TUser: Struct](
         self,
         endpoint: WebSocketEndpoint,
         *,
         auth: Auth[THeaders, TUser] | None = None,
+        max_frame_size: int = 1024 * 1024,
+        middleware: Sequence[object] = (),
+    ) -> None: ...
+    @overload
+    def _include_websocket[TCookies: Struct, TUser: Struct](
+        self,
+        endpoint: WebSocketEndpoint,
+        *,
+        auth: CookieAuth[TCookies, TUser] | None = None,
+        max_frame_size: int = 1024 * 1024,
+        middleware: Sequence[object] = (),
+    ) -> None: ...
+    @overload
+    def _include_websocket[THeaders: Struct, TCookies: Struct, TUser: Struct](
+        self,
+        endpoint: WebSocketEndpoint,
+        *,
+        auth: HybridAuth[THeaders, TCookies, TUser] | None = None,
+        max_frame_size: int = 1024 * 1024,
+        middleware: Sequence[object] = (),
+    ) -> None: ...
+    def _include_websocket(
+        self,
+        endpoint: WebSocketEndpoint,
+        *,
+        auth: "Auth[Any, Any] | CookieAuth[Any, Any] | HybridAuth[Any, Any, Any] | None" = None,
         max_frame_size: int = 1024 * 1024,
         middleware: Sequence[object] = (),
     ) -> None:

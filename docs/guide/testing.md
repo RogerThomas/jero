@@ -28,11 +28,17 @@ go in as `json=`, `content=` (raw bytes), or `data=` / `files=` (multipart):
 client.post("/widgets", json={"name": "n", "priceCents": 100}, headers={"authorization": "Bearer token"})
 client.post("/upload", files={"document": ("report.pdf", b"...", "application/pdf")})
 client.get("/widgets", params={"limit": "5"})
+client.get("/theme", cookies={"session_id": "session-value"})
 ```
 
+`TestClient(App(), cookie_jar=True)` opts into automatic cookie persistence across
+requests (and into WebSocket handshakes) — off by default. See
+[Cookies](cookies.md#testing) for the full request/response/jar treatment.
+
 Each call returns a `TestResponse` with `status_code`, `headers`, `content`, `.text`,
-`.json()`, and `multi_headers` — the faithful wire pair list, repeats included (assert
-on it for things like multiple `Set-Cookie`).
+`.json()`, `.cookies` (parsed `Set-Cookie` headers, by name — see [Cookies](cookies.md#testing)),
+and `multi_headers` — the faithful wire pair list, repeats included, for anything
+`.cookies`/`.headers` doesn't cover.
 
 ## Streaming
 

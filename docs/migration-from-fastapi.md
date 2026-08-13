@@ -14,7 +14,8 @@ carries over. This page is the map. For *why* the shapes differ, read
 | Pydantic `BaseModel` | msgspec `Struct` (below) |
 | `Field(...)` constraints | `Annotated[..., msgspec.Meta(...)]` — [validated and documented](guide/openapi.md#schemas-and-msgspecmeta) |
 | `Depends(...)` | Constructor arguments, wired in [`wire`](guide/wiring.md) |
-| `Query()` / `Path()` / `Header()` params | `params` / `path` / `headers` [Structs](guide/binding.md) |
+| `Query()` / `Path()` / `Header()` / `Cookie()` params | `params` / `path` / `headers` / `cookies` [Structs](guide/binding.md) |
+| `response.set_cookie(...)` / `response.delete_cookie(...)` | `SetCookie(...)` / `SetCookie.expire(...)` on any [response](guide/cookies.md) |
 | `UploadFile`, `File()`, `Form()` | A `form` Struct with [`FilePart` / `FormPart`](guide/forms.md) |
 | `HTTPException(404, detail=...)` | A typed [`HTTPError` subclass](guide/errors.md) you raise |
 | `response_model=` | The return annotation — [it *is* the schema](guide/responses.md) |

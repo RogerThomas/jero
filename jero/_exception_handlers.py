@@ -20,6 +20,7 @@ from typing import Protocol, Union, cast, get_args, get_origin, get_type_hints
 from msgspec import Struct
 
 from jero._wiring_types import WiringError
+from jero.cookies import SetCookie
 from jero.errors import BaseHTTPError
 from jero.headers import RawHeaders
 from jero.links import Link, Location
@@ -30,7 +31,9 @@ class ExceptionResponse[T: Struct, H: Struct | None = None]:
     """A typed JSON response returned by a custom exception handler.
 
     Unlike a normal response wrapper, ``status_code`` is required: exception handling
-    has no operation-derived success status to fall back to.
+    has no operation-derived success status to fall back to. ``cookies`` works exactly
+    as on a normal response — an auth failure that must also expire a stale session
+    cookie is a real case.
     """
 
     status_code: int
@@ -39,6 +42,7 @@ class ExceptionResponse[T: Struct, H: Struct | None = None]:
     raw_headers: RawHeaders | Mapping[str, str] | None = None
     location: Location | None = None
     links: Sequence[Link] = ()
+    cookies: Sequence[SetCookie] = ()
 
     def __post_init__(self) -> None:
         if isinstance(self.status_code, bool) or not 400 <= self.status_code <= 599:

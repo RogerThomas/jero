@@ -7,6 +7,7 @@ from typing import Any
 from msgspec import Struct
 
 from jero.codecs import msgspec_encoder
+from jero.cookies import SetCookie
 from jero.headers import RawHeaders
 from jero.links import Link, Location
 
@@ -32,9 +33,10 @@ class _StreamingResponse[T, H: Struct | None = None]:
     ``status_code`` overrides the verb's default status when set.
 
     Headers work as on :class:`~jero.BaseResponse`: ``headers`` is a typed Struct
-    (the header *type* is the parameter ``H``, defaulting to None), ``raw_headers``
-    the escape hatch for exotic names, casing, or repeats; both are emitted, typed
-    first."""
+    (the header *type* is the parameter ``H``, defaulting to None), ``cookies`` a
+    sequence of :class:`~jero.SetCookie`, and ``raw_headers`` the escape hatch for
+    exotic names, casing, or repeats; all are emitted, typed headers first, then
+    cookies, then raw_headers last."""
 
     stream: Source[T]
     headers: H | None = None
@@ -42,6 +44,7 @@ class _StreamingResponse[T, H: Struct | None = None]:
     status_code: int | None = None
     location: Location | None = None
     links: Sequence[Link] = ()
+    cookies: Sequence[SetCookie] = ()
 
 
 @dataclass(kw_only=True, slots=True)

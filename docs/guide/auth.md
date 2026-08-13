@@ -14,6 +14,13 @@ def authenticate(self, headers: THeaders) -> TUser: ...
 - Declaring `-> TUser | None` instead makes the routes it is mounted on accept anonymous
   callers — see [optional authentication](#optional-authentication).
 
+`authenticate` may instead (or also) declare `cookies: TCookies` — session-cookie auth,
+or a **hybrid** authenticator serving both a bearer-token API client and a
+cookie-carrying browser client on the same routes. Everything on this page — the
+return-type policy, optional auth, the `user` cross-check, OpenAPI security — applies
+per source exactly the same way. See [Cookies](cookies.md#cookie-auth) for the full
+treatment, including the WebSocket case cookie auth exists for.
+
 ```python
 from dataclasses import dataclass
 

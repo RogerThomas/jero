@@ -219,6 +219,12 @@ disable = [
 # jero uses descriptive PascalCase / single-cap TypeVars (THeaders, TUser, FactoryT).
 typevar-rgx = "^_?[A-Z][a-zA-Z0-9]*$"
 
+[tool.pylint.design]
+# R0913 (too-many-arguments) is disabled outright above; this is its newer sibling
+# (positional-specific), raised so internal fast-path helpers (e.g. _Binder._one/_finish)
+# can take several positional args without a lint failure.
+max-positional-arguments = 10
+
 [tool.pylint.format]
 max-module-lines = 5000
 

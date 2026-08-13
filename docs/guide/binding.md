@@ -12,6 +12,7 @@ learns *which* sources a handler wants, and the request path just fills them in.
 | `params`      | query string                    | a `Struct`               |
 | `path`        | URL template slots              | a `Struct`               |
 | `headers`     | request headers                 | a `Struct`               |
+| `cookies`     | request cookies                 | a `Struct` (see [Cookies](cookies.md)) |
 | `raw_headers` | request headers (opaque)        | `RawHeaders`             |
 | `user`        | the auth result                 | a `Struct`, or `Struct \| None` behind [optional auth](auth.md#optional-authentication) |
 
@@ -163,6 +164,14 @@ app = App()
 Use the typed `headers` Struct for values you act on; reach for `raw_headers` only for
 forwarding the whole bag upstream or for diagnostics. The same split applies on the
 [response side](responses.md#headers).
+
+## Cookies — `cookies`
+
+A typed `Struct`, bound the same way — but **verbatim and case-sensitive**, with no
+header-style mangle at all: RFC 6265 cookie names are case-sensitive and routinely
+aren't valid Python identifiers (`__Host-session`), so a field name simply *is* the
+cookie name it binds. Full treatment — the rename idiom, lenient-parsing rules, setting
+and deleting cookies, and cookie auth — lives in its own page: [Cookies](cookies.md).
 
 ## camelCase (and any wire convention)
 
