@@ -1,8 +1,8 @@
 """Coverage for the performance optimisation paths introduced in the lets-optimise branch.
 
 Tests exercise: _parse_query edge cases, the bind_sync / bind_with_body / _finish
-dispatch paths, multi-chunk ASGI body reassembly, and dynamic-route static-segment
-mismatch resolution.
+dispatch paths, multi-chunk ASGI body reassembly, dynamic-route static-segment
+mismatch resolution, and the shared static-route path_values sentinel.
 """
 
 import asyncio
@@ -14,6 +14,7 @@ from msgspec import Struct
 from demo_app.auth import TokenAuth
 from demo_app.models import User
 from jero import BaseApp, Endpoint
+from jero.core import _EMPTY_PATH_VALUES
 from jero.testing import TestClient
 
 # ---------------------------------------------------------------------------
@@ -382,6 +383,80 @@ async def test_multi_chunk_body() -> None:
     assert send.messages[0]["status"] == 200
     assert send.messages[1]["type"] == "http.response.body"
     assert b'"chunked"' in send.messages[1]["body"]
+
+    await to_app.put({"type": "lifespan.shutdown"})
+    await from_app.get()
+    await lifespan_task
+
+
+# ---------------------------------------------------------------------------
+# _EMPTY_PATH_VALUES: the shared static-route path_values sentinel
+# ---------------------------------------------------------------------------
+
+
+class Ping(Struct):
+    """Acknowledgement body for the static ping route."""
+
+    ok: bool
+
+
+class PingEndpoint(Endpoint, path="/ping"):
+    """Static endpoint (no path params) exercising the shared path_values sentinel."""
+
+    async def get(self) -> Ping:
+        """Return a static acknowledgement."""
+        return Ping(ok=True)
+
+
+class PingApp(BaseApp):
+    """App wiring the static ping endpoint."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(PingEndpoint())
+
+
+async def _no_body_receive() -> dict[str, Any]:
+    """ASGI receive for a bodyless GET — returns a disconnect if ever awaited."""
+    return {"type": "http.disconnect"}
+
+
+def test_empty_path_values_sentinel_is_read_only() -> None:
+    """_EMPTY_PATH_VALUES rejects mutation instead of silently corrupting the shared
+    sentinel every static route reuses (see BaseApp.__call__'s static-hit branch)."""
+    assert _EMPTY_PATH_VALUES == {}
+    with pytest.raises((TypeError, AttributeError)):
+        _EMPTY_PATH_VALUES["x"] = "y"  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_static_route_shares_path_values_dict_under_concurrency() -> None:
+    """Many concurrent requests to a static route all reuse one shared, never-mutated
+    path_values dict without corrupting or leaking state across requests."""
+    app = PingApp()
+    to_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    from_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+    lifespan_task = asyncio.create_task(app({"type": "lifespan"}, to_app.get, from_app.put))
+    await to_app.put({"type": "lifespan.startup"})
+    msg = await from_app.get()
+    assert msg["type"] == "lifespan.startup.complete"
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/ping",
+        "query_string": b"",
+        "headers": [],
+    }
+
+    async def one_request() -> bool:
+        send = _CollectSend()
+        await app(dict(scope), _no_body_receive, send)
+        return send.messages[0]["status"] == 200
+
+    results = await asyncio.gather(*(one_request() for _ in range(2000)))
+    assert all(results)
+    assert _EMPTY_PATH_VALUES == {}
 
     await to_app.put({"type": "lifespan.shutdown"})
     await from_app.get()

@@ -74,7 +74,7 @@ from enum import Enum
 from io import BytesIO
 from pathlib import Path
 from time import perf_counter
-from types import NoneType, UnionType, get_original_bases
+from types import MappingProxyType, NoneType, UnionType, get_original_bases
 from typing import (
     Annotated,
     Any,
@@ -624,6 +624,15 @@ def _allow_header(allowed: Sequence[HTTPMethod]) -> bytes:
         methods.append("HEAD")
     methods.append("OPTIONS")
     return ", ".join(methods).encode()
+
+
+# Shared, never-mutated: every consumer (``_Binder``/``_convert_source``) only reads
+# path_values, so static-route requests (which never have path params) can all reuse
+# this one dict instead of each allocating their own empty {}. Backed by a
+# MappingProxyType so an accidental future write raises instead of silently
+# corrupting the sentinel every static route shares; `cast` keeps the declared type
+# `dict[str, str]`, matching every consumer's parameter type (all of which only read).
+_EMPTY_PATH_VALUES: dict[str, str] = cast("dict[str, str]", MappingProxyType({}))
 
 
 @dataclass(slots=True)
@@ -4442,13 +4451,15 @@ class BaseApp[FactoryT = None](ABC):
             ):
                 return
         path: str = scope["path"]
+        # Same reasoning as the HTTP hot path above: a static websocket route has no
+        # path template, so path_values is always empty here — share the constant.
         handler = self.__websocket_static.get(path)
-        path_values: dict[str, str] = {}
-        if handler is None:
-            resolved = self.__resolve_websocket_dynamic(path)
-            if resolved is not None:
-                handler, path_values = resolved
         if handler is not None:
+            await handler(scope, receive, send, _EMPTY_PATH_VALUES)
+            return
+        resolved = self.__resolve_websocket_dynamic(path)
+        if resolved is not None:
+            handler, path_values = resolved
             await handler(scope, receive, send, path_values)
             return
         error = NotFoundError()
@@ -4483,14 +4494,21 @@ class BaseApp[FactoryT = None](ABC):
                 return
         verb = "GET" if method == "HEAD" else method
         # A static hit is the hottest path of all: one dict lookup, inlined here to skip
-        # the resolver call (a non-route verb simply misses).
+        # the resolver call (a non-route verb simply misses). Static routes have no path
+        # template by construction, so path_values is always empty here — share one
+        # never-mutated dict instead of allocating a fresh {} on every request.
         handler = self.__static.get((verb, path))
-        path_values: dict[str, str] = {}
-        if handler is None:
-            resolved = self.__resolve_dynamic(verb, path)
-            if resolved is not None:
-                handler, path_values = resolved
         if handler is not None:
+            await handler(
+                scope,
+                receive,
+                _SuppressBody(send) if method == "HEAD" else send,
+                _EMPTY_PATH_VALUES,
+            )
+            return
+        resolved = self.__resolve_dynamic(verb, path)
+        if resolved is not None:
+            handler, path_values = resolved
             await handler(
                 scope, receive, _SuppressBody(send) if method == "HEAD" else send, path_values
             )
