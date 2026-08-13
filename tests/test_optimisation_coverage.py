@@ -14,7 +14,7 @@ from msgspec import Struct
 from demo_app.auth import TokenAuth
 from demo_app.models import User
 from jero import BaseApp, Endpoint
-from jero.core import _EMPTY_PATH_VALUES
+from jero.core import _EMPTY_PATH_VALUES  # pyright: ignore[reportPrivateUsage]
 from jero.testing import TestClient
 
 # ---------------------------------------------------------------------------
@@ -441,7 +441,7 @@ async def test_static_route_shares_path_values_dict_under_concurrency() -> None:
     msg = await from_app.get()
     assert msg["type"] == "lifespan.startup.complete"
 
-    scope = {
+    scope: dict[str, Any] = {
         "type": "http",
         "method": "GET",
         "path": "/ping",
