@@ -6,6 +6,8 @@ mismatch resolution, and the shared static-route path_values sentinel.
 """
 
 import asyncio
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
@@ -352,17 +354,29 @@ class _CollectSend:
         self.messages.append(message)
 
 
+@asynccontextmanager
+async def _lifespan(app: BaseApp) -> AsyncGenerator[None]:
+    """Drive `app` through ASGI lifespan startup/shutdown around a manually-driven test
+    (one that calls `app(scope, receive, send)` directly instead of going through
+    `TestClient`, e.g. to control chunking or fire many requests concurrently)."""
+    to_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    from_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    task = asyncio.create_task(app({"type": "lifespan"}, to_app.get, from_app.put))
+    await to_app.put({"type": "lifespan.startup"})
+    msg = await from_app.get()
+    assert msg["type"] == "lifespan.startup.complete"
+    try:
+        yield
+    finally:
+        await to_app.put({"type": "lifespan.shutdown"})
+        await from_app.get()
+        await task
+
+
 @pytest.mark.asyncio
 async def test_multi_chunk_body() -> None:
     """A body arriving in multiple ASGI chunks is reassembled by the inlined reader."""
     app = EchoApp()
-    to_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-    from_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-
-    lifespan_task = asyncio.create_task(app({"type": "lifespan"}, to_app.get, from_app.put))
-    await to_app.put({"type": "lifespan.startup"})
-    msg = await from_app.get()
-    assert msg["type"] == "lifespan.startup.complete"
 
     full_body = b'{"value":"chunked"}'
     mid = len(full_body) // 2
@@ -377,16 +391,13 @@ async def test_multi_chunk_body() -> None:
         "headers": [(b"content-type", b"application/json")],
     }
 
-    await app(scope, receive, send)
+    async with _lifespan(app):
+        await app(scope, receive, send)
 
     assert send.messages[0]["type"] == "http.response.start"
     assert send.messages[0]["status"] == 200
     assert send.messages[1]["type"] == "http.response.body"
     assert b'"chunked"' in send.messages[1]["body"]
-
-    await to_app.put({"type": "lifespan.shutdown"})
-    await from_app.get()
-    await lifespan_task
 
 
 # ---------------------------------------------------------------------------
@@ -424,23 +435,25 @@ def test_empty_path_values_sentinel_is_read_only() -> None:
     """_EMPTY_PATH_VALUES rejects mutation instead of silently corrupting the shared
     sentinel every static route reuses (see BaseApp.__call__'s static-hit branch)."""
     assert _EMPTY_PATH_VALUES == {}
-    with pytest.raises((TypeError, AttributeError)):
+    with pytest.raises(TypeError):
         _EMPTY_PATH_VALUES["x"] = "y"  # type: ignore[index]
 
 
+# Many, not few: the sentinel is provably read-only (see the test above), so this isn't
+# hunting for a race — asyncio's single-threaded event loop can't produce one here
+# regardless of count. The point is reuse at volume: hammer one static route enough
+# times that a regression turning the sentinel mutable again would surface as visibly
+# corrupted responses, not just as a single passing-by-luck request.
+_REUSE_COUNT = 2000
+
+
 @pytest.mark.asyncio
-async def test_static_route_shares_path_values_dict_under_concurrency() -> None:
-    """Many concurrent requests to a static route all reuse one shared, never-mutated
-    path_values dict without corrupting or leaking state across requests."""
+async def test_static_route_reuses_shared_path_values_dict_safely() -> None:
+    """Many requests to a static route all reuse one shared path_values dict — heavy
+    reuse never corrupts or leaks state across requests. (Not a data-race test: a
+    single-threaded event loop can't race on a dict that's never written to; see
+    test_empty_path_values_sentinel_is_read_only for the read-only guarantee itself.)"""
     app = PingApp()
-    to_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-    from_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-
-    lifespan_task = asyncio.create_task(app({"type": "lifespan"}, to_app.get, from_app.put))
-    await to_app.put({"type": "lifespan.startup"})
-    msg = await from_app.get()
-    assert msg["type"] == "lifespan.startup.complete"
-
     scope: dict[str, Any] = {
         "type": "http",
         "method": "GET",
@@ -454,10 +467,8 @@ async def test_static_route_shares_path_values_dict_under_concurrency() -> None:
         await app(dict(scope), _no_body_receive, send)
         return send.messages[0]["status"] == 200
 
-    results = await asyncio.gather(*(one_request() for _ in range(2000)))
+    async with _lifespan(app):
+        results = await asyncio.gather(*(one_request() for _ in range(_REUSE_COUNT)))
+
     assert all(results)
     assert _EMPTY_PATH_VALUES == {}
-
-    await to_app.put({"type": "lifespan.shutdown"})
-    await from_app.get()
-    await lifespan_task
