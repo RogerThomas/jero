@@ -79,6 +79,22 @@ class IntCookieEndpoint(Endpoint, path="/int-cookie"):
         return cookies
 
 
+class SearchParams(Struct):
+    """A trivial query-param Struct, bound alongside cookies below."""
+
+    q: str = ""
+
+
+class CookiesAndParamsEndpoint(Endpoint, path="/cookies-and-params"):
+    """Binds cookies *and* another source together — the multi-kwargs dispatch path,
+    distinct from the single-source shortcut every other endpoint above exercises."""
+
+    async def get(self, cookies: SessionCookies, params: SearchParams) -> SessionCookies:
+        """Echo the cookies; the query param is bound but unused, just present."""
+        _ = params
+        return cookies
+
+
 class CookiesApp(BaseApp):
     """App wiring the cookie-binding endpoints above."""
 
@@ -86,6 +102,7 @@ class CookiesApp(BaseApp):
         self._include_endpoint(CookieEndpoint())
         self._include_endpoint(RenamedCookieEndpoint())
         self._include_endpoint(IntCookieEndpoint())
+        self._include_endpoint(CookiesAndParamsEndpoint())
 
 
 def test_required_and_defaulted_cookies_bind() -> None:
@@ -102,6 +119,17 @@ def test_both_cookies_bind() -> None:
         resp = client.get("/cookies", cookies={"session_id": "session-value", "theme": "light"})
         assert resp.status_code == 200
         assert resp.json() == {"session_id": "session-value", "theme": "light"}
+
+
+def test_cookies_bind_alongside_another_source() -> None:
+    """A handler binding cookies plus a second source (arity >= 2) uses the multi-kwargs
+    dispatch path, not the single-source shortcut every other cookie test exercises."""
+    with TestClient(CookiesApp()) as client:
+        resp = client.get(
+            "/cookies-and-params", cookies={"session_id": "session-value"}, params={"q": "x"}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["session_id"] == "session-value"
 
 
 def test_missing_required_cookie_is_400() -> None:
@@ -348,6 +376,35 @@ def test_testclient_cookies_and_explicit_cookie_header_conflict() -> None:
         )
 
 
+class StreamDeleteEndpoint(Endpoint, path="/stream-delete"):
+    """A streaming DELETE, to exercise stream_delete's cookies= — the one request
+    method the rest of this file never happens to reach."""
+
+    async def _chunks(self, value: str) -> AsyncIterator[bytes]:
+        yield value.encode()
+
+    async def delete(self, cookies: SessionCookies) -> StreamingResponse:
+        """Stream the bound cookie value back as the response body."""
+        return StreamingResponse(stream=self._chunks(cookies.session_id))
+
+
+class StreamDeleteApp(BaseApp):
+    """App wiring the streaming DELETE endpoint above."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(StreamDeleteEndpoint())
+
+
+def test_stream_delete_sends_cookies() -> None:
+    """client.stream_delete's cookies= reaches the handler like every other method's."""
+    with (
+        TestClient(StreamDeleteApp()) as client,
+        client.stream_delete("/stream-delete", cookies={"session_id": "value"}) as stream,
+    ):
+        assert stream.status_code == 200
+        assert list(stream) == [b"value"]
+
+
 # --- SetCookie construction validation ---
 
 
@@ -505,6 +562,45 @@ class RaisesLogoutEndpoint(Endpoint, path="/raises-logout"):
         raise LogoutError()
 
 
+class SetCookieLooseAttributesEndpoint(Endpoint, path="/set-cookie-loose"):
+    """Returns a SetCookie loosening every default: no Path, a Domain, not Secure, not
+    HttpOnly, no SameSite — the opposite corner of the attribute matrix from the secure
+    defaults every other endpoint here exercises."""
+
+    async def get(self) -> NoContent:
+        """Emit a maximally-loosened cookie."""
+        return NoContent(
+            cookies=[
+                SetCookie(
+                    "loose",
+                    "v",
+                    path=None,
+                    domain="example.com",
+                    secure=False,
+                    http_only=False,
+                    same_site=None,
+                )
+            ]
+        )
+
+
+class SetCookiePartitionedEndpoint(Endpoint, path="/set-cookie-partitioned"):
+    """Returns a SetCookie with Partitioned set (CHIPS)."""
+
+    async def get(self) -> NoContent:
+        """Emit a partitioned cookie."""
+        return NoContent(cookies=[SetCookie("part", "v", partitioned=True)])
+
+
+class RawUnknownAttributeEndpoint(Endpoint, path="/raw-unknown-attribute"):
+    """A hand-rolled Set-Cookie carrying an attribute TestClient's parser doesn't
+    recognize — it must be silently ignored, not raise or corrupt the rest."""
+
+    async def get(self) -> NoContent:
+        """Emit a raw cookie with an unrecognized attribute."""
+        return NoContent(raw_headers={"set-cookie": "x=1; Foo=bar"})
+
+
 class ResponseCookiesApp(BaseApp):
     """App wiring every response-side cookie scenario above."""
 
@@ -517,6 +613,9 @@ class ResponseCookiesApp(BaseApp):
         self._include_endpoint(DuplicateCookieEndpoint())
         self._include_endpoint(RawAfterCookieEndpoint())
         self._include_endpoint(RaisesLogoutEndpoint())
+        self._include_endpoint(SetCookieLooseAttributesEndpoint())
+        self._include_endpoint(SetCookiePartitionedEndpoint())
+        self._include_endpoint(RawUnknownAttributeEndpoint())
         self._include_exception_handler(LogoutHandler())
 
 
@@ -597,6 +696,35 @@ def test_raw_headers_set_cookie_survives_after_typed_cookie() -> None:
         assert values[1] == "legacy=raw-value"
 
 
+def test_setcookie_loose_attributes_are_encoded_and_parsed_back() -> None:
+    """No Path, a Domain, and Secure/HttpOnly/SameSite all turned off all encode (and
+    round-trip through TestResponse.cookies) correctly — the opposite corner of the
+    attribute matrix from the secure-by-default case."""
+    with TestClient(ResponseCookiesApp()) as client:
+        resp = client.get("/set-cookie-loose")
+        cookie = resp.cookies["loose"]
+        assert cookie.value == "v"
+        assert cookie.domain == "example.com"
+        assert cookie.path is None
+        assert cookie.secure is False
+        assert cookie.http_only is False
+        assert cookie.same_site is None
+
+
+def test_setcookie_partitioned_is_encoded_and_parsed_back() -> None:
+    """Partitioned encodes onto the wire and TestResponse.cookies parses it back."""
+    with TestClient(ResponseCookiesApp()) as client:
+        resp = client.get("/set-cookie-partitioned")
+        assert resp.cookies["part"].partitioned is True
+
+
+def test_response_cookies_ignores_an_unrecognized_attribute() -> None:
+    """TestResponse.cookies silently ignores an attribute it doesn't recognize."""
+    with TestClient(ResponseCookiesApp()) as client:
+        resp = client.get("/raw-unknown-attribute")
+        assert resp.cookies["x"].value == "1"
+
+
 # --- Testing surface: the opt-in cookie jar ---
 
 
@@ -620,12 +748,44 @@ class WhoAmIEndpoint(Endpoint, path="/whoami"):
         return cookies
 
 
+class ExpiresOnlyPastEndpoint(Endpoint, path="/expires-only-past"):
+    """Sets a cookie that expires itself via Expires alone, no Max-Age — distinct from
+    SetCookie.expire(), which sets both and so never exercises the Expires-only path."""
+
+    async def get(self) -> NoContent:
+        """Set a cookie already expired via a past, timezone-aware Expires."""
+        return NoContent(
+            cookies=[SetCookie("stale", "old-value", expires=datetime(2020, 1, 1, tzinfo=UTC))]
+        )
+
+
+class RawExpiresNaiveEndpoint(Endpoint, path="/raw-expires-naive"):
+    """A hand-rolled Set-Cookie with a timezone-naive Expires — jero's own encoder
+    always emits a GMT-suffixed (timezone-aware) Expires, so only the raw_headers
+    escape hatch can produce this shape."""
+
+    async def get(self) -> NoContent:
+        """Set a raw cookie with a far-future, timezone-naive Expires."""
+        return NoContent(raw_headers={"set-cookie": "naive=v; Expires=Fri, 01 Jan 2030 00:00:00"})
+
+
+class RawExpiresMalformedEndpoint(Endpoint, path="/raw-expires-malformed"):
+    """A hand-rolled Set-Cookie with an Expires jero can't parse at all."""
+
+    async def get(self) -> NoContent:
+        """Set a raw cookie with an unparseable Expires."""
+        return NoContent(raw_headers={"set-cookie": "bad=v; Expires=not-a-date"})
+
+
 class JarApp(BaseApp):
     """App wiring the login/logout/whoami endpoints for jar tests."""
 
     async def wire(self) -> None:
         self._include_endpoint(SessionEndpoint())
         self._include_endpoint(WhoAmIEndpoint())
+        self._include_endpoint(ExpiresOnlyPastEndpoint())
+        self._include_endpoint(RawExpiresNaiveEndpoint())
+        self._include_endpoint(RawExpiresMalformedEndpoint())
 
 
 def test_jar_disabled_by_default_no_persistence() -> None:
@@ -652,6 +812,31 @@ def test_jar_expiring_set_cookie_removes_the_entry() -> None:
         assert "session_id" in client.cookie_jar
         client.delete("/session")
         assert "session_id" not in client.cookie_jar
+
+
+def test_jar_removes_cookie_expired_via_expires_alone() -> None:
+    """A Set-Cookie expiring itself via Expires alone (no Max-Age) is still removed —
+    the expiry check must not depend on Max-Age being present."""
+    with TestClient(JarApp(), cookie_jar=True) as client:
+        client.get("/expires-only-past")
+        assert "stale" not in client.cookie_jar
+
+
+def test_jar_normalizes_a_naive_expires_to_utc_before_comparing() -> None:
+    """A timezone-naive Expires (never produced by jero's own encoder, but reachable via
+    raw_headers) is normalized to UTC rather than crashing on the comparison; a
+    far-future date is correctly treated as not-yet-expired."""
+    with TestClient(JarApp(), cookie_jar=True) as client:
+        client.get("/raw-expires-naive")
+        assert client.cookie_jar["naive"] == "v"
+
+
+def test_jar_keeps_a_cookie_with_an_unparseable_expires() -> None:
+    """An Expires value jero can't parse is treated as not-expired rather than raising —
+    a malformed date from an upstream/raw source must not break the jar."""
+    with TestClient(JarApp(), cookie_jar=True) as client:
+        client.get("/raw-expires-malformed")
+        assert client.cookie_jar["bad"] == "v"
 
 
 def test_jar_explicit_cookies_override_the_jar() -> None:
