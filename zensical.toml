@@ -42,7 +42,7 @@ nav = [
     ] },
     { "Comparison" = "comparison.md" },
     { "Migrating from FastAPI" = "migration-from-fastapi.md" },
-    { "Performance" = "performance.md" },
+    { "Performance / Benchmarks" = "performance.md" },
     { "FAQ" = "faq.md" },
     { "API Reference" = "modules.md" },
     { "About" = [

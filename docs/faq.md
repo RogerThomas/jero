@@ -54,6 +54,12 @@ You don't — each worker process runs `wire` and holds its own services and
 [background queue](guide/background-tasks.md). Shared state (a cache, a durable queue)
 belongs in an external service. See [Deployment](guide/deployment.md#running-the-app).
 
+## How stable is the API?
+
+jero is in beta, on the 0.x series. The public surface is settled and fully documented,
+but a breaking change may still land in a minor release until 1.0 — every release's
+changes are listed in the [release notes](https://github.com/RogerThomas/jero/releases).
+
 ## Why is the `TestClient` sync?
 
 So plain `pytest` functions work with no async plumbing: it runs the app's full
