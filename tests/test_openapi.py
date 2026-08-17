@@ -218,6 +218,14 @@ class BlobEndpoint(Endpoint, path="/blob"):
         return b"blob"
 
 
+class GreetingEndpoint(Endpoint, path="/greeting"):
+    """An endpoint returning plain text."""
+
+    async def get(self) -> str:
+        """Get a greeting."""
+        return "greeting-body"
+
+
 class RateHeaders(Struct):
     """Typed response headers carried by JSONResponse[Item, RateHeaders]."""
 
@@ -238,6 +246,7 @@ class OpenApp(BaseApp):
     async def wire(self) -> None:
         self._include_endpoint(OpenEndpoint())
         self._include_endpoint(BlobEndpoint())
+        self._include_endpoint(GreetingEndpoint())
         self._include_endpoint(HeaderedEndpoint())
         self._include_openapi(title="open", version="1")
 
@@ -259,6 +268,15 @@ def test_bytes_return_is_documented_as_binary() -> None:
             "type": "string",
             "format": "binary",
         }
+
+
+def test_str_return_is_documented_as_text_plain() -> None:
+    """A str return is text/plain with a string schema."""
+    with TestClient(OpenApp()) as client:
+        content = client.get("/openapi.json").json()["paths"]["/greeting"]["get"]["responses"][
+            "200"
+        ]["content"]
+        assert content["text/plain"]["schema"] == {"type": "string"}
 
 
 class DocsOffApp(BaseApp):

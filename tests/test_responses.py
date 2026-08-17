@@ -11,6 +11,7 @@ import pytest
 from msgspec import Struct
 
 from jero import (
+    CORS,
     Accepted,
     BaseApp,
     BytesResponse,
@@ -664,7 +665,7 @@ class TextApp(BaseApp):
     """App exercising str (text/plain) returns."""
 
     async def wire(self) -> None:
-        self._include_endpoint(GreetingEndpoint())
+        self._include_endpoint(GreetingEndpoint(), cors=CORS())
         self._include_endpoint(MaybeTextEndpoint())
         self._include_resource(NoteResource())
 
@@ -698,6 +699,14 @@ def test_head_on_str_return_suppresses_body(text_client: TestClient) -> None:
     assert resp.content == b""
     assert resp.headers["content-length"] == str(len("greeting-body"))
     assert resp.headers["content-type"] == "text/plain; charset=utf-8"
+
+
+def test_str_return_carries_cors_headers(text_client: TestClient) -> None:
+    """A ``-> str`` route under a CORS policy emits the CORS headers alongside text/plain."""
+    resp = text_client.get("/greeting", headers={"origin": "https://app.example"})
+    assert resp.status_code == 200
+    assert resp.text == "greeting-body"
+    assert resp.headers["access-control-allow-origin"] == "*"
 
 
 def test_str_union_member_dispatches_to_text(text_client: TestClient) -> None:

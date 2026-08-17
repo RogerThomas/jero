@@ -197,7 +197,7 @@ there is no dilemma left to explain, just the three-line rule), `complete-exampl
 ## Staged build order
 
 Each stage ends green on `uv run prek run -a`, `task test PYTEST_PROFILE=agent`, and
-`task typecheck-tests` — the rename is mechanical, so a red gate means a missed call site.
+`task typecheck-public` — the rename is mechanical, so a red gate means a missed call site.
 
 1. **Stacks.** Delete `_StackScope`; give `BaseApp` and `BaseFactory` their own
    `__stack`/`__astack` plus `_enter`/`_aenter`, with per-class docstrings. Update

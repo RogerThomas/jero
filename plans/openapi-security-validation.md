@@ -81,6 +81,6 @@ mount invites contradictory declarations.
 ## Staged build order
 
 Single stage; ends green on `uv run prek run -a`, `task test PYTEST_PROFILE=agent`,
-`task typecheck-tests`.
+`task typecheck-public`.
 
 1. Add the guard in `_include`, add the four tests, add the two doc sentences.

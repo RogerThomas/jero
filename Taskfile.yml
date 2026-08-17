@@ -36,7 +36,7 @@ tasks:
     desc: Static type checking
     cmd: uv run pyrefly check
 
-  typecheck-tests:
+  typecheck-public:
     desc: 'Type-check the public interface (./tests and ./demo_app) with mypy, ty, pyright & zuban. Runs all, fails if any do. pyrefly is the primary project checker.'
     cmd: |
       set -u
