@@ -1081,6 +1081,8 @@ def _return_kind(ann: object) -> ReturnKind | None:
             return "json"
         if ann is bytes:
             return "bytes"
+        if ann is str:
+            return "text"
     args = get_args(ann)
     if (
         origin is list
@@ -1120,12 +1122,22 @@ def _effective_status(kind: ReturnKind, verb_status: int) -> int:
 
 
 # Kinds a union return member may resolve to: every buffered kind, plain returns included —
-# a bare ``Struct`` / ``list[Struct]`` / ``bytes`` member simply takes the verb's default
-# status, exactly as it does when it is a handler's sole return, so ``-> Widget | NoContent``
-# needs no wrapper. Only the streaming kinds are excluded: their senders own the response
-# lifecycle (disconnect handling, mid-stream failure) and cannot be chosen after the fact.
+# a bare ``Struct`` / ``list[Struct]`` / ``str`` / ``bytes`` member simply takes the verb's
+# default status, exactly as it does when it is a handler's sole return, so
+# ``-> Widget | NoContent`` needs no wrapper. Only the streaming kinds are excluded: their
+# senders own the response lifecycle (disconnect handling, mid-stream failure) and cannot be
+# chosen after the fact.
 _UNION_MEMBER_KINDS: frozenset[ReturnKind] = frozenset(
-    {"json", "bytes", "no-content", "created", "accepted", "json-response", "bytes-response"}
+    {
+        "json",
+        "text",
+        "bytes",
+        "no-content",
+        "created",
+        "accepted",
+        "json-response",
+        "bytes-response",
+    }
 )
 
 
@@ -1181,7 +1193,7 @@ def _union_return_members(
         if kind is None or kind not in _UNION_MEMBER_KINDS:
             raise WiringError(
                 f"{label}: union return members must each be a recognized, "
-                f"non-streaming return type (a Struct, list[Struct], bytes, NoContent, "
+                f"non-streaming return type (a Struct, list[Struct], str, bytes, NoContent, "
                 f"Created, Accepted, JSONResponse, or BytesResponse); got {member!r}",
             )
         status = _effective_status(kind, verb_status)
@@ -1208,7 +1220,7 @@ def _resolve_return(
     if kind is None:
         raise WiringError(
             f"{cls.__name__}.{name} must declare a return type of Struct, list[Struct], "
-            f"bytes, BytesResponse, JSONResponse, NoContent, Created, Accepted, or a "
+            f"str, bytes, BytesResponse, JSONResponse, NoContent, Created, Accepted, or a "
             f"streaming response, got {return_hint!r}",
         )
     if kind == "stream-sse" and http_method != "GET":
@@ -2175,6 +2187,21 @@ class _BytesSender:
 
 
 @dataclass(slots=True)
+class _StrSender:
+    _status: int
+    _tail: _RouteTail
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send, result: str) -> None:
+        _ = receive
+        body = result.encode()
+        headers = _response_headers(None, None, (), b"text/plain; charset=utf-8", len(body))
+        tail = self._tail
+        if tail.active:
+            tail.extend(headers, scope)
+        await _send_payload(send, self._status, body, headers)
+
+
+@dataclass(slots=True)
 class _BytesResponseSender:
     _status: int
     _reverser: _Reverser
@@ -2743,6 +2770,8 @@ def _result_sender(
 ) -> _Sender:
     if kind == "bytes":
         return _BytesSender(status, tail)
+    if kind == "text":
+        return _StrSender(status, tail)
     if kind == "bytes-response":
         return _BytesResponseSender(status, reverser, tail)
     if kind in ("json-response", "created", "accepted"):
