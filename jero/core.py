@@ -1416,17 +1416,6 @@ class _Pattern:
         return all(segments[i] == value for i, value in self.statics)
 
 
-def _pattern_segments(pattern: _Pattern, length: int) -> list[_Segment]:
-    """Reconstruct a compiled dynamic pattern's full segment list — for an error
-    message only; routing itself never needs the shape back once compiled."""
-    segments: list[_Segment] = [(False, "")] * length
-    for i, value in pattern.statics:
-        segments[i] = (False, value)
-    for i, slot in pattern.params:
-        segments[i] = (True, slot)
-    return segments
-
-
 @dataclass(frozen=True, slots=True)
 class _WebSocketPattern:
     statics: tuple[tuple[int, str], ...]
@@ -3262,7 +3251,6 @@ def _static_bytes_handler(body: bytes, content_type: bytes, tail: _RouteTail) ->
     return handler
 
 
-# Favicon media types by file suffix; anything else is a loud wiring failure.
 def _read_typed_file(
     file: Path,
     display: str,
@@ -3289,6 +3277,7 @@ def _read_typed_file(
     return body, content_type
 
 
+# Favicon media types by file suffix; anything else is a loud wiring failure.
 _FAVICON_CONTENT_TYPES: dict[str, bytes] = {
     ".ico": b"image/x-icon",
     ".png": b"image/png",
@@ -3377,6 +3366,18 @@ def _asset_payload(file: Path, relative: str, *, gzip: bool) -> tuple[bytes, byt
     return body, gz_body, content_type
 
 
+def _asset_files(directory: Path) -> list[Path]:
+    """Every file under ``directory``, sorted for deterministic wiring. Dotfiles and
+    dot-directories are never served — pruned *before* descending into them, so a
+    ``.git`` checkout or a bundler's ``.cache`` sitting under the tree is never
+    walked, not just filtered out afterward."""
+    files: list[Path] = []
+    for root, dirnames, filenames in os.walk(directory):
+        dirnames[:] = [name for name in dirnames if not name.startswith(".")]
+        files += (Path(root) / filename for filename in filenames if not filename.startswith("."))
+    return sorted(files)
+
+
 def _asset_payloads(
     directory: Path,
     include: Sequence[str],
@@ -3395,12 +3396,10 @@ def _asset_payloads(
         raise WiringError(f"_include_assets directory {directory} is not a directory")
     payloads: list[tuple[str, bytes, bytes | None, bytes]] = []
     total = 0
-    for file in sorted(directory.rglob("*")):
+    for file in _asset_files(directory):
         if not file.is_file():
             continue
         relative = file.relative_to(directory).as_posix()
-        if any(part.startswith(".") for part in relative.split("/")):
-            continue  # dotfiles/dot-dirs are never served
         if not any(fnmatch(relative, pattern) for pattern in include):
             continue
         if any(fnmatch(relative, pattern) for pattern in exclude):
@@ -3520,7 +3519,7 @@ def _asset_handler(
         else:
             status = 200
             headers = [*(ok_gz if use_gz else ok_plain)]
-            payload = cast("bytes", gz_body) if use_gz else body
+            payload = gz_body if use_gz else body
         if tail.active:
             try:
                 tail.extend(headers, scope)
@@ -3771,20 +3770,6 @@ class BaseApp[FactoryT = None](ABC):
             route_path = "/".join(value for _, value in segments)
             if (method, route_path) in self.__static:
                 raise WiringError(f"{method} {route_path} is already registered")
-            # A literal route dispatches ahead of any dynamic pattern (see __call__),
-            # so one that happens to match an existing template's static segments
-            # would silently swallow it rather than ever reaching it — checked here,
-            # not left as a request-time surprise.
-            values = [value for _, value in segments]
-            shadowed = self.__dynamic.get((method, len(segments)))
-            if shadowed is not None:
-                for pattern in shadowed:
-                    if pattern.matches(values):
-                        template = _template_str(_pattern_segments(pattern, len(segments)))
-                        raise WiringError(
-                            f"{method} {route_path} collides with the existing dynamic "
-                            f"route {method} {template}",
-                        )
             self.__static[(method, route_path)] = handler
             self.__allowed.setdefault(route_path, []).append(method)
             return
@@ -3793,20 +3778,6 @@ class BaseApp[FactoryT = None](ABC):
         bucket = self.__dynamic.setdefault((method, len(segments)), [])
         if any(pattern.statics == statics for pattern in bucket):
             raise WiringError(f"{method} {_template_str(segments)} is already registered")
-        # The reverse direction: an existing literal route this new pattern would
-        # never actually reach, because that literal path already wins at dispatch.
-        length = len(segments)
-        for existing_method, existing_path in self.__static:
-            if existing_method != method:
-                continue
-            existing_segments = existing_path.split("/")
-            if len(existing_segments) == length and all(
-                existing_segments[i] == value for i, value in statics
-            ):
-                raise WiringError(
-                    f"{method} {_template_str(segments)} collides with the existing "
-                    f"static route {method} {existing_path}",
-                )
         bucket.append(_Pattern(statics, params, handler))
 
     def __register_websocket(self, segments: list[_Segment], handler: _WebSocketHandler) -> None:

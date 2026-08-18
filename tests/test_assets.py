@@ -237,13 +237,18 @@ def test_route_collision_fails_at_wiring(asset_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# A literal asset route must never silently shadow (or be shadowed by) a
-# pre-existing dynamic route of the same shape — either direction is a WiringError.
+# A literal asset at the same shape as an existing dynamic route's slot is not an
+# error: jero's router has no ordering rules by design (docs/guide/resources.md,
+# "Registering them") — a literal always wins for its exact path, and the dynamic
+# route still serves every other value. This is the same "id route + literal
+# sibling" pattern any REST app relies on (/widgets/{id} + /widgets/search), so an
+# assets mount that happens to land on one of those slot values must resolve to
+# the file, not fail wiring or silently misroute.
 # ---------------------------------------------------------------------------
 
 
 class WidgetId(Struct):
-    """Path param source for the dynamic route an asset might shadow."""
+    """Path param source for the dynamic route an asset shares a shape with."""
 
     widget_id: str
 
@@ -256,8 +261,8 @@ class WidgetsResource(Resource, path="/widgets"):
         return path.widget_id.encode()
 
 
-class AssetShadowsDynamicApp(BaseApp):
-    """Assets wired after a dynamic resource whose slot they'd swallow."""
+class AssetBesideDynamicApp(BaseApp):
+    """Assets wired alongside a dynamic resource sharing the same route shape."""
 
     def __init__(self, directory: Path) -> None:
         super().__init__()
@@ -266,18 +271,6 @@ class AssetShadowsDynamicApp(BaseApp):
     async def wire(self) -> None:
         self._include_resource(WidgetsResource())
         self._include_assets(self._directory, path="/widgets")
-
-
-class DynamicShadowsAssetApp(BaseApp):
-    """The same collision, wired in the opposite order."""
-
-    def __init__(self, directory: Path) -> None:
-        super().__init__()
-        self._directory = directory
-
-    async def wire(self) -> None:
-        self._include_assets(self._directory, path="/widgets")
-        self._include_resource(WidgetsResource())
 
 
 @pytest.fixture(name="shadow_dir")
@@ -286,18 +279,18 @@ def _shadow_dir(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_asset_shadowing_a_dynamic_route_fails_at_wiring(shadow_dir: Path) -> None:
-    """A literal asset that would dispatch ahead of a same-shaped dynamic route is a
-    WiringError, not a route a client can never actually reach."""
-    with pytest.raises(RuntimeError, match="collides with the existing dynamic route"):
-        TestClient(AssetShadowsDynamicApp(shadow_dir))
-
-
-def test_dynamic_route_shadowed_by_an_asset_fails_at_wiring(shadow_dir: Path) -> None:
-    """The same collision caught from the other wiring order: a dynamic route that
-    could never win against an already-registered literal asset."""
-    with pytest.raises(RuntimeError, match="collides with the existing static route"):
-        TestClient(DynamicShadowsAssetApp(shadow_dir))
+def test_asset_wins_over_a_same_shaped_dynamic_route_for_its_own_path(
+    shadow_dir: Path,
+) -> None:
+    """The literal asset serves its own path; the dynamic route still serves every
+    other value at that depth — both wire together without error, either order."""
+    with TestClient(AssetBesideDynamicApp(shadow_dir)) as client:
+        asset_resp = client.get("/widgets/5.txt")
+        assert asset_resp.status_code == 200
+        assert asset_resp.content == TXT_BODY
+        dynamic_resp = client.get("/widgets/abc")
+        assert dynamic_resp.status_code == 200
+        assert dynamic_resp.content == b"abc"
 
 
 # ---------------------------------------------------------------------------
