@@ -71,6 +71,9 @@ from contextlib import (
 )
 from dataclasses import dataclass
 from enum import Enum
+from fnmatch import fnmatch
+from gzip import compress as gzip_compress
+from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 from time import perf_counter
@@ -3260,6 +3263,184 @@ def _favicon_payload(favicon: Path) -> tuple[bytes, bytes]:
     return body, content_type
 
 
+# Asset media types by file suffix; anything else is a loud wiring failure (exclude the
+# file, or serve it from the proxy/CDN where real static serving belongs).
+_ASSET_CONTENT_TYPES: dict[str, bytes] = {
+    ".avif": b"image/avif",
+    ".css": b"text/css; charset=utf-8",
+    ".gif": b"image/gif",
+    ".html": b"text/html; charset=utf-8",
+    ".ico": b"image/x-icon",
+    ".jpeg": b"image/jpeg",
+    ".jpg": b"image/jpeg",
+    ".js": b"text/javascript; charset=utf-8",
+    ".json": b"application/json",
+    ".map": b"application/json",
+    ".mjs": b"text/javascript; charset=utf-8",
+    ".png": b"image/png",
+    ".svg": b"image/svg+xml",
+    ".txt": b"text/plain; charset=utf-8",
+    ".wasm": b"application/wasm",
+    ".webmanifest": b"application/manifest+json",
+    ".webp": b"image/webp",
+    ".woff": b"font/woff",
+    ".woff2": b"font/woff2",
+}
+
+
+# Suffixes worth gzipping at wiring; the image/font formats are already compressed and
+# a gzip pass would only add bytes and a Vary header for nothing.
+_COMPRESSIBLE_SUFFIXES: frozenset[str] = frozenset(
+    {
+        ".css",
+        ".html",
+        ".ico",
+        ".js",
+        ".json",
+        ".map",
+        ".mjs",
+        ".svg",
+        ".txt",
+        ".wasm",
+        ".webmanifest",
+    }
+)
+
+
+def _asset_payload(file: Path, relative: str, *, gzip: bool) -> tuple[bytes, bytes | None, bytes]:
+    """One file's ``(bytes, gzip variant or None, content type)``, read once at wiring.
+    The gzip variant is deterministic (``mtime=0``) and kept only when meaningfully
+    smaller than the original."""
+    suffix = file.suffix.lower()
+    content_type = _ASSET_CONTENT_TYPES.get(suffix)
+    if content_type is None:
+        supported = ", ".join(sorted(_ASSET_CONTENT_TYPES))
+        raise WiringError(
+            f"_include_assets: {relative} has an unsupported suffix; use one of "
+            f"{supported}, or exclude it",
+        )
+    try:
+        body = file.read_bytes()
+    except OSError as exc:
+        raise WiringError(f"_include_assets: {relative} is not readable: {exc}") from exc
+    gz_body = None
+    if gzip and suffix in _COMPRESSIBLE_SUFFIXES:
+        compressed = gzip_compress(body, 9, mtime=0)
+        if len(compressed) < len(body) * 0.9:
+            gz_body = compressed
+    return body, gz_body, content_type
+
+
+def _asset_payloads(
+    directory: Path,
+    include: Sequence[str],
+    exclude: Sequence[str],
+    *,
+    gzip: bool,
+    max_total_bytes: int,
+) -> list[tuple[str, bytes, bytes | None, bytes]]:
+    """Read every servable file under ``directory`` once, at wiring: ``(relative posix
+    path, bytes, gzipped bytes or None, content type)`` per file. The gzip variant is
+    compressed here (deterministically, ``mtime=0``) and kept only when meaningfully
+    smaller. Fails loud on a missing directory, an unsupported suffix, an unreadable
+    file, zero matches, or a total (both variants counted) over the cap — never at
+    request time."""
+    if not directory.is_dir():
+        raise WiringError(f"_include_assets directory {directory} is not a directory")
+    payloads: list[tuple[str, bytes, bytes | None, bytes]] = []
+    total = 0
+    for file in sorted(directory.rglob("*")):
+        if not file.is_file():
+            continue
+        relative = file.relative_to(directory).as_posix()
+        if any(part.startswith(".") for part in relative.split("/")):
+            continue  # dotfiles/dot-dirs are never served
+        if not any(fnmatch(relative, pattern) for pattern in include):
+            continue
+        if any(fnmatch(relative, pattern) for pattern in exclude):
+            continue
+        body, gz_body, content_type = _asset_payload(file, relative, gzip=gzip)
+        total += len(body) + (0 if gz_body is None else len(gz_body))
+        payloads.append((relative, body, gz_body, content_type))
+    if not payloads:
+        raise WiringError(
+            f"_include_assets: no files matched under {directory} "
+            f"(include={list(include)}, exclude={list(exclude)})",
+        )
+    if total > max_total_bytes:
+        raise WiringError(
+            f"_include_assets: {total} bytes under {directory} exceeds "
+            f"max_total_bytes={max_total_bytes}. Assets are held in memory per worker — "
+            f"serve large or many files from a proxy/CDN, or raise the cap deliberately",
+        )
+    return payloads
+
+
+def _asset_handler(
+    body: bytes,
+    gz_body: bytes | None,
+    content_type: bytes,
+    etag: bytes,
+    cache_control: bytes | None,
+    tail: _RouteTail,
+) -> _Handler:
+    """A handler serving one in-memory asset with a wiring-time strong ``ETag``. When a
+    gzip variant was baked at wiring, ``Accept-Encoding: gzip`` picks it (its own ETag,
+    ``Vary: Accept-Encoding`` on both variants). A matching ``If-None-Match`` answers
+    304 with no body. The filesystem is never touched. ``tail`` as on
+    :func:`_static_bytes_handler`."""
+    gz_etag = etag[:-1] + b'-gzip"'
+    common: list[tuple[bytes, bytes]] = []
+    if cache_control is not None:
+        common.append((b"cache-control", cache_control))
+    if gz_body is not None:
+        common.append((b"vary", b"accept-encoding"))
+    ok_plain = [
+        (b"content-type", content_type),
+        (b"content-length", str(len(body)).encode()),
+        (b"etag", etag),
+        *common,
+    ]
+    not_modified_plain = [(b"etag", etag), *common]
+    ok_gz = [
+        (b"content-type", content_type),
+        (b"content-length", str(0 if gz_body is None else len(gz_body)).encode()),
+        (b"content-encoding", b"gzip"),
+        (b"etag", gz_etag),
+        *common,
+    ]
+    not_modified_gz = [(b"etag", gz_etag), *common]
+
+    async def handler(
+        scope: Scope, receive: Receive, send: Send, path_values: dict[str, str]
+    ) -> None:
+        _ = (receive, path_values)
+        accepts_gzip = False
+        if_none_match = None
+        for name, value in scope["headers"]:
+            if name == b"accept-encoding":
+                accepts_gzip = b"gzip" in value
+            elif name == b"if-none-match":
+                if_none_match = value
+        use_gz = gz_body is not None and accepts_gzip
+        chosen_etag = gz_etag if use_gz else etag
+        if if_none_match is not None and (chosen_etag in if_none_match or if_none_match == b"*"):
+            status = 304
+            headers = [*(not_modified_gz if use_gz else not_modified_plain)]
+            payload = b""
+        else:
+            status = 200
+            headers = [*(ok_gz if use_gz else ok_plain)]
+            payload = cast("bytes", gz_body) if use_gz else body
+        extra = tail.contained_extra(scope)
+        if extra is not None:
+            headers += extra
+        await send({"type": "http.response.start", "status": status, "headers": headers})
+        await send({"type": "http.response.body", "body": payload})
+
+    return handler
+
+
 def _scalar_html(
     title: str,
     openapi_path: str,
@@ -3958,6 +4139,60 @@ class BaseApp[FactoryT = None](ABC):
             max_frame_size=max_frame_size,
         )
         self.__register_websocket(segments, route)
+
+    def _include_assets(
+        self,
+        directory: Path,
+        *,
+        path: str = "/assets",
+        include: Sequence[str] = ("*",),
+        exclude: Sequence[str] = (),
+        gzip: bool = True,
+        cache_control: str | None = None,
+        max_total_bytes: int = 10 * 1024 * 1024,
+    ) -> None:
+        """Serve a directory of small static assets from memory.
+
+        Call inside ``wire``. The directory is read **once, at wiring**: every matching
+        file becomes an exact route under ``path`` (``static/logo.svg`` →
+        ``GET /assets/logo.svg``) with its bytes, content type, and a strong ``ETag``
+        baked in. Requests never touch the filesystem, and a matching
+        ``If-None-Match`` answers ``304``. New or changed files appear on restart,
+        like everything else wired at startup.
+
+        ``include``/``exclude`` are glob patterns matched against each file's path
+        relative to ``directory`` (dotfiles are always skipped). ``cache_control``
+        (e.g. ``"public, max-age=3600"``) is emitted verbatim when given. With
+        ``gzip=True`` (the default), compressible files are also gzipped once at
+        wiring — kept only when meaningfully smaller — and a request with
+        ``Accept-Encoding: gzip`` gets the prebaked compressed variant (own ``ETag``,
+        ``Vary: Accept-Encoding``); nothing is ever compressed per request.
+
+        Assets are held in memory per worker, so the total is capped at
+        ``max_total_bytes`` (10 MiB): this is for an SPA shell, stylesheets, and a few
+        images. Real static serving — large files, Range requests, catch-all
+        fallbacks — belongs on your reverse proxy or CDN (see the
+        [deployment guide](https://RogerThomas.github.io/jero/guide/deployment/)).
+
+        Loud at wiring, never at request time: a missing directory, an unsupported
+        suffix, an unreadable file, zero matching files, a route collision, and an
+        over-cap total are all ``WiringError``\\ s. Asset routes are covered by the
+        app-default CORS policy and app-wide middleware, and never appear in the
+        OpenAPI document.
+        """
+        prefix = path.rstrip("/")
+        cache_control_value = None if cache_control is None else cache_control.encode()
+        tail = _RouteTail()
+        record = _IncludeRecord(tail=tail, routes=[], cors=None, cors_off=False, middleware=())
+        payloads = _asset_payloads(
+            directory, include, exclude, gzip=gzip, max_total_bytes=max_total_bytes
+        )
+        for relative, body, gz_body, content_type in payloads:
+            etag = f'"{sha256(body).hexdigest()[:32]}"'.encode()
+            handler = _asset_handler(body, gz_body, content_type, etag, cache_control_value, tail)
+            self.__register("GET", _parse_template(f"{prefix}/{relative}"), handler)
+            record.routes.append(("GET", handler))
+        self.__includes.append(record)
 
     def _include_openapi(
         self,

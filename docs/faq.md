@@ -15,9 +15,11 @@ and give SSE clients automatic reconnection.
 
 ## Can I serve static files?
 
-No. jero serves JSON APIs; put assets on your reverse proxy or CDN (see
-[Deployment](guide/deployment.md#what-belongs-in-the-proxy)). The one exception is the
-docs-page [favicon](guide/openapi.md#favicon), precomputed at wiring.
+Small ones, yes: [`_include_assets`](guide/assets.md) reads a directory once at wiring
+and serves it from memory, with `ETag`, gzip, and cache headers all baked at startup.
+Real static serving (large files, `Range` requests, catch-all SPA fallbacks) still
+belongs on your reverse proxy or CDN (see
+[Deployment](guide/deployment.md#what-belongs-in-the-proxy)).
 
 ## Where is `request.state`?
 
