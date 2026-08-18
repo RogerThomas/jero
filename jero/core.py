@@ -1416,6 +1416,17 @@ class _Pattern:
         return all(segments[i] == value for i, value in self.statics)
 
 
+def _pattern_segments(pattern: _Pattern, length: int) -> list[_Segment]:
+    """Reconstruct a compiled dynamic pattern's full segment list — for an error
+    message only; routing itself never needs the shape back once compiled."""
+    segments: list[_Segment] = [(False, "")] * length
+    for i, value in pattern.statics:
+        segments[i] = (False, value)
+    for i, slot in pattern.params:
+        segments[i] = (True, slot)
+    return segments
+
+
 @dataclass(frozen=True, slots=True)
 class _WebSocketPattern:
     statics: tuple[tuple[int, str], ...]
@@ -3338,11 +3349,13 @@ _COMPRESSIBLE_SUFFIXES: frozenset[str] = frozenset(
 )
 
 
-def _asset_etag(body: bytes, *, gzip: bool = False) -> bytes:
-    """A strong ``ETag`` for one asset variant, both built here from the same hash so
-    the plain and gzip forms can never drift out of shape with each other."""
+def _asset_etag(digest: str, *, gzip: bool = False) -> bytes:
+    """A quoted strong ``ETag`` from an already-computed digest — call
+    :func:`hashlib.sha256` once per body and format both the plain and gzip forms
+    from it, so they can never drift out of shape with each other and the hash
+    itself is never paid for twice."""
     suffix = "-gzip" if gzip else ""
-    return f'"{sha256(body).hexdigest()[:32]}{suffix}"'.encode()
+    return f'"{digest}{suffix}"'.encode()
 
 
 def _asset_payload(file: Path, relative: str, *, gzip: bool) -> tuple[bytes, bytes | None, bytes]:
@@ -3758,6 +3771,20 @@ class BaseApp[FactoryT = None](ABC):
             route_path = "/".join(value for _, value in segments)
             if (method, route_path) in self.__static:
                 raise WiringError(f"{method} {route_path} is already registered")
+            # A literal route dispatches ahead of any dynamic pattern (see __call__),
+            # so one that happens to match an existing template's static segments
+            # would silently swallow it rather than ever reaching it — checked here,
+            # not left as a request-time surprise.
+            values = [value for _, value in segments]
+            shadowed = self.__dynamic.get((method, len(segments)))
+            if shadowed is not None:
+                for pattern in shadowed:
+                    if pattern.matches(values):
+                        template = _template_str(_pattern_segments(pattern, len(segments)))
+                        raise WiringError(
+                            f"{method} {route_path} collides with the existing dynamic "
+                            f"route {method} {template}",
+                        )
             self.__static[(method, route_path)] = handler
             self.__allowed.setdefault(route_path, []).append(method)
             return
@@ -3766,6 +3793,20 @@ class BaseApp[FactoryT = None](ABC):
         bucket = self.__dynamic.setdefault((method, len(segments)), [])
         if any(pattern.statics == statics for pattern in bucket):
             raise WiringError(f"{method} {_template_str(segments)} is already registered")
+        # The reverse direction: an existing literal route this new pattern would
+        # never actually reach, because that literal path already wins at dispatch.
+        length = len(segments)
+        for existing_method, existing_path in self.__static:
+            if existing_method != method:
+                continue
+            existing_segments = existing_path.split("/")
+            if len(existing_segments) == length and all(
+                existing_segments[i] == value for i, value in statics
+            ):
+                raise WiringError(
+                    f"{method} {_template_str(segments)} collides with the existing "
+                    f"static route {method} {existing_path}",
+                )
         bucket.append(_Pattern(statics, params, handler))
 
     def __register_websocket(self, segments: list[_Segment], handler: _WebSocketHandler) -> None:
@@ -4267,8 +4308,9 @@ class BaseApp[FactoryT = None](ABC):
             directory, include, exclude, gzip=gzip, max_total_bytes=max_total_bytes
         )
         for relative, body, gz_body, content_type in payloads:
-            etag = _asset_etag(body)
-            gz_etag = _asset_etag(body, gzip=True)
+            digest = sha256(body).hexdigest()[:32]
+            etag = _asset_etag(digest)
+            gz_etag = _asset_etag(digest, gzip=True)
             handler = _asset_handler(
                 body,
                 gz_body,

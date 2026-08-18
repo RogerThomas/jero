@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, Request
+from jero import BaseApp, Endpoint, Request, Resource
 from jero.testing import TestClient
 
 SVG_BODY = b"<svg xmlns='http://www.w3.org/2000/svg'/>"
@@ -234,6 +234,70 @@ def test_route_collision_fails_at_wiring(asset_dir: Path) -> None:
     """An asset landing on an already-registered route is a WiringError."""
     with pytest.raises(RuntimeError, match="already registered"):
         TestClient(CollidingApp(asset_dir))
+
+
+# ---------------------------------------------------------------------------
+# A literal asset route must never silently shadow (or be shadowed by) a
+# pre-existing dynamic route of the same shape — either direction is a WiringError.
+# ---------------------------------------------------------------------------
+
+
+class WidgetId(Struct):
+    """Path param source for the dynamic route an asset might shadow."""
+
+    widget_id: str
+
+
+class WidgetsResource(Resource, path="/widgets"):
+    """Resource with one dynamic GET, the same shape as an asset named '5.txt'."""
+
+    async def read_one(self, path: WidgetId) -> bytes:
+        """Return the id as bytes."""
+        return path.widget_id.encode()
+
+
+class AssetShadowsDynamicApp(BaseApp):
+    """Assets wired after a dynamic resource whose slot they'd swallow."""
+
+    def __init__(self, directory: Path) -> None:
+        super().__init__()
+        self._directory = directory
+
+    async def wire(self) -> None:
+        self._include_resource(WidgetsResource())
+        self._include_assets(self._directory, path="/widgets")
+
+
+class DynamicShadowsAssetApp(BaseApp):
+    """The same collision, wired in the opposite order."""
+
+    def __init__(self, directory: Path) -> None:
+        super().__init__()
+        self._directory = directory
+
+    async def wire(self) -> None:
+        self._include_assets(self._directory, path="/widgets")
+        self._include_resource(WidgetsResource())
+
+
+@pytest.fixture(name="shadow_dir")
+def _shadow_dir(tmp_path: Path) -> Path:
+    (tmp_path / "5.txt").write_bytes(TXT_BODY)
+    return tmp_path
+
+
+def test_asset_shadowing_a_dynamic_route_fails_at_wiring(shadow_dir: Path) -> None:
+    """A literal asset that would dispatch ahead of a same-shaped dynamic route is a
+    WiringError, not a route a client can never actually reach."""
+    with pytest.raises(RuntimeError, match="collides with the existing dynamic route"):
+        TestClient(AssetShadowsDynamicApp(shadow_dir))
+
+
+def test_dynamic_route_shadowed_by_an_asset_fails_at_wiring(shadow_dir: Path) -> None:
+    """The same collision caught from the other wiring order: a dynamic route that
+    could never win against an already-registered literal asset."""
+    with pytest.raises(RuntimeError, match="collides with the existing static route"):
+        TestClient(DynamicShadowsAssetApp(shadow_dir))
 
 
 # ---------------------------------------------------------------------------
