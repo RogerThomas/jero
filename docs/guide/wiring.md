@@ -51,6 +51,7 @@ For anything real, group construction in a `BaseFactory`. Parameterize the app w
 stacks. It's then `self._factory` inside `wire`:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from jero import BaseApp, BaseFactory
 
 
@@ -79,6 +80,7 @@ the factory on them exactly as an app does at startup, and unwinds everything on
 exit — even if the block raises:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 import asyncio
 from dataclasses import dataclass
 

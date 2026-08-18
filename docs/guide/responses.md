@@ -147,6 +147,7 @@ the blessed way to set a cookie — see [Cookies](cookies.md) for the full page
 cookie auth):
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from jero import SetCookie
 
 JSONResponse(json=widget, cookies=[SetCookie("session_id", token)])
@@ -160,6 +161,7 @@ and all) — still how you'd hand-roll a repeated header jero has no typed vocab
 for:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from jero import RawHeaders
 
 JSONResponse(

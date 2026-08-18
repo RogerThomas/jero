@@ -58,6 +58,7 @@ from collections.abc import (
     AsyncIterator,
     Awaitable,
     Callable,
+    Iterable,
     Mapping,
     MutableMapping,
     Sequence,
@@ -1332,6 +1333,17 @@ def _parse_template(path: str) -> list[_Segment]:
         else:
             segments.append((False, raw))
     return segments
+
+
+def _literal_segments(path: str) -> list[_Segment]:
+    """Split ``path`` into purely literal segments — unlike :func:`_parse_template`, a
+    ``{...}``-shaped component is never a slot. For routes whose path components come
+    from data (a filesystem path under ``_include_assets``), not a developer-authored
+    template: a file or directory literally named ``{locale}`` must never become a
+    route parameter."""
+    if not path.startswith("/"):
+        raise WiringError(f"path {path!r} must start with '/'")
+    return [(False, raw) for raw in path.split("/")]
 
 
 def _template_str(segments: list[_Segment]) -> str:
@@ -3240,6 +3252,32 @@ def _static_bytes_handler(body: bytes, content_type: bytes, tail: _RouteTail) ->
 
 
 # Favicon media types by file suffix; anything else is a loud wiring failure.
+def _read_typed_file(
+    file: Path,
+    display: str,
+    content_types: dict[str, bytes],
+    *,
+    label: str,
+    unsupported_hint: str = "",
+) -> tuple[bytes, bytes]:
+    """Read one file's bytes once, at wiring, with its content type resolved by
+    suffix. Fails loud on an unsupported suffix or an unreadable file, never at
+    request time. Shared by :func:`_favicon_payload` and :func:`_asset_payload` —
+    only the accepted suffix table and the message's label/hint differ between them."""
+    content_type = content_types.get(file.suffix.lower())
+    if content_type is None:
+        supported = ", ".join(sorted(content_types))
+        raise WiringError(
+            f"{label} {display} has an unsupported suffix; use one of {supported}"
+            f"{unsupported_hint}",
+        )
+    try:
+        body = file.read_bytes()
+    except OSError as exc:
+        raise WiringError(f"{label} {display} is not readable: {exc}") from exc
+    return body, content_type
+
+
 _FAVICON_CONTENT_TYPES: dict[str, bytes] = {
     ".ico": b"image/x-icon",
     ".png": b"image/png",
@@ -3250,21 +3288,14 @@ _FAVICON_CONTENT_TYPES: dict[str, bytes] = {
 def _favicon_payload(favicon: Path) -> tuple[bytes, bytes]:
     """Read the favicon once at wiring: its bytes and content type. Fails loud on an
     unsupported suffix or an unreadable file — never at request time."""
-    content_type = _FAVICON_CONTENT_TYPES.get(favicon.suffix.lower())
-    if content_type is None:
-        supported = ", ".join(sorted(_FAVICON_CONTENT_TYPES))
-        raise WiringError(
-            f"_include_openapi favicon {favicon} has an unsupported suffix; use {supported}",
-        )
-    try:
-        body = favicon.read_bytes()
-    except OSError as exc:
-        raise WiringError(f"_include_openapi favicon {favicon} is not readable: {exc}") from exc
-    return body, content_type
+    return _read_typed_file(
+        favicon, str(favicon), _FAVICON_CONTENT_TYPES, label="_include_openapi favicon"
+    )
 
 
 # Asset media types by file suffix; anything else is a loud wiring failure (exclude the
-# file, or serve it from the proxy/CDN where real static serving belongs).
+# file, or serve it from the proxy/CDN where real static serving belongs). A strict
+# superset of _FAVICON_CONTENT_TYPES: every favicon suffix is also a valid asset.
 _ASSET_CONTENT_TYPES: dict[str, bytes] = {
     ".avif": b"image/avif",
     ".css": b"text/css; charset=utf-8",
@@ -3307,24 +3338,26 @@ _COMPRESSIBLE_SUFFIXES: frozenset[str] = frozenset(
 )
 
 
+def _asset_etag(body: bytes, *, gzip: bool = False) -> bytes:
+    """A strong ``ETag`` for one asset variant, both built here from the same hash so
+    the plain and gzip forms can never drift out of shape with each other."""
+    suffix = "-gzip" if gzip else ""
+    return f'"{sha256(body).hexdigest()[:32]}{suffix}"'.encode()
+
+
 def _asset_payload(file: Path, relative: str, *, gzip: bool) -> tuple[bytes, bytes | None, bytes]:
     """One file's ``(bytes, gzip variant or None, content type)``, read once at wiring.
     The gzip variant is deterministic (``mtime=0``) and kept only when meaningfully
     smaller than the original."""
-    suffix = file.suffix.lower()
-    content_type = _ASSET_CONTENT_TYPES.get(suffix)
-    if content_type is None:
-        supported = ", ".join(sorted(_ASSET_CONTENT_TYPES))
-        raise WiringError(
-            f"_include_assets: {relative} has an unsupported suffix; use one of "
-            f"{supported}, or exclude it",
-        )
-    try:
-        body = file.read_bytes()
-    except OSError as exc:
-        raise WiringError(f"_include_assets: {relative} is not readable: {exc}") from exc
+    body, content_type = _read_typed_file(
+        file,
+        relative,
+        _ASSET_CONTENT_TYPES,
+        label="_include_assets:",
+        unsupported_hint=", or exclude it",
+    )
     gz_body = None
-    if gzip and suffix in _COMPRESSIBLE_SUFFIXES:
+    if gzip and file.suffix.lower() in _COMPRESSIBLE_SUFFIXES:
         compressed = gzip_compress(body, 9, mtime=0)
         if len(compressed) < len(body) * 0.9:
             gz_body = compressed
@@ -3361,19 +3394,55 @@ def _asset_payloads(
             continue
         body, gz_body, content_type = _asset_payload(file, relative, gzip=gzip)
         total += len(body) + (0 if gz_body is None else len(gz_body))
+        if total > max_total_bytes:
+            raise WiringError(
+                f"_include_assets: {total} bytes under {directory} exceeds "
+                f"max_total_bytes={max_total_bytes} (hit while reading {relative}). Assets "
+                f"are held in memory per worker — serve large or many files from a "
+                f"proxy/CDN, or raise the cap deliberately",
+            )
         payloads.append((relative, body, gz_body, content_type))
     if not payloads:
         raise WiringError(
             f"_include_assets: no files matched under {directory} "
             f"(include={list(include)}, exclude={list(exclude)})",
         )
-    if total > max_total_bytes:
-        raise WiringError(
-            f"_include_assets: {total} bytes under {directory} exceeds "
-            f"max_total_bytes={max_total_bytes}. Assets are held in memory per worker — "
-            f"serve large or many files from a proxy/CDN, or raise the cap deliberately",
-        )
     return payloads
+
+
+def _parse_accept_encoding(values: Iterable[bytes]) -> dict[bytes, float]:
+    """Merge one or more ``Accept-Encoding`` header values into ``directive -> qvalue``
+    (RFC 9110 §12.5.3). Repeated headers are semantically one comma-joined list, so
+    every value is parsed the same way regardless of how many header lines carried it."""
+    weights: dict[bytes, float] = {}
+    for value in values:
+        for directive in value.split(b","):
+            directive = directive.strip()
+            if not directive:
+                continue
+            parts = directive.split(b";")
+            name = parts[0].strip().lower()
+            q = 1.0
+            for param in parts[1:]:
+                key, _, raw_q = param.strip().partition(b"=")
+                if key.strip().lower() == b"q":
+                    try:
+                        q = float(raw_q)
+                    except ValueError:
+                        q = 1.0
+            weights[name] = q
+    return weights
+
+
+def _accepts_gzip(values: Iterable[bytes]) -> bool:
+    """Whether the (possibly repeated) ``Accept-Encoding`` header values accept gzip.
+    An explicit ``gzip`` directive wins over the wildcard; ``q=0`` — including
+    ``gzip;q=0`` — is an explicit refusal (RFC 9110). No header at all is treated as
+    "don't bother", matching the identity-only behaviour a plain GET has always had."""
+    weights = _parse_accept_encoding(values)
+    if b"gzip" in weights:
+        return weights[b"gzip"] > 0
+    return weights.get(b"*", 0.0) > 0
 
 
 def _asset_handler(
@@ -3381,15 +3450,21 @@ def _asset_handler(
     gz_body: bytes | None,
     content_type: bytes,
     etag: bytes,
+    gz_etag: bytes,
     cache_control: bytes | None,
     tail: _RouteTail,
+    exceptions: _ExceptionHandlers,
 ) -> _Handler:
     """A handler serving one in-memory asset with a wiring-time strong ``ETag``. When a
-    gzip variant was baked at wiring, ``Accept-Encoding: gzip`` picks it (its own ETag,
-    ``Vary: Accept-Encoding`` on both variants). A matching ``If-None-Match`` answers
-    304 with no body. The filesystem is never touched. ``tail`` as on
-    :func:`_static_bytes_handler`."""
-    gz_etag = etag[:-1] + b'-gzip"'
+    gzip variant was baked at wiring, an ``Accept-Encoding`` that accepts gzip picks it
+    (``gz_etag``, ``Vary: Accept-Encoding`` on both variants — ``gz_etag`` is only ever
+    read when ``gz_body is not None``). A matching ``If-None-Match`` answers 304 with
+    no body. The filesystem is never touched.
+
+    The header tail (CORS / middleware ``response_headers``) is applied strictly, like
+    any other user route: a failing dynamic hook becomes a proper error response
+    through ``exceptions`` rather than silently shipping the asset without it — assets
+    are exactly the routes (HTML, JS) where a security-headers hook matters most."""
     common: list[tuple[bytes, bytes]] = []
     if cache_control is not None:
         common.append((b"cache-control", cache_control))
@@ -3415,16 +3490,17 @@ def _asset_handler(
         scope: Scope, receive: Receive, send: Send, path_values: dict[str, str]
     ) -> None:
         _ = (receive, path_values)
-        accepts_gzip = False
-        if_none_match = None
+        accept_encoding: list[bytes] = []
+        if_none_match: list[bytes] = []
         for name, value in scope["headers"]:
             if name == b"accept-encoding":
-                accepts_gzip = b"gzip" in value
+                accept_encoding.append(value)
             elif name == b"if-none-match":
-                if_none_match = value
-        use_gz = gz_body is not None and accepts_gzip
+                if_none_match.append(value)
+        use_gz = gz_body is not None and _accepts_gzip(accept_encoding)
         chosen_etag = gz_etag if use_gz else etag
-        if if_none_match is not None and (chosen_etag in if_none_match or if_none_match == b"*"):
+        revalidated = any(chosen_etag in value or value == b"*" for value in if_none_match)
+        if revalidated:
             status = 304
             headers = [*(not_modified_gz if use_gz else not_modified_plain)]
             payload = b""
@@ -3432,9 +3508,12 @@ def _asset_handler(
             status = 200
             headers = [*(ok_gz if use_gz else ok_plain)]
             payload = cast("bytes", gz_body) if use_gz else body
-        extra = tail.contained_extra(scope)
-        if extra is not None:
-            headers += extra
+        if tail.active:
+            try:
+                tail.extend(headers, scope)
+            except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+                await exceptions.send(scope, send, exc, tail)
+                return
         await send({"type": "http.response.start", "status": status, "headers": headers})
         await send({"type": "http.response.body", "body": payload})
 
@@ -4188,9 +4267,19 @@ class BaseApp[FactoryT = None](ABC):
             directory, include, exclude, gzip=gzip, max_total_bytes=max_total_bytes
         )
         for relative, body, gz_body, content_type in payloads:
-            etag = f'"{sha256(body).hexdigest()[:32]}"'.encode()
-            handler = _asset_handler(body, gz_body, content_type, etag, cache_control_value, tail)
-            self.__register("GET", _parse_template(f"{prefix}/{relative}"), handler)
+            etag = _asset_etag(body)
+            gz_etag = _asset_etag(body, gzip=True)
+            handler = _asset_handler(
+                body,
+                gz_body,
+                content_type,
+                etag,
+                gz_etag,
+                cache_control_value,
+                tail,
+                self.__exceptions,
+            )
+            self.__register("GET", _literal_segments(f"{prefix}/{relative}"), handler)
             record.routes.append(("GET", handler))
         self.__includes.append(record)
 

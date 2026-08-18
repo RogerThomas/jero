@@ -56,6 +56,7 @@ A middleware object may define any of these; everything else on it is ignored, a
 object defining none of them fails wiring loud:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from typing import ClassVar
 
 from jero import HTTPMethod, JSONResponse, Request, Struct

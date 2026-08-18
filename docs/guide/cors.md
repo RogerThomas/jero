@@ -8,6 +8,7 @@ needs.
 The policy is a `CORS` Struct:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from jero import CORS
 
 CORS(

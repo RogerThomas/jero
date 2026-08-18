@@ -1,9 +1,12 @@
 """Every complete jero example in the docs must exec, wire, and start.
 
-A "complete example" is any ```python fence that imports jero and builds ``app = App()``
-— the docs rule is that such examples are full, runnable apps. This test enforces the
-rule mechanically: a broken or fragment-drifted example fails here, not in a reader's
-terminal.
+Every ```python fence that imports jero is enforced by default — the docs rule is that
+such examples are full, runnable apps. A fence that is deliberately a partial
+illustration (not meant to run on its own) opts out explicitly with a
+``# doc-example: fragment`` marker as its first line, so the escape is a decision
+someone made and can grep for, not a silent side effect of how a class or variable
+happened to be named. This test enforces the rule mechanically: a broken, fragment-
+drifted, or wrongly-escaped example fails here, not in a reader's terminal.
 """
 
 import re
@@ -15,6 +18,8 @@ import pytest
 from jero import BaseApp
 from jero.testing import TestClient
 
+_FRAGMENT_MARKER = "# doc-example: fragment"
+
 
 def _example_params() -> list[object]:
     docs_dir = Path(__file__).resolve().parents[1] / "docs"
@@ -22,8 +27,9 @@ def _example_params() -> list[object]:
     for page in sorted(docs_dir.rglob("*.md")):
         text = page.read_text(encoding="utf-8")
         for index, block in enumerate(re.findall(r"```python\n(.*?)```", text, re.DOTALL)):
-            if "app = App()" in block and "from jero" in block:
-                params.append(pytest.param(block, id=f"{page.relative_to(docs_dir)}[{index}]"))
+            if "from jero" not in block or block.startswith(_FRAGMENT_MARKER):
+                continue
+            params.append(pytest.param(block, id=f"{page.relative_to(docs_dir)}[{index}]"))
     return params
 
 

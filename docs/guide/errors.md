@@ -59,6 +59,7 @@ For common statuses, jero ships errors ready to raise — one line, same typed p
 body the framework itself sends:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from jero import ConflictError, ForbiddenError, GoneError, NotFoundError, TooManyRequestsError
 
 
@@ -84,6 +85,7 @@ and every raise site stays consistent.
 When the human-readable detail contains runtime values, pair it with typed params:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from dataclasses import dataclass
 
 from msgspec import Struct

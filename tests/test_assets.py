@@ -1,12 +1,16 @@
 """Wire-time in-memory static assets: ``_include_assets``."""
 
-from collections.abc import Generator, Sequence
+import asyncio
+from collections.abc import AsyncGenerator, Generator, Sequence
+from contextlib import asynccontextmanager
 from gzip import decompress
 from pathlib import Path
+from typing import Any
 
 import pytest
+from msgspec import Struct
 
-from jero import BaseApp, Endpoint
+from jero import BaseApp, Endpoint, Request
 from jero.testing import TestClient
 
 SVG_BODY = b"<svg xmlns='http://www.w3.org/2000/svg'/>"
@@ -230,3 +234,205 @@ def test_route_collision_fails_at_wiring(asset_dir: Path) -> None:
     """An asset landing on an already-registered route is a WiringError."""
     with pytest.raises(RuntimeError, match="already registered"):
         TestClient(CollidingApp(asset_dir))
+
+
+# ---------------------------------------------------------------------------
+# A brace-shaped file/directory name must never become a route parameter.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(name="braced_dir")
+def _braced_dir(tmp_path: Path) -> Path:
+    (tmp_path / "{locale}").mkdir()
+    (tmp_path / "{locale}" / "a.css").write_bytes(CSS_BODY)
+    return tmp_path
+
+
+def test_brace_named_directory_is_a_literal_segment_not_a_slot(braced_dir: Path) -> None:
+    """A directory literally named '{locale}' must not become a dynamic route: only
+    the exact on-disk path is servable, not an arbitrary substituted segment."""
+    with TestClient(AssetsApp(braced_dir)) as client:
+        assert client.get("/assets/{locale}/a.css").status_code == 200
+        assert client.get("/assets/anything-else/a.css").status_code == 404
+        assert client.get("/assets/fr/a.css").status_code == 404
+
+
+def test_two_brace_named_files_do_not_collide(tmp_path: Path) -> None:
+    """Two files that would look like the same '{slot}' template must be two distinct
+    literal routes, not a route collision or a single merged slot."""
+    (tmp_path / "{a}.css").write_bytes(CSS_BODY)
+    (tmp_path / "{b}.css").write_bytes(CSS_BODY)
+    with TestClient(AssetsApp(tmp_path)) as client:
+        assert client.get("/assets/{a}.css").status_code == 200
+        assert client.get("/assets/{b}.css").status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# A failing dynamic header hook must become an error response, not a silent 200.
+# ---------------------------------------------------------------------------
+
+
+class BrokenHeaders(Struct):
+    """Return annotation for a hook that never actually returns."""
+
+    x_never: str
+
+
+class BrokenHeadersMiddleware:
+    """App-wide middleware whose dynamic hook always raises."""
+
+    def response_headers(self, request: Request) -> BrokenHeaders | None:
+        """Blow up unconditionally."""
+        _ = request
+        raise RuntimeError("header hook exploded")
+
+
+class AssetsWithBrokenMiddlewareApp(BaseApp):
+    """App wiring an app-wide failing header hook alongside an assets mount."""
+
+    def __init__(self, directory: Path) -> None:
+        super().__init__()
+        self._directory = directory
+
+    async def wire(self) -> None:
+        self._include_middleware(BrokenHeadersMiddleware())
+        self._include_assets(self._directory)
+
+
+def test_failing_header_hook_becomes_error_response(asset_dir: Path) -> None:
+    """An asset route under a failing app-wide response_headers hook answers the
+    framework's error response, exactly like any other route — it must not silently
+    ship the asset without the headers the hook was supposed to add."""
+    with TestClient(AssetsWithBrokenMiddlewareApp(asset_dir)) as client:
+        resp = client.get("/assets/logo.svg")
+        assert resp.status_code == 500
+        assert resp.json()["type"] == "internal-server-error"
+
+
+# ---------------------------------------------------------------------------
+# Accept-Encoding grammar: an explicit q=0 is a refusal, not an acceptance.
+# ---------------------------------------------------------------------------
+
+
+def test_accept_encoding_gzip_q0_is_a_refusal(client: TestClient) -> None:
+    """'gzip;q=0' explicitly refuses gzip (RFC 9110) even though the substring 'gzip'
+    is present in the header value."""
+    resp = client.get("/assets/app.css", headers={"accept-encoding": "gzip;q=0"})
+    assert resp.status_code == 200
+    assert "content-encoding" not in resp.headers
+    assert resp.content == CSS_BODY
+
+
+def test_accept_encoding_wildcard_is_honored(client: TestClient) -> None:
+    """A bare wildcard with no explicit gzip entry accepts gzip."""
+    resp = client.get("/assets/app.css", headers={"accept-encoding": "*"})
+    assert resp.headers["content-encoding"] == "gzip"
+
+
+def test_accept_encoding_explicit_gzip_overrides_zero_wildcard(client: TestClient) -> None:
+    """An explicit 'gzip' entry wins over a wildcard refusal ('*;q=0')."""
+    resp = client.get("/assets/app.css", headers={"accept-encoding": "*;q=0, gzip"})
+    assert resp.headers["content-encoding"] == "gzip"
+
+
+# ---------------------------------------------------------------------------
+# Repeated headers are one logical list, not "whichever line arrived last".
+# ---------------------------------------------------------------------------
+
+
+class _CollectSend:
+    """ASGI send that records every message."""
+
+    def __init__(self) -> None:
+        self.messages: list[dict[str, Any]] = []
+
+    async def __call__(self, message: dict[str, Any]) -> None:
+        self.messages.append(message)
+
+
+async def _empty_receive() -> dict[str, Any]:
+    return {"type": "http.request", "body": b"", "more_body": False}
+
+
+@asynccontextmanager
+async def _lifespan(app: BaseApp) -> AsyncGenerator[None]:
+    """Drive ``app`` through ASGI lifespan startup/shutdown around a manually-built
+    scope — used here to send repeated same-name headers, which the dict-based
+    ``TestClient`` API cannot express."""
+    to_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    from_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    task = asyncio.create_task(app({"type": "lifespan"}, to_app.get, from_app.put))
+    await to_app.put({"type": "lifespan.startup"})
+    msg = await from_app.get()
+    assert msg["type"] == "lifespan.startup.complete"
+    try:
+        yield
+    finally:
+        await to_app.put({"type": "lifespan.shutdown"})
+        await from_app.get()
+        await task
+
+
+def _get_scope(path: str, headers: list[tuple[bytes, bytes]]) -> dict[str, Any]:
+    return {
+        "type": "http",
+        "method": "GET",
+        "path": path,
+        "query_string": b"",
+        "headers": headers,
+    }
+
+
+@pytest.mark.asyncio
+async def test_repeated_if_none_match_headers_all_count(asset_dir: Path) -> None:
+    """A matching ETag in an earlier If-None-Match header line must not be lost just
+    because a later header line with a different value also arrived."""
+    app = AssetsApp(asset_dir)
+    async with _lifespan(app):
+        probe = _CollectSend()
+        await app(_get_scope("/assets/logo.svg", []), _empty_receive, probe)
+        etag = next(v for k, v in probe.messages[0]["headers"] if k == b"etag")
+
+        revalidate = _CollectSend()
+        await app(
+            _get_scope(
+                "/assets/logo.svg",
+                [(b"if-none-match", etag), (b"if-none-match", b'"something-else"')],
+            ),
+            _empty_receive,
+            revalidate,
+        )
+        assert revalidate.messages[0]["status"] == 304
+
+
+@pytest.mark.asyncio
+async def test_repeated_accept_encoding_headers_merge(asset_dir: Path) -> None:
+    """'gzip' arriving on one header line must not be discarded because a later
+    header line named a different encoding."""
+    app = AssetsApp(asset_dir)
+    async with _lifespan(app):
+        collected = _CollectSend()
+        await app(
+            _get_scope(
+                "/assets/app.css",
+                [(b"accept-encoding", b"gzip"), (b"accept-encoding", b"br")],
+            ),
+            _empty_receive,
+            collected,
+        )
+        headers = dict(collected.messages[0]["headers"])
+        assert headers[b"content-encoding"] == b"gzip"
+
+
+# ---------------------------------------------------------------------------
+# The size cap must fail as soon as it is exceeded, not after reading everything.
+# ---------------------------------------------------------------------------
+
+
+def test_size_cap_fails_on_the_offending_file_without_reading_the_rest(tmp_path: Path) -> None:
+    """The running total is checked per file: the cap fires at whichever file first
+    exceeds it, and the reported total does not include files that were never read."""
+    (tmp_path / "a.txt").write_bytes(b"x" * 10_000)  # sorts first, alone exceeds the cap
+    (tmp_path / "z.txt").write_bytes(b"y" * 10_000)  # would double the total if also read
+    with pytest.raises(RuntimeError, match=r"10000 bytes.*hit while reading a\.txt"):
+        TestClient(AssetsApp(tmp_path, gzip=False, max_total_bytes=100))

@@ -107,6 +107,7 @@ keyword for OpenAPI metadata. **Recommended:** import `Struct` from `jero` and g
 project one base that fixes your wire convention; inherit it everywhere:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from jero import Struct, ModelMeta
 
 class Base(Struct, rename="camel"):            # one project base
@@ -286,6 +287,7 @@ name *with a description* inline. They cascade by *container type*: a class-leve
 tag is the baseline, and an operation's `meta_<op>` extends or replaces it:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from jero import Tag
 
 meta=ResourceMeta(tags=[Tag("widgets", "Create, read, and manage widgets.")]),  # baseline + describes it
@@ -332,6 +334,7 @@ An operation mounted behind `auth` gets a `security` requirement. To advertise t
 `securitySchemes` entry:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from jero import BearerAuth
 
 
@@ -346,6 +349,7 @@ An authed route whose `Auth` declares nothing defaults to HTTP bearer. For other
 set the attribute directly with a `SecurityScheme` constructor:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from typing import ClassVar
 
 from jero import SecurityScheme

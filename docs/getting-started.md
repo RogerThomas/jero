@@ -103,6 +103,7 @@ jero ships a synchronous, in-process [`TestClient`](guide/testing.md) — no soc
 running server:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from jero.testing import TestClient
 
 
