@@ -1,8 +1,8 @@
 # Plan: Native cookies (typed binding, SetCookie responses, cookie auth)
 
-Status: **designed, not yet built.** All decisions below are locked (scope and
-security posture confirmed with the project owner on 2026-08-12); build in the
-staged order at the end.
+Status: **built, all stages green.** Shipped in #45 ("Inbuilt cookies"). All
+decisions below were locked (scope and security posture confirmed with the
+project owner on 2026-08-12) and built in the staged order at the end.
 
 ## Read this first (context for the implementing agent)
 
