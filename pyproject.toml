@@ -21,11 +21,7 @@ classifiers = [
     "Framework :: AsyncIO",
     "Typing :: Typed",
 ]
-dependencies = [
-    "msgspec>=0.21.1",
-    "multipart>=1.0",
-    "typing-extensions>=4.15",
-]
+dependencies = ["msgspec>=0.21.1", "multipart>=1.0", "typing-extensions>=4.15"]
 
 [project.optional-dependencies]
 # `uv add "jero[granian]"` — jero plus the recommended ASGI server in one step.
@@ -154,7 +150,14 @@ ignore = [
 # (ANN), an assert per response (S101), a bool flag (FBT), a × / µ output table
 # (RUF001/RUF003), and a commented column legend (ERA001). ruff-format and every other
 # rule still apply.
-"benchmarks/micro_bench.py" = ["ANN", "S101", "FBT", "RUF001", "RUF003", "ERA001"]
+"benchmarks/micro_bench.py" = [
+    "ANN",
+    "S101",
+    "FBT",
+    "RUF001",
+    "RUF003",
+    "ERA001",
+]
 
 [tool.pyright]
 # Target the minimum supported version so 3.14-only APIs are caught as errors.
@@ -186,7 +189,13 @@ unused-type-ignore-comment = "ignore"
 # the throwaway error-design playground (rich, self-imports jero). micro_bench.py is a
 # self-contained PEP 723 script: its deps (fastapi, litestar, blacksheep, …) are declared
 # inline for `uv run`, not in the package contract.
-extend_exclude = ['scratch_pad\.py', 'tmp\.py', 'demo_app/', 'error\.py', 'benchmarks/micro_bench\.py']
+extend_exclude = [
+    'scratch_pad\.py',
+    'tmp\.py',
+    'demo_app/',
+    'error\.py',
+    'benchmarks/micro_bench\.py',
+]
 
 [tool.deptry.per_rule_ignores]
 # granian is the server extra (`jero[granian]`): a CLI users run, never an import.
@@ -196,7 +205,11 @@ DEP002 = ["granian"]
 # Throwaway sketches kept for reuse; don't lint them. micro_bench.py is a self-contained
 # PEP 723 script: it imports uninstalled competitor frameworks (import-error) lazily
 # inside each builder (import-outside-toplevel, intentional for graceful skip-if-absent).
-ignore-paths = ['.*scratch_pad\.py$', '.*tmp\.py$', '.*benchmarks/micro_bench\.py$']
+ignore-paths = [
+    '.*scratch_pad\.py$',
+    '.*tmp\.py$',
+    '.*benchmarks/micro_bench\.py$',
+]
 disable = [
     "R0902",
     "R0903",
@@ -233,7 +246,12 @@ max-module-lines = 5000
 [tool.pyrefly]
 # micro_bench.py imports competitor frameworks that aren't project deps (they're PEP 723
 # inline deps resolved by `uv run`), so type-checking it here only yields missing-imports.
-project-excludes = ["./.venv", "scratch_pad.py", "tmp.py", "benchmarks/micro_bench.py"]
+project-excludes = [
+    "./.venv",
+    "scratch_pad.py",
+    "tmp.py",
+    "benchmarks/micro_bench.py",
+]
 # Target the minimum supported version so 3.14-only APIs are caught as errors.
 python-version = "3.13.0"
 infer-with-first-use = false

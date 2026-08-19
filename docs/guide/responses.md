@@ -11,6 +11,7 @@ headers or status.
 | -------------- | ------------------------------------------ |
 | a `Struct`     | `application/json`                         |
 | `list[Struct]` | `application/json` (a JSON array)          |
+| `str`          | `text/plain; charset=utf-8`                |
 | `bytes`        | `application/octet-stream`                 |
 
 ```python
@@ -41,10 +42,16 @@ class ExportEndpoint(Endpoint, path="/export"):
         return b"id,name\n"
 
 
+class HealthEndpoint(Endpoint, path="/healthz"):
+    async def get(self) -> str:                                # text/plain
+        return "ok"
+
+
 class App(BaseApp):
     async def wire(self) -> None:
         self._include_resource(WidgetResource())
         self._include_endpoint(ExportEndpoint())
+        self._include_endpoint(HealthEndpoint())
 
 
 app = App()
@@ -53,6 +60,10 @@ app = App()
 A JSON body is **always** a `Struct` (or a list of them) — never a raw `dict`. A
 `dict`/blob return is a `WiringError` at startup. That's the rule that gives every
 endpoint a validated, schema-able contract.
+
+`str` is the text sibling of `bytes`, and it does **not** mean raw JSON: returning
+`'{"status": "ok"}'` sends that literal text as `text/plain`, not JSON. JSON stays
+Struct-only.
 
 ## Controlling headers & status
 
@@ -136,6 +147,7 @@ the blessed way to set a cookie — see [Cookies](cookies.md) for the full page
 cookie auth):
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from jero import SetCookie
 
 JSONResponse(json=widget, cookies=[SetCookie("session_id", token)])
@@ -149,6 +161,7 @@ and all) — still how you'd hand-roll a repeated header jero has no typed vocab
 for:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from jero import RawHeaders
 
 JSONResponse(
@@ -335,8 +348,8 @@ two statuses meaning the same thing. A union of success wrappers is for outcomes
 asked for; failures stay [errors you raise](errors.md).
 
 Each member's status is the one it would have on its own: a plain `Struct`,
-`list[Struct]`, `bytes`, `JSONResponse`, or `BytesResponse` takes the verb's default
-(201 for `create`, else 200); `NoContent` / `Created` / `Accepted` take their own.
+`list[Struct]`, `str`, `bytes`, `JSONResponse`, or `BytesResponse` takes the verb's
+default (201 for `create`, else 200); `NoContent` / `Created` / `Accepted` take their own.
 
 ## Union reference
 

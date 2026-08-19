@@ -42,7 +42,7 @@ Everything in the document comes from the wiring you already did:
 | `paths` + operations     | each wired `Resource`/`Endpoint` method and its mount path |
 | `parameters`             | the `path` / `params` / `headers` source Structs, expanded field by field |
 | `requestBody`            | the `json` body Struct (or `content` bytes, or a `form`) |
-| `responses` (success)    | the handler's return type — a `Struct`, `list[Struct]`, `bytes`, a `JSONResponse[T]` / `NoContent` / `Created[T]` / `Accepted[T]`, or a streaming response. A *union* of these yields one entry per status |
+| `responses` (success)    | the handler's return type — a `Struct`, `list[Struct]`, `str`, `bytes`, a `JSONResponse[T]` / `NoContent` / `Created[T]` / `Accepted[T]`, or a streaming response. A *union* of these yields one entry per status |
 | `responses` (errors)     | the sources an operation actually has (see below) |
 | `components.schemas`     | every referenced `Struct`, via msgspec — `rename` and `msgspec.Meta` honored |
 | `security`               | the `auth` an operation is mounted behind |
@@ -107,6 +107,7 @@ keyword for OpenAPI metadata. **Recommended:** import `Struct` from `jero` and g
 project one base that fixes your wire convention; inherit it everywhere:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from jero import Struct, ModelMeta
 
 class Base(Struct, rename="camel"):            # one project base
@@ -286,6 +287,7 @@ name *with a description* inline. They cascade by *container type*: a class-leve
 tag is the baseline, and an operation's `meta_<op>` extends or replaces it:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from jero import Tag
 
 meta=ResourceMeta(tags=[Tag("widgets", "Create, read, and manage widgets.")]),  # baseline + describes it
@@ -332,6 +334,7 @@ An operation mounted behind `auth` gets a `security` requirement. To advertise t
 `securitySchemes` entry:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from jero import BearerAuth
 
 
@@ -346,6 +349,7 @@ An authed route whose `Auth` declares nothing defaults to HTTP bearer. For other
 set the attribute directly with a `SecurityScheme` constructor:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from typing import ClassVar
 
 from jero import SecurityScheme

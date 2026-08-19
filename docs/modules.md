@@ -45,6 +45,12 @@ The full public surface, grouped by area. Everything here is importable from `je
 ::: jero.SSEResponse
 ::: jero.ServerSentEvent
 
+## WebSockets
+
+::: jero.WebSocketEndpoint
+::: jero.WebSocket
+::: jero.Channel
+
 ## Cookies
 
 ::: jero.SetCookie

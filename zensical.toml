@@ -32,6 +32,7 @@ nav = [
             { "Links & Location" = "guide/links-and-location.md" },
             { "CORS" = "guide/cors.md" },
             { "Middleware" = "guide/middleware.md" },
+            { "Static assets" = "guide/assets.md" },
         ] },
         { "Operating" = [
             { "Wiring & lifecycle" = "guide/wiring.md" },

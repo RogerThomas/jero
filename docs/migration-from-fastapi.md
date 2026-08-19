@@ -90,7 +90,8 @@ formats.
   error, and that's what buys validation, schema, and speed.
 - **Body-rewriting middleware.** Compression, caching, and ETags belong in your
   server or reverse proxy — see [Deployment](guide/deployment.md#what-belongs-in-the-proxy).
-- **Static files.** jero serves JSON APIs; put assets on your proxy or CDN.
+- **Static files.** Small ones, yes — [`_include_assets`](guide/assets.md) serves them
+  from memory; large files and catch-all SPA fallbacks still belong on your proxy or CDN.
 
 ## Porting order that works
 

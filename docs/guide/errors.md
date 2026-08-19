@@ -59,6 +59,7 @@ For common statuses, jero ships errors ready to raise — one line, same typed p
 body the framework itself sends:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from jero import ConflictError, ForbiddenError, GoneError, NotFoundError, TooManyRequestsError
 
 
@@ -84,6 +85,7 @@ and every raise site stays consistent.
 When the human-readable detail contains runtime values, pair it with typed params:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from dataclasses import dataclass
 
 from msgspec import Struct
@@ -248,7 +250,10 @@ The description renders server-side from the params, and the same params ship ra
 `extensions` for clients that want the structured values. Templates follow ordinary
 `str.format` rules (escape literal braces as `{{thing}}`). For a shared shape across
 errors, make the base generic over its varying part
-(`class CompanyBody[E: Struct](Struct): ... extensions: E`) and pin `E` per error body.
+(`class CompanyBody[E: Struct](Struct): ... extensions: E`) and pin `E` in a concrete
+body subclass per error (`class ThingBody(CompanyBody[ThingExt]): ...`). The body handed
+to `StructHTTPError[...]` must be that concrete subclass — a subscripted generic like
+`StructHTTPError[CompanyBody[ThingExt]]` is a `TypeError` at class definition.
 
 Catch scope: `except HTTPError` catches only the Problem family; `except BaseHTTPError`
 means "any jero error", both families.
@@ -364,6 +369,9 @@ class App(BaseApp):
     async def wire(self) -> None:
         self._include_exception_handler(UpstreamHandler())
         self._include_endpoint(StatusEndpoint())
+
+
+app = App()
 ```
 
 jero infers every type from the method signature at wiring. Registering two handlers

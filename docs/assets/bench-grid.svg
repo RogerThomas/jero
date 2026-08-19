@@ -8,143 +8,143 @@
 <text x="696" y="36" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif">others</text>
 <text x="24" y="90.0" font-size="12.5" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="600">JSON — GET /info</text>
 <text x="379" y="90.0" font-size="10.5" fill="#898781" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">the pure framework path</text>
-<text x="114" y="119.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">gin</text>
+<text x="114" y="119.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">elysia</text>
 <path d="M122,109.0 L350.0,109.0 Q354.0,109.0 354.0,113.0 L354.0,119.0 Q354.0,123.0 350.0,123.0 L122,123.0 Z" fill="#a8adb3"/>
-<text x="360.0" y="119.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">55.7k</text>
-<text x="114" y="145.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">django-bolt</text>
-<path d="M122,135.0 L347.9,135.0 Q351.9,135.0 351.9,139.0 L351.9,145.0 Q351.9,149.0 347.9,149.0 L122,149.0 Z" fill="#a8adb3"/>
-<text x="357.9" y="145.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">55.1k</text>
-<text x="114" y="171.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">elysia</text>
-<path d="M122,161.0 L347.5,161.0 Q351.5,161.0 351.5,165.0 L351.5,171.0 Q351.5,175.0 347.5,175.0 L122,175.0 Z" fill="#a8adb3"/>
-<text x="357.5" y="171.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">55k</text>
+<text x="360.0" y="119.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">50.3k</text>
+<text x="114" y="145.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">gin</text>
+<path d="M122,135.0 L349.1,135.0 Q353.1,135.0 353.1,139.0 L353.1,145.0 Q353.1,149.0 349.1,149.0 L122,149.0 Z" fill="#a8adb3"/>
+<text x="359.1" y="145.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">50.1k</text>
+<text x="114" y="171.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">django-bolt</text>
+<path d="M122,161.0 L346.7,161.0 Q350.7,161.0 350.7,165.0 L350.7,171.0 Q350.7,175.0 346.7,175.0 L122,175.0 Z" fill="#a8adb3"/>
+<text x="356.7" y="171.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">49.6k</text>
 <text x="114" y="197.6" font-size="11" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="700" text-anchor="end">jero</text>
-<path d="M122,187.0 L314.5,187.0 Q318.5,187.0 318.5,191.0 L318.5,197.0 Q318.5,201.0 314.5,201.0 L122,201.0 Z" fill="#2a78d6"/>
-<text x="324.5" y="197.6" font-size="10.5" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="700" style="font-variant-numeric:tabular-nums">47.1k</text>
+<path d="M122,187.0 L344.0,187.0 Q348.0,187.0 348.0,191.0 L348.0,197.0 Q348.0,201.0 344.0,201.0 L122,201.0 Z" fill="#2a78d6"/>
+<text x="354.0" y="197.6" font-size="10.5" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="700" style="font-variant-numeric:tabular-nums">49k</text>
 <text x="114" y="223.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">blacksheep</text>
-<path d="M122,213.0 L295.4,213.0 Q299.4,213.0 299.4,217.0 L299.4,223.0 Q299.4,227.0 295.4,227.0 L122,227.0 Z" fill="#a8adb3"/>
-<text x="305.4" y="223.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">42.6k</text>
+<path d="M122,213.0 L309.3,213.0 Q313.3,213.0 313.3,217.0 L313.3,223.0 Q313.3,227.0 309.3,227.0 L122,227.0 Z" fill="#a8adb3"/>
+<text x="319.3" y="223.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">41.5k</text>
 <text x="114" y="249.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">robyn</text>
-<path d="M122,239.0 L275.5,239.0 Q279.5,239.0 279.5,243.0 L279.5,249.0 Q279.5,253.0 275.5,253.0 L122,253.0 Z" fill="#a8adb3"/>
-<text x="285.5" y="249.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">37.8k</text>
+<path d="M122,239.0 L286.0,239.0 Q290.0,239.0 290.0,243.0 L290.0,249.0 Q290.0,253.0 286.0,253.0 L122,253.0 Z" fill="#a8adb3"/>
+<text x="296.0" y="249.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">36.4k</text>
 <text x="114" y="275.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">spring-boot</text>
-<path d="M122,265.0 L256.1,265.0 Q260.1,265.0 260.1,269.0 L260.1,275.0 Q260.1,279.0 256.1,279.0 L122,279.0 Z" fill="#a8adb3"/>
-<text x="266.1" y="275.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">33.1k</text>
+<path d="M122,265.0 L268.2,265.0 Q272.2,265.0 272.2,269.0 L272.2,275.0 Q272.2,279.0 268.2,279.0 L122,279.0 Z" fill="#a8adb3"/>
+<text x="278.2" y="275.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">32.6k</text>
 <text x="114" y="301.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">litestar</text>
-<path d="M122,291.0 L255.7,291.0 Q259.7,291.0 259.7,295.0 L259.7,301.0 Q259.7,305.0 255.7,305.0 L122,305.0 Z" fill="#a8adb3"/>
-<text x="265.7" y="301.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">33k</text>
+<path d="M122,291.0 L266.2,291.0 Q270.2,291.0 270.2,295.0 L270.2,301.0 Q270.2,305.0 266.2,305.0 L122,305.0 Z" fill="#a8adb3"/>
+<text x="276.2" y="301.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">32.2k</text>
 <text x="114" y="327.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">fastapi</text>
-<path d="M122,317.0 L222.9,317.0 Q226.9,317.0 226.9,321.0 L226.9,327.0 Q226.9,331.0 222.9,331.0 L122,331.0 Z" fill="#a8adb3"/>
-<text x="232.9" y="327.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">25.2k</text>
+<path d="M122,317.0 L231.1,317.0 Q235.1,317.0 235.1,321.0 L235.1,327.0 Q235.1,331.0 231.1,331.0 L122,331.0 Z" fill="#a8adb3"/>
+<text x="241.1" y="327.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">24.5k</text>
 <text x="114" y="353.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">flask</text>
-<path d="M122,343.0 L199.3,343.0 Q203.3,343.0 203.3,347.0 L203.3,353.0 Q203.3,357.0 199.3,357.0 L122,357.0 Z" fill="#a8adb3"/>
-<text x="209.3" y="353.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">19.5k</text>
+<path d="M122,343.0 L207.3,343.0 Q211.3,343.0 211.3,347.0 L211.3,353.0 Q211.3,357.0 207.3,357.0 L122,357.0 Z" fill="#a8adb3"/>
+<text x="217.3" y="353.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">19.4k</text>
 <text x="114" y="379.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">django-ninja</text>
-<path d="M122,369.0 L129.8,369.0 Q133.8,369.0 133.8,373.0 L133.8,379.0 Q133.8,383.0 129.8,383.0 L122,383.0 Z" fill="#a8adb3"/>
-<text x="139.8" y="379.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">2.8k</text>
+<path d="M122,369.0 L129.2,369.0 Q133.2,369.0 133.2,373.0 L133.2,379.0 Q133.2,383.0 129.2,383.0 L122,383.0 Z" fill="#a8adb3"/>
+<text x="139.2" y="379.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">2.4k</text>
 <text x="412" y="90.0" font-size="12.5" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="600">JWT — POST /movies</text>
 <text x="767" y="90.0" font-size="10.5" fill="#898781" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">authed write path</text>
 <text x="502" y="119.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">gin</text>
 <path d="M510,109.0 L738.0,109.0 Q742.0,109.0 742.0,113.0 L742.0,119.0 Q742.0,123.0 738.0,123.0 L510,123.0 Z" fill="#a8adb3"/>
-<text x="748.0" y="119.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">44k</text>
+<text x="748.0" y="119.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">40.7k</text>
 <text x="502" y="145.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">elysia</text>
-<path d="M510,135.0 L723.0,135.0 Q727.0,135.0 727.0,139.0 L727.0,145.0 Q727.0,149.0 723.0,149.0 L510,149.0 Z" fill="#a8adb3"/>
-<text x="733.0" y="145.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">41.2k</text>
+<path d="M510,135.0 L724.7,135.0 Q728.7,135.0 728.7,139.0 L728.7,145.0 Q728.7,149.0 724.7,149.0 L510,149.0 Z" fill="#a8adb3"/>
+<text x="734.7" y="145.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">38.4k</text>
 <text x="502" y="171.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">django-bolt</text>
-<path d="M510,161.0 L708.8,161.0 Q712.8,161.0 712.8,165.0 L712.8,171.0 Q712.8,175.0 708.8,175.0 L510,175.0 Z" fill="#a8adb3"/>
-<text x="718.8" y="171.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">38.5k</text>
+<path d="M510,161.0 L718.2,161.0 Q722.2,161.0 722.2,165.0 L722.2,171.0 Q722.2,175.0 718.2,175.0 L510,175.0 Z" fill="#a8adb3"/>
+<text x="728.2" y="171.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">37.3k</text>
 <text x="502" y="197.6" font-size="11" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="700" text-anchor="end">jero</text>
-<path d="M510,187.0 L628.8,187.0 Q632.8,187.0 632.8,191.0 L632.8,197.0 Q632.8,201.0 628.8,201.0 L510,201.0 Z" fill="#2a78d6"/>
-<text x="638.8" y="197.6" font-size="10.5" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="700" style="font-variant-numeric:tabular-nums">23.3k</text>
+<path d="M510,187.0 L642.5,187.0 Q646.5,187.0 646.5,191.0 L646.5,197.0 Q646.5,201.0 642.5,201.0 L510,201.0 Z" fill="#2a78d6"/>
+<text x="652.5" y="197.6" font-size="10.5" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="700" style="font-variant-numeric:tabular-nums">24k</text>
 <text x="502" y="223.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">spring-boot</text>
-<path d="M510,213.0 L623.9,213.0 Q627.9,213.0 627.9,217.0 L627.9,223.0 Q627.9,227.0 623.9,227.0 L510,227.0 Z" fill="#a8adb3"/>
-<text x="633.9" y="223.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">22.4k</text>
+<path d="M510,213.0 L629.5,213.0 Q633.5,213.0 633.5,217.0 L633.5,223.0 Q633.5,227.0 629.5,227.0 L510,227.0 Z" fill="#a8adb3"/>
+<text x="639.5" y="223.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">21.7k</text>
 <text x="502" y="249.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">robyn</text>
-<path d="M510,239.0 L613.1,239.0 Q617.1,239.0 617.1,243.0 L617.1,249.0 Q617.1,253.0 613.1,253.0 L510,253.0 Z" fill="#a8adb3"/>
-<text x="623.1" y="249.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">20.3k</text>
+<path d="M510,239.0 L621.7,239.0 Q625.7,239.0 625.7,243.0 L625.7,249.0 Q625.7,253.0 621.7,253.0 L510,253.0 Z" fill="#a8adb3"/>
+<text x="631.7" y="249.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">20.3k</text>
 <text x="502" y="275.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">blacksheep</text>
-<path d="M510,265.0 L595.6,265.0 Q599.6,265.0 599.6,269.0 L599.6,275.0 Q599.6,279.0 595.6,279.0 L510,279.0 Z" fill="#a8adb3"/>
-<text x="605.6" y="275.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">17k</text>
+<path d="M510,265.0 L600.9,265.0 Q604.9,265.0 604.9,269.0 L604.9,275.0 Q604.9,279.0 600.9,279.0 L510,279.0 Z" fill="#a8adb3"/>
+<text x="610.9" y="275.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">16.7k</text>
 <text x="502" y="301.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">litestar</text>
-<path d="M510,291.0 L577.5,291.0 Q581.5,291.0 581.5,295.0 L581.5,301.0 Q581.5,305.0 577.5,305.0 L510,305.0 Z" fill="#a8adb3"/>
-<text x="587.5" y="301.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">13.6k</text>
+<path d="M510,291.0 L580.7,291.0 Q584.7,291.0 584.7,295.0 L584.7,301.0 Q584.7,305.0 580.7,305.0 L510,305.0 Z" fill="#a8adb3"/>
+<text x="590.7" y="301.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">13.1k</text>
 <text x="502" y="327.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">flask</text>
-<path d="M510,317.0 L564.0,317.0 Q568.0,317.0 568.0,321.0 L568.0,327.0 Q568.0,331.0 564.0,331.0 L510,331.0 Z" fill="#a8adb3"/>
-<text x="574.0" y="327.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">11k</text>
+<path d="M510,317.0 L568.0,317.0 Q572.0,317.0 572.0,321.0 L572.0,327.0 Q572.0,331.0 568.0,331.0 L510,331.0 Z" fill="#a8adb3"/>
+<text x="578.0" y="327.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">10.9k</text>
 <text x="502" y="353.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">fastapi</text>
-<path d="M510,343.0 L556.9,343.0 Q560.9,343.0 560.9,347.0 L560.9,353.0 Q560.9,357.0 556.9,357.0 L510,357.0 Z" fill="#a8adb3"/>
-<text x="566.9" y="353.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">9.7k</text>
+<path d="M510,343.0 L558.6,343.0 Q562.6,343.0 562.6,347.0 L562.6,353.0 Q562.6,357.0 558.6,357.0 L510,357.0 Z" fill="#a8adb3"/>
+<text x="568.6" y="353.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">9.2k</text>
 <text x="502" y="379.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">django-ninja</text>
-<path d="M510,369.0 L519.2,369.0 Q523.2,369.0 523.2,373.0 L523.2,379.0 Q523.2,383.0 519.2,383.0 L510,383.0 Z" fill="#a8adb3"/>
-<text x="529.2" y="379.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">2.5k</text>
+<path d="M510,369.0 L518.9,369.0 Q522.9,369.0 522.9,373.0 L522.9,379.0 Q522.9,383.0 518.9,383.0 L510,383.0 Z" fill="#a8adb3"/>
+<text x="528.9" y="379.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">2.3k</text>
 <text x="24" y="437.0" font-size="12.5" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="600">Proxy — GET /catalog</text>
 <text x="379" y="437.0" font-size="10.5" fill="#898781" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">same Rust client under each</text>
 <text x="114" y="466.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">elysia</text>
 <path d="M122,456.0 L350.0,456.0 Q354.0,456.0 354.0,460.0 L354.0,466.0 Q354.0,470.0 350.0,470.0 L122,470.0 Z" fill="#a8adb3"/>
-<text x="360.0" y="466.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">43.5k</text>
+<text x="360.0" y="466.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">40.9k</text>
 <text x="114" y="492.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">gin</text>
-<path d="M122,482.0 L284.8,482.0 Q288.8,482.0 288.8,486.0 L288.8,492.0 Q288.8,496.0 284.8,496.0 L122,496.0 Z" fill="#a8adb3"/>
-<text x="294.8" y="492.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">31.3k</text>
+<path d="M122,482.0 L284.5,482.0 Q288.5,482.0 288.5,486.0 L288.5,492.0 Q288.5,496.0 284.5,496.0 L122,496.0 Z" fill="#a8adb3"/>
+<text x="294.5" y="492.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">29.4k</text>
 <text x="114" y="518.6" font-size="11" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="700" text-anchor="end">jero</text>
-<path d="M122,508.0 L257.0,508.0 Q261.0,508.0 261.0,512.0 L261.0,518.0 Q261.0,522.0 257.0,522.0 L122,522.0 Z" fill="#2a78d6"/>
-<text x="267.0" y="518.6" font-size="10.5" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="700" style="font-variant-numeric:tabular-nums">26.1k</text>
-<text x="114" y="544.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">django-bolt</text>
-<path d="M122,534.0 L233.3,534.0 Q237.3,534.0 237.3,538.0 L237.3,544.0 Q237.3,548.0 233.3,548.0 L122,548.0 Z" fill="#a8adb3"/>
-<text x="243.3" y="544.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">21.6k</text>
-<text x="114" y="570.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">blacksheep</text>
-<path d="M122,560.0 L232.6,560.0 Q236.6,560.0 236.6,564.0 L236.6,570.0 Q236.6,574.0 232.6,574.0 L122,574.0 Z" fill="#a8adb3"/>
-<text x="242.6" y="570.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">21.5k</text>
+<path d="M122,508.0 L259.8,508.0 Q263.8,508.0 263.8,512.0 L263.8,518.0 Q263.8,522.0 259.8,522.0 L122,522.0 Z" fill="#2a78d6"/>
+<text x="269.8" y="518.6" font-size="10.5" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="700" style="font-variant-numeric:tabular-nums">25k</text>
+<text x="114" y="544.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">blacksheep</text>
+<path d="M122,534.0 L234.7,534.0 Q238.7,534.0 238.7,538.0 L238.7,544.0 Q238.7,548.0 234.7,548.0 L122,548.0 Z" fill="#a8adb3"/>
+<text x="244.7" y="544.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">20.6k</text>
+<text x="114" y="570.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">django-bolt</text>
+<path d="M122,560.0 L232.8,560.0 Q236.8,560.0 236.8,564.0 L236.8,570.0 Q236.8,574.0 232.8,574.0 L122,574.0 Z" fill="#a8adb3"/>
+<text x="242.8" y="570.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">20.3k</text>
 <text x="114" y="596.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">robyn</text>
-<path d="M122,586.0 L218.1,586.0 Q222.1,586.0 222.1,590.0 L222.1,596.0 Q222.1,600.0 218.1,600.0 L122,600.0 Z" fill="#a8adb3"/>
-<text x="228.1" y="596.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">18.8k</text>
+<path d="M122,586.0 L219.5,586.0 Q223.5,586.0 223.5,590.0 L223.5,596.0 Q223.5,600.0 219.5,600.0 L122,600.0 Z" fill="#a8adb3"/>
+<text x="229.5" y="596.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">17.9k</text>
 <text x="114" y="622.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">litestar</text>
-<path d="M122,612.0 L212.1,612.0 Q216.1,612.0 216.1,616.0 L216.1,622.0 Q216.1,626.0 212.1,626.0 L122,626.0 Z" fill="#a8adb3"/>
-<text x="222.1" y="622.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">17.6k</text>
+<path d="M122,612.0 L215.1,612.0 Q219.1,612.0 219.1,616.0 L219.1,622.0 Q219.1,626.0 215.1,626.0 L122,626.0 Z" fill="#a8adb3"/>
+<text x="225.1" y="622.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">17.1k</text>
 <text x="114" y="648.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">spring-boot</text>
-<path d="M122,638.0 L209.1,638.0 Q213.1,638.0 213.1,642.0 L213.1,648.0 Q213.1,652.0 209.1,652.0 L122,652.0 Z" fill="#a8adb3"/>
-<text x="219.1" y="648.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">17.1k</text>
+<path d="M122,638.0 L208.8,638.0 Q212.8,638.0 212.8,642.0 L212.8,648.0 Q212.8,652.0 208.8,652.0 L122,652.0 Z" fill="#a8adb3"/>
+<text x="218.8" y="648.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">16k</text>
 <text x="114" y="674.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">fastapi</text>
-<path d="M122,664.0 L190.4,664.0 Q194.4,664.0 194.4,668.0 L194.4,674.0 Q194.4,678.0 190.4,678.0 L122,678.0 Z" fill="#a8adb3"/>
-<text x="200.4" y="674.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">13.6k</text>
+<path d="M122,664.0 L190.7,664.0 Q194.7,664.0 194.7,668.0 L194.7,674.0 Q194.7,678.0 190.7,678.0 L122,678.0 Z" fill="#a8adb3"/>
+<text x="200.7" y="674.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">12.8k</text>
 <text x="114" y="700.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">flask</text>
-<path d="M122,690.0 L170.1,690.0 Q174.1,690.0 174.1,694.0 L174.1,700.0 Q174.1,704.0 170.1,704.0 L122,704.0 Z" fill="#a8adb3"/>
-<text x="180.1" y="700.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">9.8k</text>
+<path d="M122,690.0 L175.4,690.0 Q179.4,690.0 179.4,694.0 L179.4,700.0 Q179.4,704.0 175.4,704.0 L122,704.0 Z" fill="#a8adb3"/>
+<text x="185.4" y="700.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">10.1k</text>
 <text x="114" y="726.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">django-ninja</text>
-<path d="M122,716.0 L134.7,716.0 Q138.7,716.0 138.7,720.0 L138.7,726.0 Q138.7,730.0 134.7,730.0 L122,730.0 Z" fill="#a8adb3"/>
-<text x="144.7" y="726.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">3.1k</text>
+<path d="M122,716.0 L134.3,716.0 Q138.3,716.0 138.3,720.0 L138.3,726.0 Q138.3,730.0 134.3,730.0 L122,730.0 Z" fill="#a8adb3"/>
+<text x="144.3" y="726.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">2.9k</text>
 <text x="412" y="437.0" font-size="12.5" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="600">Database — GET /users/me</text>
 <text x="767" y="437.0" font-size="10.5" fill="#898781" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">bound by the DB driver</text>
 <text x="502" y="466.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">gin</text>
 <path d="M510,456.0 L738.0,456.0 Q742.0,456.0 742.0,460.0 L742.0,466.0 Q742.0,470.0 738.0,470.0 L510,470.0 Z" fill="#a8adb3"/>
-<text x="748.0" y="466.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">34.9k</text>
+<text x="748.0" y="466.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">32.3k</text>
 <text x="502" y="492.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">elysia</text>
-<path d="M510,482.0 L689.9,482.0 Q693.9,482.0 693.9,486.0 L693.9,492.0 Q693.9,496.0 689.9,496.0 L510,496.0 Z" fill="#a8adb3"/>
-<text x="699.9" y="492.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">27.6k</text>
+<path d="M510,482.0 L693.3,482.0 Q697.3,482.0 697.3,486.0 L697.3,492.0 Q697.3,496.0 693.3,496.0 L510,496.0 Z" fill="#a8adb3"/>
+<text x="703.3" y="492.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">26k</text>
 <text x="502" y="518.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">spring-boot</text>
-<path d="M510,508.0 L625.0,508.0 Q629.0,508.0 629.0,512.0 L629.0,518.0 Q629.0,522.0 625.0,522.0 L510,522.0 Z" fill="#a8adb3"/>
-<text x="635.0" y="518.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">17.9k</text>
+<path d="M510,508.0 L625.2,508.0 Q629.2,508.0 629.2,512.0 L629.2,518.0 Q629.2,522.0 625.2,522.0 L510,522.0 Z" fill="#a8adb3"/>
+<text x="635.2" y="518.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">16.6k</text>
 <text x="502" y="544.6" font-size="11" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="700" text-anchor="end">jero</text>
-<path d="M510,534.0 L585.0,534.0 Q589.0,534.0 589.0,538.0 L589.0,544.0 Q589.0,548.0 585.0,548.0 L510,548.0 Z" fill="#2a78d6"/>
-<text x="595.0" y="544.6" font-size="10.5" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="700" style="font-variant-numeric:tabular-nums">11.9k</text>
+<path d="M510,534.0 L586.2,534.0 Q590.2,534.0 590.2,538.0 L590.2,544.0 Q590.2,548.0 586.2,548.0 L510,548.0 Z" fill="#2a78d6"/>
+<text x="596.2" y="544.6" font-size="10.5" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="700" style="font-variant-numeric:tabular-nums">11.2k</text>
 <text x="502" y="570.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">blacksheep</text>
-<path d="M510,560.0 L575.6,560.0 Q579.6,560.0 579.6,564.0 L579.6,570.0 Q579.6,574.0 575.6,574.0 L510,574.0 Z" fill="#a8adb3"/>
-<text x="585.6" y="570.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">10.5k</text>
-<text x="502" y="596.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">robyn</text>
-<path d="M510,586.0 L572.2,586.0 Q576.2,586.0 576.2,590.0 L576.2,596.0 Q576.2,600.0 572.2,600.0 L510,600.0 Z" fill="#a8adb3"/>
-<text x="582.2" y="596.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">10k</text>
-<text x="502" y="622.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">litestar</text>
-<path d="M510,612.0 L562.6,612.0 Q566.6,612.0 566.6,616.0 L566.6,622.0 Q566.6,626.0 562.6,626.0 L510,626.0 Z" fill="#a8adb3"/>
-<text x="572.6" y="622.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">8.5k</text>
-<text x="502" y="648.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">fastapi</text>
-<path d="M510,638.0 L551.7,638.0 Q555.7,638.0 555.7,642.0 L555.7,648.0 Q555.7,652.0 551.7,652.0 L510,652.0 Z" fill="#a8adb3"/>
-<text x="561.7" y="648.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">6.9k</text>
-<text x="502" y="674.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">flask</text>
-<path d="M510,664.0 L546.1,664.0 Q550.1,664.0 550.1,668.0 L550.1,674.0 Q550.1,678.0 546.1,678.0 L510,678.0 Z" fill="#a8adb3"/>
-<text x="556.1" y="674.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">6k</text>
-<text x="502" y="700.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">django-bolt</text>
-<path d="M510,690.0 L530.0,690.0 Q534.0,690.0 534.0,694.0 L534.0,700.0 Q534.0,704.0 530.0,704.0 L510,704.0 Z" fill="#a8adb3"/>
-<text x="540.0" y="700.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">3.6k</text>
+<path d="M510,560.0 L576.2,560.0 Q580.2,560.0 580.2,564.0 L580.2,570.0 Q580.2,574.0 576.2,574.0 L510,574.0 Z" fill="#a8adb3"/>
+<text x="586.2" y="570.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">9.8k</text>
+<text x="502" y="596.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">django-bolt</text>
+<path d="M510,586.0 L575.0,586.0 Q579.0,586.0 579.0,590.0 L579.0,596.0 Q579.0,600.0 575.0,600.0 L510,600.0 Z" fill="#a8adb3"/>
+<text x="585.0" y="596.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">9.6k</text>
+<text x="502" y="622.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">robyn</text>
+<path d="M510,612.0 L572.9,612.0 Q576.9,612.0 576.9,616.0 L576.9,622.0 Q576.9,626.0 572.9,626.0 L510,626.0 Z" fill="#a8adb3"/>
+<text x="582.9" y="622.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">9.3k</text>
+<text x="502" y="648.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">litestar</text>
+<path d="M510,638.0 L564.7,638.0 Q568.7,638.0 568.7,642.0 L568.7,648.0 Q568.7,652.0 564.7,652.0 L510,652.0 Z" fill="#a8adb3"/>
+<text x="574.7" y="648.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">8.2k</text>
+<text x="502" y="674.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">fastapi</text>
+<path d="M510,664.0 L553.2,664.0 Q557.2,664.0 557.2,668.0 L557.2,674.0 Q557.2,678.0 553.2,678.0 L510,678.0 Z" fill="#a8adb3"/>
+<text x="563.2" y="674.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">6.6k</text>
+<text x="502" y="700.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">flask</text>
+<path d="M510,690.0 L549.4,690.0 Q553.4,690.0 553.4,694.0 L553.4,700.0 Q553.4,704.0 549.4,704.0 L510,704.0 Z" fill="#a8adb3"/>
+<text x="559.4" y="700.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">6k</text>
 <text x="502" y="726.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">django-ninja</text>
-<path d="M510,716.0 L516.0,716.0 Q520.0,716.0 520.0,720.0 L520.0,726.0 Q520.0,730.0 516.0,730.0 L510,730.0 Z" fill="#a8adb3"/>
-<text x="526.0" y="726.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">1.5k</text>
+<path d="M510,716.0 L519.3,716.0 Q523.3,716.0 523.3,720.0 L523.3,726.0 Q523.3,730.0 519.3,730.0 L510,730.0 Z" fill="#a8adb3"/>
+<text x="529.3" y="726.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">1.9k</text>
 <text x="24" y="770.0" font-size="10.5" fill="#898781" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif">req/s, higher is better · 128 VUs · 60s · best-of-3 · 1 dedicated core · EC2 c9g.2xlarge · Python 3.13 (granian+uvloop)</text>
 </svg>

@@ -433,6 +433,14 @@ def _success_entry(
         return ResponseEntry.single(
             status, description, "application/octet-stream", headers=headers
         )
+    if kind == "text":
+        return ResponseEntry.single(
+            status,
+            description,
+            "text/plain; charset=utf-8",
+            schema={"type": "string"},
+            headers=headers,
+        )
     if kind == "stream-ndjson":
         item = _item_payload(annotation, kind, wrapper, operation_id)
         return ResponseEntry.single(

@@ -59,7 +59,11 @@ app = App()
 ## JSON body — `json`
 
 The body is decoded straight into your `Struct` by msgspec. A malformed body → **400**;
-a well-formed body that fails the schema → **422**.
+a well-formed body that fails the schema → **422**. That split runs through every
+source: failures *reading* the request (malformed JSON, an unconvertible query or
+header value) are 400s, and only a successfully parsed body or form part whose content
+breaks its declared schema is a 422 — which is why a bad query value is a 400 where the
+same bad value inside a JSON body is a 422.
 
 A JSON body is **always** a `Struct`, never a raw `dict`. That's what gives it both
 validation and a schema in the [OpenAPI spec](openapi.md).

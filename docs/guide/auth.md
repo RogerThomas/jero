@@ -22,6 +22,7 @@ per source exactly the same way. See [Cookies](cookies.md#cookie-auth) for the f
 treatment, including the WebSocket case cookie auth exists for.
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from dataclasses import dataclass
 
 from msgspec import Struct
@@ -286,6 +287,7 @@ rejectable. To advertise the *scheme*, subclass an auth base instead of writing 
 attribute by hand:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 from jero import BearerAuth
 
 

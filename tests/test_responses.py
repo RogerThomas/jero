@@ -11,6 +11,7 @@ import pytest
 from msgspec import Struct
 
 from jero import (
+    CORS,
     Accepted,
     BaseApp,
     BytesResponse,
@@ -634,3 +635,83 @@ def test_union_breach_is_logged_even_when_the_app_handles_type_error(
         resp = client.get("/lying-union")
     assert resp.status_code == 400  # the app's handler won, as it should
     assert "matches none of its declared union return types" in caplog.text
+
+
+class GreetingEndpoint(Endpoint, path="/greeting"):
+    """Endpoint returning plain text."""
+
+    async def get(self) -> str:
+        """Return a plain-text greeting."""
+        return "greeting-body"
+
+
+class NoteResource(Resource, path="/notes"):
+    """Resource whose create returns the note as plain text."""
+
+    async def create(self, content: bytes) -> str:
+        """Echo the raw body back as text."""
+        return content.decode()
+
+
+class MaybeTextEndpoint(Endpoint, path="/maybe-text"):
+    """Endpoint returning text through a union member."""
+
+    async def get(self) -> str | NoContent:
+        """Always take the text branch; the union proves str wires as a member."""
+        return "maybe-text-body"
+
+
+class TextApp(BaseApp):
+    """App exercising str (text/plain) returns."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(GreetingEndpoint(), cors=CORS())
+        self._include_endpoint(MaybeTextEndpoint())
+        self._include_resource(NoteResource())
+
+
+@pytest.fixture(name="text_client")
+def _text_client() -> Generator[TestClient]:
+    with TestClient(TextApp()) as client:
+        yield client
+
+
+def test_str_return_is_text_plain(text_client: TestClient) -> None:
+    """A ``-> str`` handler sends its value as text/plain with a utf-8 charset."""
+    resp = text_client.get("/greeting")
+    assert resp.status_code == 200
+    assert resp.text == "greeting-body"
+    assert resp.headers["content-type"] == "text/plain; charset=utf-8"
+
+
+def test_str_return_on_create_is_201(text_client: TestClient) -> None:
+    """A ``-> str`` create takes the verb's 201 like any plain return kind."""
+    resp = text_client.post("/notes", content=b"note-body")
+    assert resp.status_code == 201
+    assert resp.text == "note-body"
+    assert resp.headers["content-type"] == "text/plain; charset=utf-8"
+
+
+def test_head_on_str_return_suppresses_body(text_client: TestClient) -> None:
+    """HEAD on a ``-> str`` route keeps the headers but drops the body."""
+    resp = text_client.head("/greeting")
+    assert resp.status_code == 200
+    assert resp.content == b""
+    assert resp.headers["content-length"] == str(len("greeting-body"))
+    assert resp.headers["content-type"] == "text/plain; charset=utf-8"
+
+
+def test_str_return_carries_cors_headers(text_client: TestClient) -> None:
+    """A ``-> str`` route under a CORS policy emits the CORS headers alongside text/plain."""
+    resp = text_client.get("/greeting", headers={"origin": "https://app.example"})
+    assert resp.status_code == 200
+    assert resp.text == "greeting-body"
+    assert resp.headers["access-control-allow-origin"] == "*"
+
+
+def test_str_union_member_dispatches_to_text(text_client: TestClient) -> None:
+    """``str`` is a valid union member and dispatches to the text sender at runtime."""
+    resp = text_client.get("/maybe-text")
+    assert resp.status_code == 200
+    assert resp.text == "maybe-text-body"
+    assert resp.headers["content-type"] == "text/plain; charset=utf-8"

@@ -208,26 +208,27 @@ On the pure framework hot path (a typed JSON `GET`):
 
 | Framework            | `GET /info` req/s | Relative to jero |
 | :------------------- | :---------------- | :--------------- |
-| gin *(Go)*           | 55.7k             | 1.18×            |
-| django-bolt          | 55.1k             | 1.17×            |
-| elysia *(Bun)*       | 55.0k             | 1.17×            |
-| **jero**             | **47.1k**         | **1.00×**        |
-| blacksheep           | 42.6k             | 0.90×            |
-| robyn                | 37.8k             | 0.80×            |
-| spring-boot *(Java)* | 33.1k             | 0.70×            |
-| litestar             | 33.0k             | 0.70×            |
-| fastapi              | 25.2k             | 0.53×            |
-| flask                | 19.5k             | 0.41×            |
-| django-ninja         | 2.8k              | 0.06×            |
+| elysia *(Bun)*       | 50.3k             | 1.03×            |
+| gin *(Go)*           | 50.1k             | 1.02×            |
+| django-bolt          | 49.6k             | 1.01×            |
+| **jero**             | **49.0k**         | **1.00×**        |
+| blacksheep           | 41.5k             | 0.85×            |
+| robyn                | 36.4k             | 0.74×            |
+| spring-boot *(Java)* | 32.6k             | 0.66×            |
+| litestar             | 32.2k             | 0.66×            |
+| fastapi              | 24.5k             | 0.50×            |
+| flask                | 19.4k             | 0.40×            |
+| django-ninja         | 2.4k              | 0.05×            |
 
-Go and Bun top the raw table, and Django Bolt's built-in Rust server joins them on the
-two scenarios its Rust core fully covers — then drops to 0.30× jero the moment a
-request touches the database through Django's ORM. On the upstream-proxy scenario —
-with every Python framework on the same Rust HTTP client — jero is the fastest Python
-framework outright, within ~20% of Go while returning a typed, validated payload. On
-the database scenario Go pulls well clear, because there the bottleneck is the
-database driver, not the framework. jero stays the fastest Python option, but it isn't
-as fast as Go in general — and this doesn't claim it is.
+The top four finish within 3% of each other — on the pure framework path, jero runs at
+Go and Bun speed. Django Bolt's built-in Rust server edges that test by ~1% and wins
+the authed write outright, but on the proxy and database paths — where the request's
+time is spent beyond the framework — jero leads it. On the upstream-proxy scenario,
+with every Python framework on the same Rust-based HTTP client, jero is the fastest
+Python framework outright, within ~15% of Go while returning a typed, validated
+payload. On the database scenario Go pulls well clear, because there the bottleneck is
+the database driver, not the framework. jero stays the fastest Python option, but it
+isn't as fast as Go in general — and this doesn't claim it is.
 
 These are favourable, constrained conditions — single worker, one dedicated core,
 best-of-N — and a microbenchmark is not your application. See all four scenarios in the

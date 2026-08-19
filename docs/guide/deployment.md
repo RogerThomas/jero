@@ -63,10 +63,16 @@ here.) Operation, ref, and `from_path(...)` links are rewritten against the base
 
 ## What belongs in the proxy
 
-Response-body transformation — compression, caching, ETags — is server/proxy work.
-jero's [middleware](middleware.md) can answer requests, add headers, and observe; it
-never rewrites bodies, because that costs the buffering jero refuses to pay. Configure
-gzip/brotli, caching, and TLS at granian or your reverse proxy.
+Per-request response-body transformation — compression, caching, ETags computed on
+the fly — is server/proxy work. jero's [middleware](middleware.md) can answer
+requests, add headers, and observe; it never rewrites bodies, because that costs the
+buffering jero refuses to pay. Configure gzip/brotli, caching, and TLS at granian or
+your reverse proxy.
+
+The one exception is [`_include_assets`](assets.md): compression and `ETag`s there
+are computed once, at wiring, over a fixed set of small files held in memory — not
+per request, and not middleware — so it doesn't reopen this rule. Large files, `Range`
+requests, and catch-all fallbacks still belong on the proxy.
 
 ## Graceful shutdown
 

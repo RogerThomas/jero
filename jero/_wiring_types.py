@@ -31,6 +31,7 @@ type ReturnKind = Literal[
     "accepted",
     "bytes",
     "bytes-response",
+    "text",
     "stream-bytes",
     "stream-ndjson",
     "stream-sse",
