@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, Request, Resource
+from jero import BaseApp, Endpoint, Request, Resource, WiringError
 from jero.testing import TestClient
 
 SVG_BODY = b"<svg xmlns='http://www.w3.org/2000/svg'/>"
@@ -32,6 +32,7 @@ class AssetsApp(BaseApp):
         gzip: bool = True,
         cache_control: str | None = None,
         max_total_bytes: int = 10 * 1024 * 1024,
+        max_files: int = 10_000,
     ) -> None:
         super().__init__()
         self._directory = directory
@@ -41,6 +42,7 @@ class AssetsApp(BaseApp):
         self._gzip = gzip
         self._cache_control = cache_control
         self._max_total_bytes = max_total_bytes
+        self._max_files = max_files
 
     async def wire(self) -> None:
         self._include_assets(
@@ -51,6 +53,7 @@ class AssetsApp(BaseApp):
             gzip=self._gzip,
             cache_control=self._cache_control,
             max_total_bytes=self._max_total_bytes,
+            max_files=self._max_files,
         )
 
 
@@ -210,6 +213,75 @@ def test_size_cap_fails_at_wiring(asset_dir: Path) -> None:
         TestClient(AssetsApp(asset_dir, max_total_bytes=10))
 
 
+def test_oversized_file_is_rejected_before_being_read(tmp_path: Path) -> None:
+    """A single file already bigger than the cap is rejected by its on-disk size —
+    the failure names the file it was about to read, not a running total, proving
+    it never got as far as read_bytes()/gzip on that file."""
+    (tmp_path / "huge.txt").write_bytes(b"x" * 1000)
+    with pytest.raises(RuntimeError, match=r"reading huge\.txt would exceed"):
+        TestClient(AssetsApp(tmp_path, gzip=False, max_total_bytes=100))
+
+
+def test_file_count_cap_fails_at_wiring(asset_dir: Path) -> None:
+    """More files than max_files is a WiringError, independent of their total size."""
+    with pytest.raises(RuntimeError, match="max_files"):
+        TestClient(AssetsApp(asset_dir, max_files=1))
+
+
+# ---------------------------------------------------------------------------
+# Symlinks are never served — a symlinked file must not be read through, however
+# large or wherever it points.
+# ---------------------------------------------------------------------------
+
+
+def test_symlinked_file_is_never_served(tmp_path: Path) -> None:
+    """A symlink inside the served directory pointing at a file outside it is
+    excluded entirely, not read and served as if it were a real asset."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "secret.txt"
+    secret.write_bytes(b"outside-the-tree")
+    served = tmp_path / "served"
+    served.mkdir()
+    (served / "logo.txt").symlink_to(secret)
+
+    with pytest.raises(RuntimeError, match="no files matched"):
+        TestClient(AssetsApp(served))
+
+
+def test_symlinked_file_alongside_real_files_is_just_skipped(tmp_path: Path) -> None:
+    """A symlink is excluded silently, like a dotfile — real files in the same
+    directory still wire and serve normally."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "secret.txt"
+    secret.write_bytes(b"outside-the-tree")
+    served = tmp_path / "served"
+    served.mkdir()
+    (served / "logo.txt").symlink_to(secret)
+    (served / "real.txt").write_bytes(TXT_BODY)
+
+    with TestClient(AssetsApp(served)) as client:
+        assert client.get("/assets/logo.txt").status_code == 404
+        real = client.get("/assets/real.txt")
+        assert real.status_code == 200
+        assert real.content == TXT_BODY
+
+
+def test_symlinked_directory_is_never_descended_into(tmp_path: Path) -> None:
+    """A symlink to a directory outside the served tree is not followed — nothing
+    beneath it is ever read."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_bytes(b"outside-the-tree")
+    served = tmp_path / "served"
+    served.mkdir()
+    (served / "linked-dir").symlink_to(outside)
+
+    with pytest.raises(RuntimeError, match="no files matched"):
+        TestClient(AssetsApp(served))
+
+
 class LogoEndpoint(Endpoint, path="/assets/logo.svg"):
     """Endpoint colliding with an asset route."""
 
@@ -253,7 +325,7 @@ class WidgetId(Struct):
     widget_id: str
 
 
-class WidgetsResource(Resource, path="/widgets"):
+class WidgetResource(Resource, path="/widgets"):
     """Resource with one dynamic GET, the same shape as an asset named '5.txt'."""
 
     async def read_one(self, path: WidgetId) -> bytes:
@@ -269,7 +341,7 @@ class AssetBesideDynamicApp(BaseApp):
         self._directory = directory
 
     async def wire(self) -> None:
-        self._include_resource(WidgetsResource())
+        self._include_resource(WidgetResource())
         self._include_assets(self._directory, path="/widgets")
 
 
@@ -366,6 +438,44 @@ def test_failing_header_hook_becomes_error_response(asset_dir: Path) -> None:
         assert resp.json()["type"] == "internal-server-error"
 
 
+class ProgrammingErrorHeaders(Struct):
+    """Return annotation for a hook that raises a framework programming error."""
+
+    x_never: str
+
+
+class ProgrammingErrorMiddleware:
+    """App-wide middleware whose dynamic hook raises WiringError itself."""
+
+    def response_headers(self, request: Request) -> ProgrammingErrorHeaders | None:
+        """Raise the framework's own programming-error type, not a handler failure."""
+        _ = request
+        raise WiringError("misconfigured on purpose")
+
+
+class AssetsWithProgrammingErrorApp(BaseApp):
+    """App wiring a header hook that raises WiringError alongside an assets mount."""
+
+    def __init__(self, directory: Path) -> None:
+        super().__init__()
+        self._directory = directory
+
+    async def wire(self) -> None:
+        self._include_middleware(ProgrammingErrorMiddleware())
+        self._include_assets(self._directory)
+
+
+def test_wiring_error_from_header_hook_stays_loud_on_an_asset_route(asset_dir: Path) -> None:
+    """A WiringError from a dynamic header hook is a programming error, not a client-
+    facing failure — it must propagate loud on an asset route exactly as it would on
+    any other route, never get funneled into a generic 500 Problem body."""
+    with (
+        TestClient(AssetsWithProgrammingErrorApp(asset_dir)) as client,
+        pytest.raises(WiringError, match="misconfigured on purpose"),
+    ):
+        client.get("/assets/logo.svg")
+
+
 # ---------------------------------------------------------------------------
 # Accept-Encoding grammar: an explicit q=0 is a refusal, not an acceptance.
 # ---------------------------------------------------------------------------
@@ -390,6 +500,18 @@ def test_accept_encoding_explicit_gzip_overrides_zero_wildcard(client: TestClien
     """An explicit 'gzip' entry wins over a wildcard refusal ('*;q=0')."""
     resp = client.get("/assets/app.css", headers={"accept-encoding": "*;q=0, gzip"})
     assert resp.headers["content-encoding"] == "gzip"
+
+
+def test_accept_encoding_repeated_q_on_one_directive_takes_the_last(
+    client: TestClient,
+) -> None:
+    """A directive repeating 'q' (undefined by the spec) takes the last one present,
+    matching how a repeated header line is resolved elsewhere in this parser."""
+    refused = client.get("/assets/app.css", headers={"accept-encoding": "gzip;q=1;q=0"})
+    assert "content-encoding" not in refused.headers
+
+    accepted = client.get("/assets/app.css", headers={"accept-encoding": "gzip;q=0;q=1"})
+    assert accepted.headers["content-encoding"] == "gzip"
 
 
 # ---------------------------------------------------------------------------
@@ -481,15 +603,38 @@ async def test_repeated_accept_encoding_headers_merge(asset_dir: Path) -> None:
         assert headers[b"content-encoding"] == b"gzip"
 
 
+@pytest.mark.asyncio
+async def test_if_none_match_does_not_match_a_substring(asset_dir: Path) -> None:
+    """The ETag's bytes appearing as a substring of a malformed, non-delimited value
+    must not revalidate — only an exact, comma-tokenized match counts. A raw
+    substring check would wrongly treat the ETag as found here, since it's a literal
+    prefix of the (malformed) header value."""
+    app = AssetsApp(asset_dir)
+    async with _lifespan(app):
+        probe = _CollectSend()
+        await app(_get_scope("/assets/logo.svg", []), _empty_receive, probe)
+        etag = next(v for k, v in probe.messages[0]["headers"] if k == b"etag")
+
+        malformed = etag + b'"junk"'  # etag is a literal prefix, but not a real token
+        resp = _CollectSend()
+        await app(
+            _get_scope("/assets/logo.svg", [(b"if-none-match", malformed)]),
+            _empty_receive,
+            resp,
+        )
+        assert resp.messages[0]["status"] == 200
+
+
 # ---------------------------------------------------------------------------
 # The size cap must fail as soon as it is exceeded, not after reading everything.
 # ---------------------------------------------------------------------------
 
 
 def test_size_cap_fails_on_the_offending_file_without_reading_the_rest(tmp_path: Path) -> None:
-    """The running total is checked per file: the cap fires at whichever file first
-    exceeds it, and the reported total does not include files that were never read."""
+    """The on-disk size is checked per file, before it's read: the cap fires at
+    whichever file first exceeds it, and a later file that would double the total is
+    never even opened."""
     (tmp_path / "a.txt").write_bytes(b"x" * 10_000)  # sorts first, alone exceeds the cap
     (tmp_path / "z.txt").write_bytes(b"y" * 10_000)  # would double the total if also read
-    with pytest.raises(RuntimeError, match=r"10000 bytes.*hit while reading a\.txt"):
+    with pytest.raises(RuntimeError, match=r"reading a\.txt would exceed"):
         TestClient(AssetsApp(tmp_path, gzip=False, max_total_bytes=100))

@@ -16,8 +16,8 @@ The contract:
   annotated with a msgspec Struct — ``cookies`` binds by verbatim, case-sensitive cookie name,
   unlike the snake_case mangle ``headers`` applies. A handler may instead take the raw body as
   ``content: bytes`` (mutually exclusive with ``json``). Returns are a Struct, ``list[Struct]``,
-  ``bytes`` (sent as application/octet-stream), or a ``BytesResponse`` / ``JSONResponse`` to
-  control response headers.
+  ``str`` (sent as text/plain), ``bytes`` (sent as application/octet-stream), or a
+  ``BytesResponse`` / ``JSONResponse`` to control response headers.
   msgspec ``rename`` is honored everywhere (e.g. ``Struct, rename="camel"`` for camelCase on the
   wire, snake_case in code) — define your own base Struct for the wire convention.
 - Auth is an object passed to ``_include_resource`` implementing
@@ -1101,7 +1101,7 @@ def _return_kind(ann: object) -> ReturnKind | None:
 # The generic wrapper class each return kind's type arguments resolve against. Handed to the
 # OpenAPI layer through the wiring contracts so it can read a wrapper's ``(T, H)`` positionally
 # without importing these classes: ``core`` imports ``_openapi_wiring``, never the reverse. The
-# plain kinds (json, bytes) have no wrapper and are absent.
+# plain kinds (json, text, bytes) have no wrapper and are absent.
 _WRAPPER_TYPES: dict[ReturnKind, type] = {
     "stream-bytes": StreamingResponse,
     "stream-ndjson": NDJSONStreamingResponse,
@@ -1115,7 +1115,7 @@ _WRAPPER_TYPES: dict[ReturnKind, type] = {
 
 
 # The status a return kind fixes regardless of the verb's own default; a kind absent here
-# (json, json-response, bytes, bytes-response, the streams) takes the verb's default status.
+# (json, json-response, text, bytes, bytes-response, the streams) takes the verb's default status.
 _FIXED_STATUS: dict[ReturnKind, int] = {"no-content": 204, "created": 201, "accepted": 202}
 
 
@@ -1312,14 +1312,20 @@ def _bind_sources(  # noqa: C901
     )
 
 
-def _parse_template(path: str) -> list[_Segment]:
-    """Parse a mount path like ``/collections/{collection_id}/pokemon``."""
+def _path_parts(path: str) -> list[str]:
+    """Validate and split a mount path shared by :func:`_parse_template` and
+    :func:`_literal_segments` — the one rule ('/'-rooted) both interpretations agree
+    on, kept in one place so it can't drift between them."""
     if not path.startswith("/"):
         raise WiringError(f"path {path!r} must start with '/'")
+    return path.split("/")
 
+
+def _parse_template(path: str) -> list[_Segment]:
+    """Parse a mount path like ``/collections/{collection_id}/pokemon``."""
     segments: list[_Segment] = []
     slots: set[str] = set()
-    for raw in path.split("/"):
+    for raw in _path_parts(path):
         if raw.startswith("{") and raw.endswith("}"):
             slot = raw[1:-1]
             if not slot.isidentifier():
@@ -1341,9 +1347,7 @@ def _literal_segments(path: str) -> list[_Segment]:
     from data (a filesystem path under ``_include_assets``), not a developer-authored
     template: a file or directory literally named ``{locale}`` must never become a
     route parameter."""
-    if not path.startswith("/"):
-        raise WiringError(f"path {path!r} must start with '/'")
-    return [(False, raw) for raw in path.split("/")]
+    return [(False, raw) for raw in _path_parts(path)]
 
 
 def _template_str(segments: list[_Segment]) -> str:
@@ -3370,11 +3374,21 @@ def _asset_files(directory: Path) -> list[Path]:
     """Every file under ``directory``, sorted for deterministic wiring. Dotfiles and
     dot-directories are never served — pruned *before* descending into them, so a
     ``.git`` checkout or a bundler's ``.cache`` sitting under the tree is never
-    walked, not just filtered out afterward."""
+    walked, not just filtered out afterward. Symlinks are never served either,
+    file or directory: ``os.walk``'s default ``followlinks=False`` already keeps a
+    symlinked directory from ever being descended into, and a symlinked *file* is
+    excluded here — otherwise it would be read straight through, serving whatever it
+    points at (anywhere on disk the process can read) as if it were under
+    ``directory``."""
     files: list[Path] = []
     for root, dirnames, filenames in os.walk(directory):
         dirnames[:] = [name for name in dirnames if not name.startswith(".")]
-        files += (Path(root) / filename for filename in filenames if not filename.startswith("."))
+        for filename in filenames:
+            if filename.startswith("."):
+                continue
+            file = Path(root) / filename
+            if not file.is_symlink():
+                files.append(file)
     return sorted(files)
 
 
@@ -3385,13 +3399,16 @@ def _asset_payloads(
     *,
     gzip: bool,
     max_total_bytes: int,
+    max_files: int,
 ) -> list[tuple[str, bytes, bytes | None, bytes]]:
     """Read every servable file under ``directory`` once, at wiring: ``(relative posix
     path, bytes, gzipped bytes or None, content type)`` per file. The gzip variant is
     compressed here (deterministically, ``mtime=0``) and kept only when meaningfully
     smaller. Fails loud on a missing directory, an unsupported suffix, an unreadable
-    file, zero matches, or a total (both variants counted) over the cap — never at
-    request time."""
+    file, zero matches, too many files, or a total (both variants counted) over the
+    cap — never at request time. A single file already over the remaining budget is
+    rejected by its on-disk size *before* it is read or compressed, so the cap bounds
+    the cost of checking it, not just the cost of holding it."""
     if not directory.is_dir():
         raise WiringError(f"_include_assets directory {directory} is not a directory")
     payloads: list[tuple[str, bytes, bytes | None, bytes]] = []
@@ -3404,6 +3421,19 @@ def _asset_payloads(
             continue
         if any(fnmatch(relative, pattern) for pattern in exclude):
             continue
+        if len(payloads) >= max_files:
+            raise WiringError(
+                f"_include_assets: more than max_files={max_files} files matched under "
+                f"{directory} (hit at {relative}). Serve a directory this large from a "
+                f"proxy/CDN, or raise the cap deliberately",
+            )
+        if total + file.stat().st_size > max_total_bytes:
+            raise WiringError(
+                f"_include_assets: reading {relative} would exceed "
+                f"max_total_bytes={max_total_bytes} under {directory}. Assets are held "
+                f"in memory per worker — serve large or many files from a proxy/CDN, "
+                f"or raise the cap deliberately",
+            )
         body, gz_body, content_type = _asset_payload(file, relative, gzip=gzip)
         total += len(body) + (0 if gz_body is None else len(gz_body))
         if total > max_total_bytes:
@@ -3422,39 +3452,92 @@ def _asset_payloads(
     return payloads
 
 
-def _parse_accept_encoding(values: Iterable[bytes]) -> dict[bytes, float]:
-    """Merge one or more ``Accept-Encoding`` header values into ``directive -> qvalue``
-    (RFC 9110 §12.5.3). Repeated headers are semantically one comma-joined list, so
-    every value is parsed the same way regardless of how many header lines carried it."""
-    weights: dict[bytes, float] = {}
+def _accept_encoding_weight(directive: bytes) -> tuple[bytes, float]:
+    """One ``Accept-Encoding`` directive (e.g. ``b"gzip;q=0.5"``) as ``(name,
+    qvalue)`` (RFC 9110 §12.5.3). An unparseable ``q`` is treated as though none were
+    given — full acceptance — the same lenient reading as a directive with no ``q``
+    at all. A directive repeating ``q`` (undefined by the spec) takes the last one
+    present, consistent with how a repeated header *line* is handled by the caller."""
+    parts = directive.split(b";")
+    name = parts[0].strip().lower()
+    weight = 1.0
+    for param in parts[1:]:
+        key, _, raw_q = param.strip().partition(b"=")
+        if key.strip().lower() != b"q":
+            continue
+        try:
+            weight = float(raw_q)
+        except ValueError:
+            weight = 1.0
+    return name, weight
+
+
+def _accepts_gzip(values: Iterable[bytes]) -> bool:
+    """Whether the (possibly repeated) ``Accept-Encoding`` header values accept gzip.
+    Scans for just the two directives that matter (``gzip``, the wildcard) rather
+    than building a table of every encoding named — this runs on every asset
+    request. An explicit ``gzip`` directive wins over the wildcard; ``q=0``
+    — including ``gzip;q=0`` — is an explicit refusal (RFC 9110). No header at all is
+    treated as "don't bother", matching the identity-only behaviour a plain GET has
+    always had."""
+    gzip_weight: float | None = None
+    wildcard_weight: float | None = None
     for value in values:
         for directive in value.split(b","):
             directive = directive.strip()
             if not directive:
                 continue
-            parts = directive.split(b";")
-            name = parts[0].strip().lower()
-            q = 1.0
-            for param in parts[1:]:
-                key, _, raw_q = param.strip().partition(b"=")
-                if key.strip().lower() == b"q":
-                    try:
-                        q = float(raw_q)
-                    except ValueError:
-                        q = 1.0
-            weights[name] = q
-    return weights
+            name, weight = _accept_encoding_weight(directive)
+            if name == b"gzip":
+                gzip_weight = weight
+            elif name == b"*":
+                wildcard_weight = weight
+    if gzip_weight is not None:
+        return gzip_weight > 0
+    return (wildcard_weight or 0.0) > 0
 
 
-def _accepts_gzip(values: Iterable[bytes]) -> bool:
-    """Whether the (possibly repeated) ``Accept-Encoding`` header values accept gzip.
-    An explicit ``gzip`` directive wins over the wildcard; ``q=0`` — including
-    ``gzip;q=0`` — is an explicit refusal (RFC 9110). No header at all is treated as
-    "don't bother", matching the identity-only behaviour a plain GET has always had."""
-    weights = _parse_accept_encoding(values)
-    if b"gzip" in weights:
-        return weights[b"gzip"] > 0
-    return weights.get(b"*", 0.0) > 0
+def _if_none_match_hit(values: Iterable[bytes], etag: bytes) -> bool:
+    """Whether any ``If-None-Match`` header value contains a token matching ``etag``
+    exactly, or the wildcard. Tokenizes on commas rather than a raw substring check,
+    so a value that merely *contains* the tag's bytes without being it — malformed
+    input, or one tag embedded inside another — can't produce a false revalidation.
+    An optional leading ``W/`` is stripped (RFC 7232's weak comparison, valid for the
+    safe GET/HEAD this handler only ever serves)."""
+    for value in values:
+        for token in value.split(b","):
+            token = token.strip()
+            if token == b"*":
+                return True
+            if token.startswith(b"W/"):
+                token = token[2:]
+            if token == etag:
+                return True
+    return False
+
+
+async def _apply_route_tail(
+    tail: _RouteTail,
+    headers: list[tuple[bytes, bytes]],
+    scope: Scope,
+    send: Send,
+    exceptions: _ExceptionHandlers,
+) -> bool:
+    """Apply a route's header tail, funneling a failing dynamic hook into a proper
+    error response — a ``WiringError`` is a programming error and stays loud, the
+    same as everywhere else a tail is applied strictly (see
+    ``_send_result_guarded``). Returns ``False`` when an error was already sent, so
+    the caller must not also send a response."""
+    if not tail.active:
+        return True
+    try:
+        tail.extend(headers, scope)
+    except WiringError:
+        raise
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        await exceptions.send(scope, send, exc, tail)
+        return False
+    return True
 
 
 def _asset_handler(
@@ -3511,7 +3594,7 @@ def _asset_handler(
                 if_none_match.append(value)
         use_gz = gz_body is not None and _accepts_gzip(accept_encoding)
         chosen_etag = gz_etag if use_gz else etag
-        revalidated = any(chosen_etag in value or value == b"*" for value in if_none_match)
+        revalidated = _if_none_match_hit(if_none_match, chosen_etag)
         if revalidated:
             status = 304
             headers = [*(not_modified_gz if use_gz else not_modified_plain)]
@@ -3520,12 +3603,8 @@ def _asset_handler(
             status = 200
             headers = [*(ok_gz if use_gz else ok_plain)]
             payload = gz_body if use_gz else body
-        if tail.active:
-            try:
-                tail.extend(headers, scope)
-            except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-                await exceptions.send(scope, send, exc, tail)
-                return
+        if not await _apply_route_tail(tail, headers, scope, send, exceptions):
+            return
         await send({"type": "http.response.start", "status": status, "headers": headers})
         await send({"type": "http.response.body", "body": payload})
 
@@ -4241,6 +4320,7 @@ class BaseApp[FactoryT = None](ABC):
         gzip: bool = True,
         cache_control: str | None = None,
         max_total_bytes: int = 10 * 1024 * 1024,
+        max_files: int = 10_000,
     ) -> None:
         """Serve a directory of small static assets from memory.
 
@@ -4251,32 +4331,49 @@ class BaseApp[FactoryT = None](ABC):
         ``If-None-Match`` answers ``304``. New or changed files appear on restart,
         like everything else wired at startup.
 
-        ``include``/``exclude`` are glob patterns matched against each file's path
-        relative to ``directory`` (dotfiles are always skipped). ``cache_control``
+        ``include``/``exclude`` are glob patterns (:func:`fnmatch.fnmatch`) matched
+        against each file's path relative to ``directory`` (dotfiles are always
+        skipped). ``*`` matches across ``/`` too — ``"*.map"`` excludes a ``.map``
+        file at any depth, and ``"build/*"`` excludes everything *under* ``build/``,
+        not only its immediate children; there is no glob syntax for "this one
+        directory level only", so scope a pattern that specific by listing the exact
+        relative paths instead. ``cache_control``
         (e.g. ``"public, max-age=3600"``) is emitted verbatim when given. With
         ``gzip=True`` (the default), compressible files are also gzipped once at
         wiring — kept only when meaningfully smaller — and a request with
         ``Accept-Encoding: gzip`` gets the prebaked compressed variant (own ``ETag``,
         ``Vary: Accept-Encoding``); nothing is ever compressed per request.
 
-        Assets are held in memory per worker, so the total is capped at
-        ``max_total_bytes`` (10 MiB): this is for an SPA shell, stylesheets, and a few
-        images. Real static serving — large files, Range requests, catch-all
+        Assets are held in memory per worker, so both the file count and the total
+        size are capped — ``max_files`` (10,000) and ``max_total_bytes`` (10 MiB):
+        this is for an SPA shell, stylesheets, and a few images. A file already over
+        the remaining budget is rejected by its on-disk size before it is ever read,
+        so a single huge file can't be fully read and compressed just to discover it
+        doesn't fit. Real static serving — large files, Range requests, catch-all
         fallbacks — belongs on your reverse proxy or CDN (see the
         [deployment guide](https://RogerThomas.github.io/jero/guide/deployment/)).
 
+        Symlinks are never served, file or directory — a symlinked file would
+        otherwise be read straight through, serving whatever it points at (anywhere
+        on disk the process can read) as if it lived under ``directory``.
+
         Loud at wiring, never at request time: a missing directory, an unsupported
-        suffix, an unreadable file, zero matching files, a route collision, and an
-        over-cap total are all ``WiringError``\\ s. Asset routes are covered by the
-        app-default CORS policy and app-wide middleware, and never appear in the
-        OpenAPI document.
+        suffix, an unreadable file, zero matching files, too many files, a route
+        collision, and an over-cap total are all ``WiringError``\\ s. Asset routes are
+        covered by the app-default CORS policy and app-wide middleware, and never
+        appear in the OpenAPI document.
         """
         prefix = path.rstrip("/")
         cache_control_value = None if cache_control is None else cache_control.encode()
         tail = _RouteTail()
         record = _IncludeRecord(tail=tail, routes=[], cors=None, cors_off=False, middleware=())
         payloads = _asset_payloads(
-            directory, include, exclude, gzip=gzip, max_total_bytes=max_total_bytes
+            directory,
+            include,
+            exclude,
+            gzip=gzip,
+            max_total_bytes=max_total_bytes,
+            max_files=max_files,
         )
         for relative, body, gz_body, content_type in payloads:
             digest = sha256(body).hexdigest()[:32]

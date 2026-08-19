@@ -42,7 +42,7 @@ Everything in the document comes from the wiring you already did:
 | `paths` + operations     | each wired `Resource`/`Endpoint` method and its mount path |
 | `parameters`             | the `path` / `params` / `headers` source Structs, expanded field by field |
 | `requestBody`            | the `json` body Struct (or `content` bytes, or a `form`) |
-| `responses` (success)    | the handler's return type — a `Struct`, `list[Struct]`, `bytes`, a `JSONResponse[T]` / `NoContent` / `Created[T]` / `Accepted[T]`, or a streaming response. A *union* of these yields one entry per status |
+| `responses` (success)    | the handler's return type — a `Struct`, `list[Struct]`, `str`, `bytes`, a `JSONResponse[T]` / `NoContent` / `Created[T]` / `Accepted[T]`, or a streaming response. A *union* of these yields one entry per status |
 | `responses` (errors)     | the sources an operation actually has (see below) |
 | `components.schemas`     | every referenced `Struct`, via msgspec — `rename` and `msgspec.Meta` honored |
 | `security`               | the `auth` an operation is mounted behind |

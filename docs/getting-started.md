@@ -90,9 +90,9 @@ startup error. [Philosophy](philosophy.md#struct-everywhere) has the full reason
 - **Handler arguments bind by name**, each a `Struct`: `json`, `params`, `path`,
   `headers`, `form`, `user`, plus raw `content: bytes` / `raw_headers`. See
   [Request binding](guide/binding.md).
-- **Returns are typed**: a `Struct`, `list[Struct]`, `bytes`, or a response wrapper
-  (`JSONResponse[T]`, `BytesResponse`, a streaming response) when you need to control
-  headers or status. See [Responses & headers](guide/responses.md).
+- **Returns are typed**: a `Struct`, `list[Struct]`, `str`, `bytes`, or a response
+  wrapper (`JSONResponse[T]`, `BytesResponse`, a streaming response) when you need to
+  control headers or status. See [Responses & headers](guide/responses.md).
 - **Dependencies are hand-wired** in `wire` — no DI container. The framework adds the
   one thing plain Python doesn't: resource lifecycle. See [Wiring & lifecycle](guide/wiring.md).
 - For a complete application shape, see the [complete example](guide/complete-example.md).

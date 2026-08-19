@@ -435,7 +435,11 @@ def _success_entry(
         )
     if kind == "text":
         return ResponseEntry.single(
-            status, description, "text/plain", schema={"type": "string"}, headers=headers
+            status,
+            description,
+            "text/plain; charset=utf-8",
+            schema={"type": "string"},
+            headers=headers,
         )
     if kind == "stream-ndjson":
         item = _item_payload(annotation, kind, wrapper, operation_id)

@@ -50,8 +50,10 @@ is no catch-all.
 
 ## Selecting files
 
-`include` and `exclude` are glob patterns matched against each file's path relative to
-the directory:
+`include` and `exclude` are glob patterns ([`fnmatch`](https://docs.python.org/3/library/fnmatch.html))
+matched against each file's path relative to the directory. `*` matches across `/`
+too, so `"*.map"` excludes a `.map` file at any depth — there's no syntax for "this
+one directory level only"; list exact relative paths for that:
 
 ```python
 from pathlib import Path
@@ -79,11 +81,21 @@ Dotfiles are always skipped. A file whose suffix isn't in the supported set is a
 
 Every failure mode is a `WiringError` at startup, never a request-time surprise: a
 missing directory, an unsupported suffix, an unreadable file, globs that match
-nothing, a collision with an existing route, and a total size over the cap.
+nothing, too many files, a collision with an existing route, and a total size over
+the cap. A file already bigger than the remaining budget is rejected by its on-disk
+size before it's ever read or compressed — a single huge file can't be fully read
+just to discover it doesn't fit.
 
-The cap (`max_total_bytes`, 10 MiB) exists because assets are held in memory, per
-worker. That is the honest scope of this feature: an SPA shell, stylesheets, some
-images. Raise the cap deliberately if you mean to; for large files, `Range` requests,
-or catch-all SPA fallbacks, use your reverse proxy or CDN, which do that job better
-than a Python worker ever will (see [Deployment](deployment.md)). Files added or
-changed on disk appear on restart, like everything else wired at startup.
+The two caps (`max_files`, 10,000; `max_total_bytes`, 10 MiB) exist because assets
+are held in memory, per worker. That is the honest scope of this feature: an SPA
+shell, stylesheets, some images. Raise a cap deliberately if you mean to; for large
+files, `Range` requests, or catch-all SPA fallbacks, use your reverse proxy or CDN,
+which do that job better than a Python worker ever will (see
+[Deployment](deployment.md)). Files added or changed on disk appear on restart, like
+everything else wired at startup.
+
+Symlinks are never served, file or directory. A symlinked file would otherwise be
+read straight through, serving whatever it points at — anywhere on disk the process
+can read — as if it lived under the served directory; a symlinked directory is never
+descended into. Point `_include_assets` at a directory you trust the *real* contents
+of.

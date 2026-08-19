@@ -271,12 +271,12 @@ def test_bytes_return_is_documented_as_binary() -> None:
 
 
 def test_str_return_is_documented_as_text_plain() -> None:
-    """A str return is text/plain with a string schema."""
+    """A str return is documented with the exact media type it's sent as."""
     with TestClient(OpenApp()) as client:
         content = client.get("/openapi.json").json()["paths"]["/greeting"]["get"]["responses"][
             "200"
         ]["content"]
-        assert content["text/plain"]["schema"] == {"type": "string"}
+        assert content["text/plain; charset=utf-8"]["schema"] == {"type": "string"}
 
 
 class DocsOffApp(BaseApp):
