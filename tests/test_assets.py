@@ -1,6 +1,7 @@
 """Wire-time in-memory static assets: ``_include_assets``."""
 
 import asyncio
+import os
 from collections.abc import AsyncGenerator, Generator, Sequence
 from contextlib import asynccontextmanager
 from gzip import decompress
@@ -83,6 +84,14 @@ def test_asset_is_served_with_baked_headers(client: TestClient) -> None:
     assert resp.headers["etag"].startswith('"')
 
 
+def test_unrelated_request_header_is_ignored(client: TestClient) -> None:
+    """A header that is neither Accept-Encoding nor If-None-Match is simply not one
+    the handler cares about — the request still serves the asset normally."""
+    resp = client.get("/assets/logo.svg", headers={"x-custom": "value"})
+    assert resp.status_code == 200
+    assert resp.content == SVG_BODY
+
+
 def test_nested_asset_keeps_its_relative_path(client: TestClient) -> None:
     """Subdirectories map to path segments under the mount."""
     resp = client.get("/assets/sub/notes.txt")
@@ -101,6 +110,17 @@ def test_dotfile_is_never_served(client: TestClient) -> None:
     assert client.get("/assets/.hidden.css").status_code == 404
 
 
+def test_special_file_is_silently_skipped(tmp_path: Path) -> None:
+    """A non-regular dirent (a FIFO, here) that isn't a symlink is walked like any
+    other file but fails Path.is_file() — silently excluded, same as a dotfile,
+    rather than raising or being read through."""
+    os.mkfifo(tmp_path / "pipe.txt")
+    (tmp_path / "real.txt").write_bytes(TXT_BODY)
+    with TestClient(AssetsApp(tmp_path)) as client:
+        assert client.get("/assets/pipe.txt").status_code == 404
+        assert client.get("/assets/real.txt").content == TXT_BODY
+
+
 def test_matching_if_none_match_is_304(client: TestClient) -> None:
     """The wiring-time ETag round-trips: a matching If-None-Match gets 304, no body."""
     etag = client.get("/assets/logo.svg").headers["etag"]
@@ -108,6 +128,21 @@ def test_matching_if_none_match_is_304(client: TestClient) -> None:
     assert resp.status_code == 304
     assert resp.content == b""
     assert resp.headers["etag"] == etag
+
+
+def test_wildcard_if_none_match_is_304(client: TestClient) -> None:
+    """A bare '*' in If-None-Match always revalidates, regardless of the ETag."""
+    resp = client.get("/assets/logo.svg", headers={"if-none-match": "*"})
+    assert resp.status_code == 304
+    assert resp.content == b""
+
+
+def test_weak_if_none_match_matches_the_strong_etag(client: TestClient) -> None:
+    """A weak validator (W/"...") revalidates against jero's strong ETag — RFC 7232
+    weak comparison, valid here since this handler only ever serves GET/HEAD."""
+    etag = client.get("/assets/logo.svg").headers["etag"]
+    resp = client.get("/assets/logo.svg", headers={"if-none-match": f"W/{etag}"})
+    assert resp.status_code == 304
 
 
 def test_gzip_variant_served_on_accept_encoding(client: TestClient) -> None:
@@ -220,6 +255,15 @@ def test_oversized_file_is_rejected_before_being_read(tmp_path: Path) -> None:
     (tmp_path / "huge.txt").write_bytes(b"x" * 1000)
     with pytest.raises(RuntimeError, match=r"reading huge\.txt would exceed"):
         TestClient(AssetsApp(tmp_path, gzip=False, max_total_bytes=100))
+
+
+def test_gzip_variant_pushes_total_over_the_cap_after_reading(tmp_path: Path) -> None:
+    """A file whose raw size alone fits the remaining budget can still tip the
+    combined (body + gzip variant) total over it once compressed — caught by the
+    post-read check, since the pre-read check only knows the raw size."""
+    (tmp_path / "a.txt").write_bytes(b"a" * 100)  # raw 100B; gzips to ~24B, kept
+    with pytest.raises(RuntimeError, match=r"124 bytes.*hit while reading a\.txt"):
+        TestClient(AssetsApp(tmp_path, max_total_bytes=110))
 
 
 def test_file_count_cap_fails_at_wiring(asset_dir: Path) -> None:
@@ -397,6 +441,48 @@ def test_two_brace_named_files_do_not_collide(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# A working dynamic header hook applies normally to an asset route, the same as
+# it would to any other route.
+# ---------------------------------------------------------------------------
+
+
+class EchoedHeaders(Struct):
+    """Return annotation for a hook that always succeeds."""
+
+    x_echo: str
+
+
+class WorkingHeadersMiddleware:
+    """App-wide middleware whose dynamic hook always succeeds."""
+
+    def response_headers(self, request: Request) -> EchoedHeaders | None:
+        """Add a constant header to every covered response."""
+        _ = request
+        return EchoedHeaders(x_echo="hit")
+
+
+class AssetsWithWorkingMiddlewareApp(BaseApp):
+    """App wiring an app-wide succeeding header hook alongside an assets mount."""
+
+    def __init__(self, directory: Path) -> None:
+        super().__init__()
+        self._directory = directory
+
+    async def wire(self) -> None:
+        self._include_middleware(WorkingHeadersMiddleware())
+        self._include_assets(self._directory)
+
+
+def test_succeeding_header_hook_applies_to_an_asset_route(asset_dir: Path) -> None:
+    """A response_headers hook that succeeds decorates an asset response normally —
+    the strict tail application isn't just an error path, it's the whole path."""
+    with TestClient(AssetsWithWorkingMiddlewareApp(asset_dir)) as client:
+        resp = client.get("/assets/logo.svg")
+        assert resp.status_code == 200
+        assert resp.headers["x-echo"] == "hit"
+
+
+# ---------------------------------------------------------------------------
 # A failing dynamic header hook must become an error response, not a silent 200.
 # ---------------------------------------------------------------------------
 
@@ -512,6 +598,26 @@ def test_accept_encoding_repeated_q_on_one_directive_takes_the_last(
 
     accepted = client.get("/assets/app.css", headers={"accept-encoding": "gzip;q=0;q=1"})
     assert accepted.headers["content-encoding"] == "gzip"
+
+
+def test_accept_encoding_non_q_param_is_ignored(client: TestClient) -> None:
+    """A directive parameter other than 'q' (here, a made-up one) is skipped, not
+    mistaken for the quality value."""
+    resp = client.get("/assets/app.css", headers={"accept-encoding": "gzip;foo=bar"})
+    assert resp.headers["content-encoding"] == "gzip"
+
+
+def test_accept_encoding_malformed_q_defaults_to_full_acceptance(client: TestClient) -> None:
+    """An unparseable q value (empty, here) is treated as though none were given."""
+    resp = client.get("/assets/app.css", headers={"accept-encoding": "gzip;q="})
+    assert resp.headers["content-encoding"] == "gzip"
+
+
+def test_accept_encoding_empty_directive_is_skipped(client: TestClient) -> None:
+    """A bare comma (an empty directive between separators) is ignored rather than
+    raising or being mistaken for a real encoding name."""
+    resp = client.get("/assets/app.css", headers={"accept-encoding": ",,gzip,,"})
+    assert resp.headers["content-encoding"] == "gzip"
 
 
 # ---------------------------------------------------------------------------
