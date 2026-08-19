@@ -23,7 +23,8 @@
 
 </div>
 
-**jero** builds typed JSON/REST APIs from plain classes. Annotate your handlers with
+**jero** is an AI-powered ([a note on AI usage](docs/note-on-ai-usage.md)) framework
+that builds typed JSON/REST APIs from plain classes. Annotate your handlers with
 [msgspec](https://msgspec.dev/) Structs — jero does the rest: routing,
 validation, serialization, auth, streaming, and resource lifecycle.
 
@@ -84,26 +85,30 @@ only lifecycle — the one thing plain Python doesn't give you.
 
 ## What you get
 
-- **Resources & Endpoints** — REST CRUD by method name, or bare verbs for one-off routes.
-- **Bind by name, validated by msgspec** — `json`, `params`, `path`, `headers`, `form`,
-  `user`; malformed → 400, schema-invalid → 422, all resolved once at startup.
-- **Typed responses *and* typed headers** — `JSONResponse[Body, Headers]` keeps both
-  schemas (no erasure), `status_code` overrides the status, and `raw_headers` is the
-  escape hatch for cookies and the exotic tail.
-- **Streaming, typed end to end** — NDJSON, Server-Sent Events, and raw byte streams,
-  with lifecycle teardown and client-disconnect handling done for you.
-- **Multipart forms & uploads** — typed parts, file uploads, per-part headers.
-- **Auth checked at startup** — the `user` type is verified against your authenticator
-  before a single request is served, not at runtime.
-- **OpenAPI 3.1, derived** — one `_include_openapi` call serves the spec and a Scalar UI,
-  built from your types, docstrings, and `msgspec.Meta` constraints — no decorators.
-- **Lifecycle without a DI container** — hand-wire in `wire`, open resources on exit
-  stacks, group construction in a `BaseFactory`.
-- **REST semantics for free** — 404/400/422/401/405, auto `HEAD` + `OPTIONS`, camelCase
-  on the wire.
-- **A real test story** — a sync, in-process `TestClient` (no network), streaming and
-  typed WebSocket support,
-  and a `factory=` seam for mocking.
+- **[Resources & Endpoints](docs/guide/resources.md)** — REST CRUD by method name, or
+  bare verbs for one-off routes.
+- **[Bind by name, validated by msgspec](docs/guide/binding.md)** — `json`, `params`,
+  `path`, `headers`, `form`, `user`; malformed → 400, schema-invalid → 422, all resolved
+  once at startup.
+- **[Typed responses *and* typed headers](docs/guide/responses.md)** —
+  `JSONResponse[Body, Headers]` keeps both schemas (no erasure), `status_code` overrides
+  the status, and `raw_headers` is the escape hatch for cookies and the exotic tail.
+- **[Streaming, typed end to end](docs/guide/streaming.md)** — NDJSON, Server-Sent
+  Events, and raw byte streams, with lifecycle teardown and client-disconnect handling
+  done for you.
+- **[Multipart forms & uploads](docs/guide/forms.md)** — typed parts, file uploads,
+  per-part headers.
+- **[Auth checked at startup](docs/guide/auth.md)** — the `user` type is verified
+  against your authenticator before a single request is served, not at runtime.
+- **[OpenAPI 3.1, derived](docs/guide/openapi.md)** — one `_include_openapi` call serves
+  the spec and a Scalar UI, built from your types, docstrings, and `msgspec.Meta`
+  constraints — no decorators.
+- **[Lifecycle without a DI container](docs/guide/wiring.md)** — hand-wire in `wire`,
+  open resources on exit stacks, group construction in a `BaseFactory`.
+- **[REST semantics for free](docs/guide/rest.md)** — 404/400/422/401/405, auto `HEAD` +
+  `OPTIONS`, camelCase on the wire.
+- **[A real test story](docs/guide/testing.md)** — a sync, in-process `TestClient` (no
+  network), streaming and typed WebSocket support, and a `factory=` seam for mocking.
 
 Start with **[Getting Started](https://RogerThomas.github.io/jero/getting-started/)**, or
 browse the full [Guide](https://RogerThomas.github.io/jero/).
@@ -240,7 +245,7 @@ and the full harness — every framework's source and the complete methodology �
 
 ```bash
 task install   # create the venv and install pre-commit hooks
-task check     # lock check + ruff, pyright, deptry, pylint (via prek)
+task check     # lock check + ruff, pyrefly, deptry, pylint (via prek)
 task test      # run the test suite with coverage
 ```
 
