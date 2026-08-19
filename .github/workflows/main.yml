@@ -9,12 +9,12 @@ on:
 
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Check out
         uses: actions/checkout@v7
 
-      - uses: actions/cache@v6
+      - uses: useblacksmith/cache@v5
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
@@ -28,7 +28,7 @@ jobs:
           uv run prek run -a
 
   tests-and-type-check:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     strategy:
       matrix:
         python-version: ["3.13", "3.14"]
@@ -68,7 +68,7 @@ jobs:
   # `quality`); this guards against the public surface tripping up any of the others.
   # CI-only.
   type-check-public-interface:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
@@ -90,7 +90,7 @@ jobs:
           esac
 
   check-docs:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Check out
         uses: actions/checkout@v7

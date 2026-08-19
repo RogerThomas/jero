@@ -7,7 +7,7 @@ on:
 jobs:
 
   publish:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     # Trusted Publishing (OIDC) — no PyPI token needed. The environment name
     # must match the one configured on the PyPI publisher ("pypi").
     environment:
@@ -48,7 +48,7 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Check out
         uses: actions/checkout@v7
