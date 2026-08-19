@@ -21,15 +21,26 @@ from jero.testing import TestClient
 _FRAGMENT_MARKER = "# doc-example: fragment"
 
 
+def _pages(repo_root: Path) -> list[Path]:
+    """Every markdown page this test enforces: the docs site, plus the README —
+    the first example a new user sees, and just as much a "docs rule" page as
+    anything under ``docs/``."""
+    return [*sorted((repo_root / "docs").rglob("*.md")), repo_root / "README.md"]
+
+
 def _example_params() -> list[object]:
-    docs_dir = Path(__file__).resolve().parents[1] / "docs"
+    repo_root = Path(__file__).resolve().parents[1]
     params: list[object] = []
-    for page in sorted(docs_dir.rglob("*.md")):
+    for page in _pages(repo_root):
         text = page.read_text(encoding="utf-8")
-        for index, block in enumerate(re.findall(r"```python\n(.*?)```", text, re.DOTALL)):
+        # The fence's info string may carry mkdocs-material attributes after the
+        # language (``python title="app.py"``) — matched and discarded here, not
+        # required to be absent, so such a fence is still enforced rather than
+        # silently dropped from collection.
+        for index, block in enumerate(re.findall(r"```python[^\n]*\n(.*?)```", text, re.DOTALL)):
             if "from jero" not in block or block.startswith(_FRAGMENT_MARKER):
                 continue
-            params.append(pytest.param(block, id=f"{page.relative_to(docs_dir)}[{index}]"))
+            params.append(pytest.param(block, id=f"{page.relative_to(repo_root)}[{index}]"))
     return params
 
 
