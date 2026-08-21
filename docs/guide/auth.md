@@ -118,6 +118,33 @@ class App(BaseApp):
 app = App()
 ```
 
+### Mixing policies on one REST resource
+
+`auth=` is one policy for the whole mount, so a `Resource` can't have a public
+`read_one` next to a gated `create` — every method on it shares whatever `auth` the
+mount was given. Split the methods across two `Resource` subclasses at the same
+`path`, each implementing only the methods that share a policy, each with its own
+`auth=` (or none):
+
+```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
+class PublicWidgets(Resource, path="/widgets"):
+    async def read_one(self, path: WidgetPath) -> Widget: ...
+
+
+class GatedWidgets(Resource, path="/widgets"):
+    async def create(self, json: WidgetIn, user: User) -> Widget: ...
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        self._include_resource(PublicWidgets())
+        self._include_resource(GatedWidgets(), auth=TokenAuth())
+```
+
+Two mounts at the same path with disjoint methods is fine — routing dispatches by
+method, not by which class declared it.
+
 ## Optional authentication
 
 Sometimes credentials are an *input* rather than a gate: an anonymous caller is served,

@@ -106,7 +106,7 @@ only lifecycle — the one thing plain Python doesn't give you.
 - **[Lifecycle without a DI container](docs/guide/wiring.md)** — hand-wire in `wire`,
   open resources on exit stacks, group construction in a `BaseFactory`.
 - **[REST semantics for free](docs/guide/rest.md)** — 404/400/422/401/405, auto `HEAD` +
-  `OPTIONS`, camelCase on the wire.
+  `OPTIONS`; opt any `Struct` into camelCase on the wire with `rename="camel"`.
 - **[A real test story](docs/guide/testing.md)** — a sync, in-process `TestClient` (no
   network), streaming and typed WebSocket support, and a `factory=` seam for mocking.
 
