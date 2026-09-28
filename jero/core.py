@@ -90,7 +90,7 @@ from typing import (
     get_type_hints,
     overload,
 )
-from urllib.parse import unquote, unquote_plus
+from urllib.parse import parse_qsl, unquote, unquote_plus
 
 from msgspec import DecodeError, Struct, ValidationError, convert, to_builtins
 from msgspec.json import Decoder
@@ -918,7 +918,8 @@ def _compile_form(
                 file=file,
             )
         )
-    return FormSpec(form_type, tuple(descriptors))
+    urlencoded = not any(descriptor.file for descriptor in descriptors)
+    return FormSpec(form_type, tuple(descriptors), urlencoded)
 
 
 def _content_type_header(headers: dict[str, str]) -> tuple[str, str] | None:
@@ -943,8 +944,28 @@ def _part_content_type(headers: dict[str, str]) -> str | None:
     return None
 
 
-def _parse_form_parts(body: bytes, raw_headers: dict[str, str]) -> dict[str, list[_Part]]:
+def _parse_urlencoded_parts(body: bytes) -> dict[str, list[_Part]]:
+    """An ``application/x-www-form-urlencoded`` body as parts, so it decodes exactly like a
+    multipart one. Blank values are kept (an empty text input binds ``""``, as its multipart
+    part would); a url-encoded pair has no filename, content type, or headers of its own."""
+    parts: dict[str, list[_Part]] = defaultdict(list)
+    for raw_name, value in parse_qsl(body, keep_blank_values=True):
+        try:
+            name = raw_name.decode()
+        except UnicodeDecodeError as e:
+            raise MalformedRequestError(
+                ErrorReason(reason=f"form field name is not valid UTF-8: {e}")
+            ) from e
+        parts[name].append(_Part(name, None, None, {}, RawHeaders([]), value))
+    return parts
+
+
+def _parse_form_parts(
+    body: bytes, raw_headers: dict[str, str], spec: FormSpec
+) -> dict[str, list[_Part]]:
     parsed = _content_type_header(raw_headers)
+    if parsed is not None and parsed[0] == "application/x-www-form-urlencoded" and spec.urlencoded:
+        return _parse_urlencoded_parts(body)
     if parsed is None or parsed[0] != "multipart/form-data" or not parsed[1]:
         raise UnsupportedMediaTypeError()
 
@@ -1019,7 +1040,7 @@ def _decode_form_value(field: FormField, part: _Part) -> object:
 
 
 def _decode_form_body(body: bytes, raw_headers: dict[str, str], spec: FormSpec) -> Struct:
-    parts = _parse_form_parts(body, raw_headers)
+    parts = _parse_form_parts(body, raw_headers, spec)
     values: dict[str, object] = {}
     for field in spec.fields:
         matched = parts[field.wire_name]

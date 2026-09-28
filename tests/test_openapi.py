@@ -26,6 +26,7 @@ from jero import (
     Endpoint,
     EndpointMeta,
     ErrorBodyAdapter,
+    FilePart,
     FormPart,
     HTTPError,
     JSONResponse,
@@ -664,6 +665,51 @@ def test_form_field_meta_and_payloads_are_documented() -> None:
         assert props["address"] == {"$ref": "#/components/schemas/FormAddress"}
         assert "FormAddress" in document["components"]["schemas"]
         assert schema["required"] == ["quantity", "avatar", "address"]
+
+
+def test_file_free_form_documents_both_form_media_types() -> None:
+    """A form with no files binds from a url-encoded body too, so both media types are
+    documented, with the same schema."""
+    with TestClient(UploadApp()) as client:
+        document = client.get("/openapi.json").json()
+        validate(document)
+        content = document["paths"]["/upload"]["post"]["requestBody"]["content"]
+        assert list(content) == ["multipart/form-data", "application/x-www-form-urlencoded"]
+        assert (
+            content["application/x-www-form-urlencoded"]["schema"]
+            == content["multipart/form-data"]["schema"]
+        )
+
+
+class FileForm(Struct, rename="camel"):
+    """A form carrying a file, so it is multipart-only."""
+
+    document: FilePart
+
+
+class FileUploadEndpoint(Endpoint, path="/file-upload"):
+    """Accepts the file form."""
+
+    async def post(self, form: FileForm) -> Item:
+        """Upload."""
+        return Item(id=form.document.filename)
+
+
+class FileUploadApp(BaseApp):
+    """App exercising a multipart-only form's documentation."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(FileUploadEndpoint())
+        self._include_openapi(title="t", version="1")
+
+
+def test_form_with_files_documents_only_multipart() -> None:
+    """A url-encoded body can't carry files, so a form with a FilePart lists multipart only."""
+    with TestClient(FileUploadApp()) as client:
+        content = client.get("/openapi.json").json()["paths"]["/file-upload"]["post"][
+            "requestBody"
+        ]["content"]
+        assert list(content) == ["multipart/form-data"]
 
 
 # --- info.description and servers ---

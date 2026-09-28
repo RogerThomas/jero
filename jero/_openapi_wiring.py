@@ -120,7 +120,14 @@ def _body_for(sources: Sources) -> BodySpec | None:
     if sources.json is not None:
         return BodySpec("application/json", model=sources.json)
     if sources.form is not None:
-        return BodySpec("multipart/form-data", form_fields=_form_fields(sources.form))
+        return BodySpec(
+            "multipart/form-data",
+            form_fields=_form_fields(sources.form),
+            # A form with no files binds from a url-encoded body too.
+            alternate_content_types=(
+                ("application/x-www-form-urlencoded",) if sources.form.urlencoded else ()
+            ),
+        )
     if sources.content or sources.content_stream:
         return BodySpec("application/octet-stream")  # raw bytes -> binary schema
     return None

@@ -217,10 +217,13 @@ class FormField(Struct, frozen=True):
 
 
 class FormSpec(Struct, frozen=True):
-    """A handler's resolved multipart form: the form Struct and its compiled fields."""
+    """A handler's resolved form: the form Struct, its compiled fields, and whether it also
+    binds from ``application/x-www-form-urlencoded`` (true iff no field is a ``FilePart``,
+    since a url-encoded body can't carry files; a form with files is multipart-only)."""
 
     struct_type: type[Struct]
     fields: tuple[FormField, ...]
+    urlencoded: bool
 
 
 class ResponseMember(Struct, frozen=True):

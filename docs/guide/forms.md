@@ -1,7 +1,9 @@
 # Forms & uploads
 
-For `multipart/form-data` bodies, take a `form` argument annotated with a `Struct`.
-Each field is one form part; its type decides how the part is decoded. jero buffers
+For form bodies, take a `form` argument annotated with a `Struct`. Each field is one
+form part; its type decides how the part is decoded. A form with a file field binds from
+`multipart/form-data`. A form with no files binds from `multipart/form-data` *or*
+`application/x-www-form-urlencoded` (see [below](#url-encoded-forms)). jero buffers
 and parses the body once, at the start of the request.
 
 ```python
@@ -109,9 +111,38 @@ digest = form.document.headers.x_checksum              # typed and validated
 repeats = form.blob.raw_headers.getlist("X-Checksum")  # exact, as sent
 ```
 
+## Url-encoded forms
+
+`application/x-www-form-urlencoded` is what a plain HTML `<form method="post">` sends.
+It can't carry files, so the rule follows from the type:
+
+- **A form with no `FilePart` field** binds from either content type, with the same
+  `Struct`, and the request's `Content-Type` picks the parser. A raw `bytes` or
+  `FormPart[bytes]` field doesn't count as a file (only `FilePart` requires a filename):
+  a url-encoded body can carry it percent-encoded, and the field receives the decoded
+  bytes.
+- **A form with a `FilePart` field** is multipart-only. A url-encoded request to it is a
+  **415**.
+
+The pairs decode exactly like multipart parts: a repeated name fills a `list`, scalars
+convert, and a `FormPart[T]` gets its `data`, with no `content_type` or part headers (a
+url-encoded pair has none). A blank value (`name=`) binds `""`, as an empty multipart part
+would. The [OpenAPI spec](openapi.md) lists both media types for a file-free form.
+
+`TestClient`'s `data=` always sends multipart. To test the url-encoded path, send the
+body raw:
+
+```python
+client.post(
+    "/signup",
+    content=b"name=first+name&count=2",
+    headers={"content-type": "application/x-www-form-urlencoded"},
+)
+```
+
 ## Error semantics
 
-- A non-multipart body where a form is expected → **415**.
+- A body that isn't one of the form's content types → **415**.
 - A malformed multipart body → **400**.
 - A missing required part, or a file part without a filename → **422**.
 

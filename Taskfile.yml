@@ -73,6 +73,36 @@ tasks:
       - task: clean-build
       - uv build
 
+  release:
+    # release-please keeps one release PR open (labelled "autorelease: pending"); merging
+    # it is the release. The merge fires .github/workflows/on-release-main.yml, which
+    # tags, creates the GitHub release, publishes to PyPI (Trusted Publishing), and
+    # deploys the docs. This task only finds, shows, and merges that PR.
+    desc: 'Show the pending release-please PR and squash-merge it; CI then tags, publishes to PyPI, and deploys the docs'
+    prompt: Merge the release PR shown above and publish this release?
+    cmds:
+      - |
+        set -eu
+        number="$(gh pr list --label 'autorelease: pending' --state open --json number --jq '.[0].number // empty')"
+        if [ -z "$number" ]; then
+          echo "no pending release PR; merge a feat:/fix: PR to main first" >&2
+          exit 1
+        fi
+        gh pr merge "$number" --squash
+        gh pr view "$number" --json url --jq .url
+
+  release-preview:
+    desc: Show the pending release-please PR (title and changelog) without merging it
+    cmds:
+      - |
+        set -eu
+        number="$(gh pr list --label 'autorelease: pending' --state open --json number --jq '.[0].number // empty')"
+        if [ -z "$number" ]; then
+          echo "no pending release PR; nothing unreleased on main yet" >&2
+          exit 1
+        fi
+        gh pr view "$number" --json title,url,body --jq '"\(.title)\n\(.url)\n\n\(.body)"'
+
   docs:
     desc: Build and serve the documentation
     cmd: uv run zensical serve
