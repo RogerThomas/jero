@@ -469,7 +469,9 @@ def test_file_part_without_filename_is_422(client: TestClient) -> None:
 
 def test_form_is_body_exclusive() -> None:
     """Declaring both 'json' and 'form' on one handler fails wiring."""
-    with pytest.raises(RuntimeError, match="only one of 'json', 'content', or 'form'"):
+    with pytest.raises(
+        RuntimeError, match="only one of 'json', 'content', 'content_stream', or 'form'"
+    ):
         TestClient(ResourceApp(BodyOnPostResource()))
 
 

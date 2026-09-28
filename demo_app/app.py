@@ -1,9 +1,10 @@
 """The demo app: a factory-injected widgets API used by the test suite and the docs.
 
 It wires authed widgets (CRUD + background analytics + links), an authed ``/me``, an
-optionally-authed ``/spotlight``, open health checks, a raw-form echo, and a ``from_ref``
-link demo. Auth is a pure in-memory token map built in ``wire`` (no lifecycle), so swapping
-the factory in tests replaces only the I/O services and leaves auth intact.
+optionally-authed ``/spotlight``, open health checks, a raw-form echo, a streamed
+``/uploads``, and a ``from_ref`` link demo. Auth is a pure in-memory token map built in
+``wire`` (no lifecycle), so swapping the factory in tests replaces only the I/O services and
+leaves auth intact.
 """
 
 from demo_app.auth import OptionalTokenAuth, SessionAuth, TokenAuth
@@ -20,6 +21,7 @@ from demo_app.operations.system_operations import (
     SpotlightEndpoint,
     WhoAmIEndpoint,
 )
+from demo_app.operations.upload_operations import UploadsEndpoint
 from demo_app.operations.websocket_operations import PingWebSocket
 from demo_app.operations.widget_operations import WidgetResource
 from jero import CORS, BaseApp
@@ -65,6 +67,7 @@ class DemoApp(BaseApp[Factory]):
         self._include_endpoint(FeaturedWidgetEndpoint())
         self._include_endpoint(QuestionsEndpoint(question_service))
         self._include_endpoint(NotificationsEndpoint())
+        self._include_endpoint(UploadsEndpoint())
         self._include_websocket(PingWebSocket(), auth=token_auth)
         # Serve the auto-generated OpenAPI 3.1 spec at /openapi.json and a Scalar UI at /docs.
         # Tag descriptions are defined on the resources/endpoints themselves (see their meta);
