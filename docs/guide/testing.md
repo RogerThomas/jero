@@ -23,11 +23,15 @@ what runs the app's resource teardown.
 ## The request API
 
 `get` / `post` / `put` / `patch` / `delete` / `head` / `options`, plus `request`. Bodies
-go in as `json=`, `content=` (raw bytes), or `data=` / `files=` (multipart):
+go in as `json=`, `content=` (raw bytes), or `data=` / `files=` (multipart). `content=`
+also takes an iterable of `bytes`, sent as one ASGI message per item, to exercise a
+multi-chunk body (a [`content_stream`](binding.md#streamed-raw-body-content_stream)
+handler's re-framing, say):
 
 ```python
 client.post("/widgets", json={"name": "n", "priceCents": 100}, headers={"authorization": "Bearer token"})
 client.post("/upload", files={"document": ("report.pdf", b"...", "application/pdf")})
+client.post("/uploads", content=[b"first-chunk", b"second-chunk"])
 client.get("/widgets", params={"limit": "5"})
 client.get("/theme", cookies={"session_id": "session-value"})
 ```

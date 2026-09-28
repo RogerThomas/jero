@@ -255,6 +255,7 @@ class Sources(Struct):
     # authenticator reports absence.
     user_optional: bool = False
     content: bool = False
+    content_stream: bool = False
     raw_headers: bool = False
     return_kind: ReturnKind = "json"
     return_annotation: object = None  # the raw return hint, kept for OpenAPI response derivation

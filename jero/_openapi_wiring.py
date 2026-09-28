@@ -121,7 +121,7 @@ def _body_for(sources: Sources) -> BodySpec | None:
         return BodySpec("application/json", model=sources.json)
     if sources.form is not None:
         return BodySpec("multipart/form-data", form_fields=_form_fields(sources.form))
-    if sources.content:
+    if sources.content or sources.content_stream:
         return BodySpec("application/octet-stream")  # raw bytes -> binary schema
     return None
 

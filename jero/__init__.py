@@ -3,6 +3,7 @@
 from jero._middleware import CORS, HTTPMethod, NoHeaders, Request
 from jero.background import BackgroundTasks
 from jero.codecs import msgspec_decoder, msgspec_encoder
+from jero.content_stream import ClientDisconnectedError, ContentStream
 from jero.cookies import SetCookie
 from jero.core import (
     Accepted,
@@ -69,7 +70,9 @@ __all__ = [
     "BearerAuth",
     "BytesResponse",
     "Channel",
+    "ClientDisconnectedError",
     "ConflictError",
+    "ContentStream",
     "CookieAuth",
     "Created",
     "DataclassHTTPError",

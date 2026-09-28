@@ -8,6 +8,7 @@ learns *which* sources a handler wants, and the request path just fills them in.
 | ------------- | ------------------------------- | ------------------------ |
 | `json`        | request body (JSON)             | a `Struct`               |
 | `content`     | request body (raw)              | `bytes`                  |
+| `content_stream` | request body (raw, streamed) | `ContentStream`          |
 | `form`        | `multipart/form-data` body      | a `Struct` (see [Forms](forms.md)) |
 | `params`      | query string                    | a `Struct`               |
 | `path`        | URL template slots              | a `Struct`               |
@@ -16,8 +17,8 @@ learns *which* sources a handler wants, and the request path just fills them in.
 | `raw_headers` | request headers (opaque)        | `RawHeaders`             |
 | `user`        | the auth result                 | a `Struct`, or `Struct \| None` behind [optional auth](auth.md#optional-authentication) |
 
-`json`, `content`, and `form` are mutually exclusive (one request body), and are
-rejected on bodyless verbs (`GET`, `DELETE`). Everything else can combine freely.
+`json`, `content`, `content_stream`, and `form` are mutually exclusive (one request
+body), and are rejected on bodyless verbs (`GET`, `DELETE`). Everything else can combine freely.
 
 ```python
 from msgspec import Struct
@@ -94,6 +95,77 @@ class App(BaseApp):
 
 app = App()
 ```
+
+## Streamed raw body — `content_stream`
+
+`content` holds the whole body in memory. When that's the wrong shape (a large upload,
+a payload you proxy onward, a format you parse incrementally), take
+`content_stream: ContentStream` instead and read the body as it arrives. It's the final
+escape hatch: anything jero has no typed vocabulary for can still be read, one chunk at
+a time.
+
+```python
+import hashlib
+
+from msgspec import Struct
+
+from jero import BaseApp, ContentStream, Endpoint
+
+
+class Digest(Struct):
+    size: int
+    sha256: str
+
+
+class UploadsEndpoint(Endpoint, path="/uploads"):
+    async def post(self, content_stream: ContentStream) -> Digest:
+        digest = hashlib.sha256()
+        size = 0
+        async for chunk in content_stream:
+            digest.update(chunk)
+            size += len(chunk)
+        return Digest(size=size, sha256=digest.hexdigest())
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        self._include_endpoint(UploadsEndpoint())
+
+
+app = App()
+```
+
+Plain iteration yields the chunks exactly as the server delivers them, so their sizes are
+the server's choice. To control the size, iterate `iter_chunks(chunk_size=n)` instead:
+it re-frames the body into `n`-byte chunks, with a shorter final one.
+
+```python
+# doc-example: fragment
+class UploadsEndpoint(Endpoint, path="/uploads"):
+    _chunk_size: int = 64 * 1024
+
+    async def post(self, content_stream: ContentStream) -> Digest:
+        digest = hashlib.sha256()
+        size = 0
+        async for chunk in content_stream.iter_chunks(chunk_size=self._chunk_size):
+            digest.update(chunk)
+            size += len(chunk)
+        return Digest(size=size, sha256=digest.hexdigest())
+```
+
+- Iteration is `async for`, so the handler must be `async def`; a sync handler taking
+  `content_stream` is a `WiringError` at startup.
+- The body can be read **once**. A second read raises `RuntimeError`.
+- Auth and every other source bind before the handler runs, so a rejected request never
+  reads its body.
+- If the client disconnects partway through, the iterator raises
+  `ClientDisconnectedError`. jero sends nothing (no one is left to answer) and logs
+  nothing. Catch it only to clean up partial work, then let it propagate. It can't be
+  given an [exception handler](errors.md).
+- A [streaming response](streaming.md) can read `content_stream` as it streams (an
+  echo, or a transform on the fly).
+- The OpenAPI spec documents it exactly like `content`: an `application/octet-stream`
+  binary body.
 
 ## Query & path — `params`, `path`
 

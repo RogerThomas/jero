@@ -19,7 +19,7 @@ import asyncio
 import contextlib
 import queue
 import threading
-from collections.abc import Callable, Coroutine, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -38,6 +38,9 @@ type _DataValue = str | bytes
 type _DataValues = _DataValue | list[_DataValue]
 type _FileValue = tuple[str | None, bytes] | tuple[str | None, bytes, str]
 type _FileValues = _FileValue | list[_FileValue]
+# A raw body: one bytes value, or an iterable of chunks sent one ASGI message each (how a
+# test exercises a multi-chunk body, e.g. a ``content_stream`` handler's re-framing).
+type _Content = bytes | Iterable[bytes]
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,27 +163,38 @@ class TestSSEEvent:
     retry: int | None = None
 
 
+def _body_messages(body: tuple[bytes, ...]) -> list[dict[str, Any]]:
+    """The ASGI ``http.request`` messages for a request body, one per chunk (at least one)."""
+    chunks = body or (b"",)
+    return [
+        {"type": "http.request", "body": chunk, "more_body": index < len(chunks) - 1}
+        for index, chunk in enumerate(chunks)
+    ]
+
+
+def _content_chunks(content: _Content) -> tuple[bytes, ...]:
+    return (content,) if isinstance(content, bytes) else tuple(content)
+
+
 class _RequestCycle:
-    """Drives one ASGI request: feeds the body once, collects the response."""
+    """Drives one ASGI request: feeds the body, collects the response."""
 
-    __slots__ = ("_body", "_closed", "_sent", "chunks", "headers", "multi_headers", "status")
+    __slots__ = ("_closed", "_pending", "chunks", "headers", "multi_headers", "status")
 
-    def __init__(self, body: bytes) -> None:
-        self._body = body
+    def __init__(self, body: tuple[bytes, ...]) -> None:
+        self._pending = _body_messages(body)
         self._closed = asyncio.Event()
-        self._sent = False
         self.status = 0
         self.headers: dict[str, str] = {}
         self.multi_headers: list[tuple[str, str]] = []
         self.chunks: list[bytes] = []
 
     async def receive(self) -> dict[str, Any]:
-        """Feed the request body once; report disconnect on later calls."""
-        if self._sent:
+        """Feed the request body's chunks in order; report disconnect on later calls."""
+        if not self._pending:
             await self._closed.wait()
             return {"type": "http.disconnect"}
-        self._sent = True
-        return {"type": "http.request", "body": self._body, "more_body": False}
+        return self._pending.pop(0)
 
     async def send(self, message: dict[str, Any]) -> None:
         """Record a response start (status/headers) or body message."""
@@ -196,12 +210,11 @@ class _RequestCycle:
 class _StreamCycle:
     """One ASGI streaming request with a sync queue for response chunks."""
 
-    __slots__ = ("_body", "_receive", "_sent", "chunks")
+    __slots__ = ("_pending", "_receive", "chunks")
 
-    def __init__(self, body: bytes) -> None:
-        self._body = body
+    def __init__(self, body: tuple[bytes, ...]) -> None:
+        self._pending = _body_messages(body)
         self._receive: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        self._sent = False
         self.chunks: queue.Queue[dict[str, Any]] = queue.Queue()
 
     async def disconnect(self) -> None:
@@ -209,10 +222,9 @@ class _StreamCycle:
         await self._receive.put({"type": "http.disconnect"})
 
     async def receive(self) -> dict[str, Any]:
-        """Feed the request body once, then await queued client messages."""
-        if not self._sent:
-            self._sent = True
-            return {"type": "http.request", "body": self._body, "more_body": False}
+        """Feed the request body's chunks in order, then await queued client messages."""
+        if self._pending:
+            return self._pending.pop(0)
         return await self._receive.get()
 
     async def send(self, message: dict[str, Any]) -> None:
@@ -602,23 +614,24 @@ class TestClient:
         *,
         params: dict[str, str] | None,
         json: Any,
-        content: bytes | None,
+        content: _Content | None,
         data: dict[str, _DataValues] | None,
         files: dict[str, _FileValues] | None,
         headers: dict[str, str] | None,
         cookies: Mapping[str, str] | None,
     ) -> TestResponse:
-        body = b""
+        body: tuple[bytes, ...] = ()
         outgoing = self._merge_cookies(headers, self._outgoing_cookies(headers, cookies))
         wire_headers = {k.lower(): v for k, v in outgoing.items()}
         if json is not None:
-            body = msgspec_encoder.encode(json)
+            body = (msgspec_encoder.encode(json),)
             wire_headers.setdefault("content-type", "application/json")
         elif content is not None:
-            body = content
+            body = _content_chunks(content)
             wire_headers.setdefault("content-type", "application/octet-stream")
         elif data is not None or files is not None:
-            body, content_type = self._encode_multipart(data, files)
+            multipart, content_type = self._encode_multipart(data, files)
+            body = (multipart,)
             wire_headers.setdefault("content-type", content_type)
 
         scope: dict[str, Any] = {
@@ -648,23 +661,24 @@ class TestClient:
         *,
         params: dict[str, str] | None,
         json: Any,
-        content: bytes | None,
+        content: _Content | None,
         data: dict[str, _DataValues] | None,
         files: dict[str, _FileValues] | None,
         headers: dict[str, str] | None,
         cookies: Mapping[str, str] | None,
     ) -> _StreamSession:
-        body = b""
+        body: tuple[bytes, ...] = ()
         outgoing = self._merge_cookies(headers, self._outgoing_cookies(headers, cookies))
         wire_headers = {k.lower(): v for k, v in outgoing.items()}
         if json is not None:
-            body = msgspec_encoder.encode(json)
+            body = (msgspec_encoder.encode(json),)
             wire_headers.setdefault("content-type", "application/json")
         elif content is not None:
-            body = content
+            body = _content_chunks(content)
             wire_headers.setdefault("content-type", "application/octet-stream")
         elif data is not None or files is not None:
-            body, content_type = self._encode_multipart(data, files)
+            multipart, content_type = self._encode_multipart(data, files)
+            body = (multipart,)
             wire_headers.setdefault("content-type", content_type)
 
         scope: dict[str, Any] = {
@@ -738,7 +752,7 @@ class TestClient:
         *,
         params: dict[str, str] | None = None,
         json: Any = None,
-        content: bytes | None = None,
+        content: _Content | None = None,
         data: dict[str, _DataValues] | None = None,
         files: dict[str, _FileValues] | None = None,
         headers: dict[str, str] | None = None,
@@ -789,7 +803,7 @@ class TestClient:
         *,
         params: dict[str, str] | None = None,
         json: Any = None,
-        content: bytes | None = None,
+        content: _Content | None = None,
         data: dict[str, _DataValues] | None = None,
         files: dict[str, _FileValues] | None = None,
         headers: dict[str, str] | None = None,
@@ -881,7 +895,7 @@ class TestClient:
         path: str,
         *,
         json: Any = None,
-        content: bytes | None = None,
+        content: _Content | None = None,
         data: dict[str, _DataValues] | None = None,
         files: dict[str, _FileValues] | None = None,
         params: dict[str, str] | None = None,
@@ -906,7 +920,7 @@ class TestClient:
         path: str,
         *,
         json: Any = None,
-        content: bytes | None = None,
+        content: _Content | None = None,
         data: dict[str, _DataValues] | None = None,
         files: dict[str, _FileValues] | None = None,
         params: dict[str, str] | None = None,
@@ -931,7 +945,7 @@ class TestClient:
         path: str,
         *,
         json: Any = None,
-        content: bytes | None = None,
+        content: _Content | None = None,
         data: dict[str, _DataValues] | None = None,
         files: dict[str, _FileValues] | None = None,
         params: dict[str, str] | None = None,
@@ -956,7 +970,7 @@ class TestClient:
         path: str,
         *,
         json: Any = None,
-        content: bytes | None = None,
+        content: _Content | None = None,
         data: dict[str, _DataValues] | None = None,
         files: dict[str, _FileValues] | None = None,
         params: dict[str, str] | None = None,
@@ -981,7 +995,7 @@ class TestClient:
         path: str,
         *,
         json: Any = None,
-        content: bytes | None = None,
+        content: _Content | None = None,
         data: dict[str, _DataValues] | None = None,
         files: dict[str, _FileValues] | None = None,
         params: dict[str, str] | None = None,
@@ -1006,7 +1020,7 @@ class TestClient:
         path: str,
         *,
         json: Any = None,
-        content: bytes | None = None,
+        content: _Content | None = None,
         data: dict[str, _DataValues] | None = None,
         files: dict[str, _FileValues] | None = None,
         params: dict[str, str] | None = None,

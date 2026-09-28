@@ -58,7 +58,6 @@ from collections.abc import (
     AsyncIterator,
     Awaitable,
     Callable,
-    Iterable,
     Mapping,
     MutableMapping,
     Sequence,
@@ -72,8 +71,6 @@ from contextlib import (
 )
 from dataclasses import dataclass
 from enum import Enum
-from fnmatch import fnmatch
-from gzip import compress as gzip_compress
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -99,6 +96,13 @@ from msgspec import DecodeError, Struct, ValidationError, convert, to_builtins
 from msgspec.json import Decoder
 from msgspec.structs import fields as struct_fields
 
+from jero._assets import (
+    accepts_gzip,
+    asset_etag,
+    asset_payloads,
+    favicon_payload,
+    if_none_match_hit,
+)
 from jero._exception_handlers import (
     CompiledExceptionHandler,
     ExceptionHandler,
@@ -135,6 +139,7 @@ from jero._wiring_types import (
 )
 from jero.background import BackgroundTasks
 from jero.codecs import msgspec_encoder
+from jero.content_stream import ClientDisconnectedError, ContentStream
 from jero.cookies import SetCookie, encode_set_cookie, parse_cookie_header
 from jero.errors import (
     AuthenticationRequiredError,
@@ -223,10 +228,10 @@ class _WebSocketInterceptRunner(Protocol):
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> bool: ...
 
 
+# The request-body sources; a handler takes at most one of them.
+_BODY_SOURCES = frozenset({"json", "content", "content_stream", "form"})
 # Argument names the binder understands, shared by every handler kind.
-_SOURCES = frozenset(
-    {"json", "content", "form", "params", "path", "headers", "cookies", "user", "raw_headers"}
-)
+_SOURCES = _BODY_SOURCES | {"params", "path", "headers", "cookies", "user", "raw_headers"}
 # HTTP verbs that forbid a request body, whatever the handler is named.
 _BODYLESS_VERBS = frozenset({"GET", "DELETE"})
 
@@ -1241,6 +1246,7 @@ def _bind_sources(  # noqa: C901
     types: dict[str, type[Struct]] = {}
     form: FormSpec | None = None
     wants_content = False
+    wants_content_stream = False
     wants_raw_headers = False
     user_optional = False
 
@@ -1250,7 +1256,7 @@ def _bind_sources(  # noqa: C901
                 f"{cls.__name__}.{name}: unsupported argument {param.name!r}; "
                 f"allowed names are {', '.join(_SOURCES)}",
             )
-        if param.name in ("json", "content", "form") and http_method in _BODYLESS_VERBS:
+        if param.name in _BODY_SOURCES and http_method in _BODYLESS_VERBS:
             raise WiringError(
                 f"{cls.__name__}.{name}: {http_method} handlers cannot take {param.name!r}",
             )
@@ -1260,6 +1266,18 @@ def _bind_sources(  # noqa: C901
                     f"{cls.__name__}.{name}: 'content' must be annotated as bytes",
                 )
             wants_content = True
+            continue
+        if param.name == "content_stream":
+            if hints.get("content_stream") is not ContentStream:
+                raise WiringError(
+                    f"{cls.__name__}.{name}: 'content_stream' must be annotated as ContentStream",
+                )
+            if not inspect.iscoroutinefunction(fn):
+                # The body is read with `async for`: a sync handler could never consume it.
+                raise WiringError(
+                    f"{cls.__name__}.{name}: a handler taking 'content_stream' must be async",
+                )
+            wants_content_stream = True
             continue
         if param.name == "raw_headers":
             if hints.get("raw_headers") is not RawHeaders:
@@ -1279,10 +1297,16 @@ def _bind_sources(  # noqa: C901
             continue
         types[param.name] = source_type
 
-    body_sources = int(wants_content) + int(types.get("json") is not None) + int(form is not None)
+    body_sources = (
+        int(wants_content)
+        + int(wants_content_stream)
+        + int(types.get("json") is not None)
+        + int(form is not None)
+    )
     if body_sources > 1:
         raise WiringError(
-            f"{cls.__name__}.{name}: only one of 'json', 'content', or 'form' is allowed",
+            f"{cls.__name__}.{name}: only one of 'json', 'content', 'content_stream', "
+            f"or 'form' is allowed",
         )
 
     # A PEP 695 ``type`` alias is resolved to what it aliases before anything classifies it, and
@@ -1295,7 +1319,9 @@ def _bind_sources(  # noqa: C901
 
     json_type = types.get("json")
     json_decoder = decoder_for(json_type) if json_type is not None else None
-    arity = len(types) + (form is not None) + wants_content + wants_raw_headers
+    arity = (
+        len(types) + (form is not None) + wants_content + wants_content_stream + wants_raw_headers
+    )
 
     return Sources(
         **types,
@@ -1303,6 +1329,7 @@ def _bind_sources(  # noqa: C901
         form=form,
         user_optional=user_optional,
         content=wants_content,
+        content_stream=wants_content_stream,
         raw_headers=wants_raw_headers,
         return_kind=return_kind,
         return_annotation=return_hint,
@@ -1580,6 +1607,7 @@ class _Binder:
         "_params_type",
         "_path_type",
         "_wants_content",
+        "_wants_content_stream",
         "_wants_raw_headers",
         "_wants_user",
         "awaits_only_body",
@@ -1595,6 +1623,7 @@ class _Binder:
         self._cookies_type = sources.cookies
         self._auth = auth
         self._wants_content = sources.content
+        self._wants_content_stream = sources.content_stream
         self._wants_raw_headers = sources.raw_headers
         self._wants_user = sources.user is not None
         self._arity = sources.arity
@@ -1612,8 +1641,10 @@ class _Binder:
         )
         # With no auth to run and no body to read, binding never awaits: callers use
         # bind_sync and skip a per-request coroutine. With no auth but a body, only the
-        # body read awaits: callers read it inline and use bind_with_body.
-        self.is_sync = auth is None and not self._needs_body
+        # body read awaits: callers read it inline and use bind_with_body. A
+        # content_stream route reads no body at binding but needs ``receive`` to hand the
+        # handler its stream, so it always takes ``__call__``.
+        self.is_sync = auth is None and not self._needs_body and not sources.content_stream
         self.awaits_only_body = auth is None and self._needs_body
 
     def _one(
@@ -1624,6 +1655,7 @@ class _Binder:
         path_values: dict[str, str],
         user: Struct | None,
         body: bytes,
+        stream: ContentStream | None,
     ) -> object:
         """Resolve the single declared binding source, skipping the kwargs dict."""
         if self._json_decoder is not None:
@@ -1632,6 +1664,8 @@ class _Binder:
             return _decode_form_body(body, raw_headers, self._form_spec)
         if self._wants_content:
             return body
+        if stream is not None:
+            return stream
         if self._path_type is not None:
             return _convert_source(path_values, self._path_type, 404)
         if self._headers_type is not None:
@@ -1652,12 +1686,13 @@ class _Binder:
         path_values: dict[str, str],
         user: Struct | None,
         body: bytes,
+        stream: ContentStream | None,
     ) -> object:
         # 0- or 1-source handlers skip the kwargs dict: call positionally (see _Route).
         if self._arity == 0:
             return None
         if self._arity == 1:
-            return self._one(scope, raw_headers, cookies, path_values, user, body)
+            return self._one(scope, raw_headers, cookies, path_values, user, body, stream)
         kwargs: dict[str, object] = {}
         if self._wants_user:
             kwargs["user"] = user
@@ -1677,6 +1712,8 @@ class _Binder:
             kwargs["form"] = _decode_form_body(body, raw_headers, self._form_spec)
         elif self._wants_content:
             kwargs["content"] = body
+        elif stream is not None:
+            kwargs["content_stream"] = stream
         if self._wants_raw_headers:
             kwargs["raw_headers"] = RawHeaders(_wire_header_pairs(scope))
         return kwargs
@@ -1686,16 +1723,24 @@ class _Binder:
         no body to read) — the caller skips a per-request coroutine."""
         raw_headers = _raw_headers(scope) if self._needs_raw else {}
         cookies = _request_cookies(scope) if self._needs_cookies else {}
-        return self._finish(scope, raw_headers, cookies, path_values, None, b"")
+        return self._finish(scope, raw_headers, cookies, path_values, None, b"", None)
 
     def bind_with_body(self, scope: Scope, path_values: dict[str, str], body: bytes) -> object:
         """``__call__`` for a caller that read the body itself, valid whenever
         ``awaits_only_body`` (no auth to run) — the caller skips a per-request coroutine."""
         raw_headers = _raw_headers(scope) if self._needs_raw else {}
         cookies = _request_cookies(scope) if self._needs_cookies else {}
-        return self._finish(scope, raw_headers, cookies, path_values, None, body)
+        return self._finish(scope, raw_headers, cookies, path_values, None, body, None)
 
-    async def __call__(self, scope: Scope, receive: Receive, path_values: dict[str, str]) -> object:
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        path_values: dict[str, str],
+        stream: ContentStream | None,
+    ) -> object:
+        """Bind every source; ``stream`` is the route's ContentStream on a content_stream
+        route (built by the route, which also hands it to the response side), else None."""
         raw_headers = _raw_headers(scope) if self._needs_raw else {}
         cookies = _request_cookies(scope) if self._needs_cookies else {}
         user = await self._auth(raw_headers, cookies) if self._auth is not None else None
@@ -1708,7 +1753,7 @@ class _Binder:
                 if not message.get("more_body"):
                     break
             body = chunks[0] if len(chunks) == 1 else b"".join(chunks)
-        return self._finish(scope, raw_headers, cookies, path_values, user, body)
+        return self._finish(scope, raw_headers, cookies, path_values, user, body, stream)
 
 
 class _WebSocketRoute:
@@ -1768,7 +1813,7 @@ class _WebSocketRoute:
             bound = (
                 None
                 if self._arity == 0
-                else await self._bind(scope, receive, path_values)
+                else await self._bind(scope, receive, path_values, None)
                 if not self._bind.is_sync
                 else self._bind.bind_sync(scope, path_values)
             )
@@ -2419,6 +2464,12 @@ class _ExceptionHandlers:
     def register(self, handler: object) -> None:
         """Register one compiled handler per exact exception type."""
         compiled = CompiledExceptionHandler(handler)
+        if issubclass(compiled.exception_type, ClientDisconnectedError):
+            # The funnel answers a disconnect with nothing before any handler runs.
+            raise WiringError(
+                f"{compiled.owner}: ClientDisconnectedError cannot be handled; the client "
+                f"is gone, so jero sends nothing",
+            )
         existing = self._handlers.get(compiled.exception_type)
         if existing is not None:
             raise WiringError(
@@ -2434,7 +2485,10 @@ class _ExceptionHandlers:
         ``tail`` is the failing route's response-header tail (CORS pairs, middleware
         headers) — an error body a browser page must be able to *read* still needs the
         route's CORS pairs on it. Dynamic hooks are contained here (logged, skipped on
-        failure), since this funnel is already sending the error response."""
+        failure), since this funnel is already sending the error response. A client that
+        disconnected mid-body (``content_stream``) is answered with nothing: it's gone."""
+        if isinstance(exception, ClientDisconnectedError):
+            return
         handler = self._resolve(type(exception))
         if handler is None:
             await self._send_default(scope, send, exception, tail)
@@ -2528,11 +2582,15 @@ async def _receive(receive: Receive) -> MutableMapping[str, Any]:
 
 
 async def _cancel_if_task(task: asyncio.Task[Any] | None) -> None:
-    """Cancel a task (if there is one) and await it, swallowing the CancelledError."""
+    """Cancel a task (if there is one) and await it, swallowing the CancelledError.
+
+    A ``ClientDisconnectedError`` is swallowed too: a stream source reading
+    ``content_stream`` can see the client leave in the same tick the disconnect watcher
+    does, and being cancelled for a disconnect it already reported is the same outcome."""
     if task is None:
         return
     task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
+    with contextlib.suppress(asyncio.CancelledError, ClientDisconnectedError):
         await task
 
 
@@ -2559,6 +2617,10 @@ async def _next_or_disconnect[T](
                 return "item", next_task.result()
             except StopAsyncIteration:
                 return "done", None
+            except ClientDisconnectedError:
+                # The source was reading content_stream and the client left mid-body: an
+                # ordinary disconnect, not a stream fault.
+                return "disconnect", None
     except Exception:
         await _cancel_if_task(next_task)
         raise
@@ -2886,6 +2948,7 @@ class _Route:
         "_is_async",
         "_json_status",
         "_send_result",
+        "_streams_body",
         "_tail",
     )
 
@@ -2905,6 +2968,7 @@ class _Route:
         self._bind = _Binder(sources, auth)
         self._bind_is_sync = self._bind.is_sync
         self._bind_awaits_only_body = self._bind.awaits_only_body
+        self._streams_body = sources.content_stream
         # Plain-JSON results (the overwhelmingly common kind) are sent inline in
         # __call__ rather than through _send_result, to save a coroutine hop.
         self._json_status = status if sources.return_kind == "json" else None
@@ -2958,7 +3022,11 @@ class _Route:
                     body = await _drain_body(receive, body)
                 bound = self._bind.bind_with_body(scope, path_values, body)
             else:
-                bound = await self._bind(scope, receive, path_values)
+                stream = ContentStream(receive) if self._streams_body else None
+                bound = await self._bind(scope, receive, path_values, stream)
+                # The response side reads receive only once the body is finished, so a
+                # streaming response's disconnect watcher never swallows body chunks.
+                receive = receive if stream is None else stream.receive_after_body
             # 0/1-source handlers are called positionally (no kwargs dict); see _Binder.
             if self._arity >= 2:
                 kwargs = cast("dict[str, object]", bound)
@@ -3255,267 +3323,6 @@ def _static_bytes_handler(body: bytes, content_type: bytes, tail: _RouteTail) ->
     return handler
 
 
-def _read_typed_file(
-    file: Path,
-    display: str,
-    content_types: dict[str, bytes],
-    *,
-    label: str,
-    unsupported_hint: str = "",
-) -> tuple[bytes, bytes]:
-    """Read one file's bytes once, at wiring, with its content type resolved by
-    suffix. Fails loud on an unsupported suffix or an unreadable file, never at
-    request time. Shared by :func:`_favicon_payload` and :func:`_asset_payload` —
-    only the accepted suffix table and the message's label/hint differ between them."""
-    content_type = content_types.get(file.suffix.lower())
-    if content_type is None:
-        supported = ", ".join(sorted(content_types))
-        raise WiringError(
-            f"{label} {display} has an unsupported suffix; use one of {supported}"
-            f"{unsupported_hint}",
-        )
-    try:
-        body = file.read_bytes()
-    except OSError as exc:
-        raise WiringError(f"{label} {display} is not readable: {exc}") from exc
-    return body, content_type
-
-
-# Favicon media types by file suffix; anything else is a loud wiring failure.
-_FAVICON_CONTENT_TYPES: dict[str, bytes] = {
-    ".ico": b"image/x-icon",
-    ".png": b"image/png",
-    ".svg": b"image/svg+xml",
-}
-
-
-def _favicon_payload(favicon: Path) -> tuple[bytes, bytes]:
-    """Read the favicon once at wiring: its bytes and content type. Fails loud on an
-    unsupported suffix or an unreadable file — never at request time."""
-    return _read_typed_file(
-        favicon, str(favicon), _FAVICON_CONTENT_TYPES, label="_include_openapi favicon"
-    )
-
-
-# Asset media types by file suffix; anything else is a loud wiring failure (exclude the
-# file, or serve it from the proxy/CDN where real static serving belongs). A strict
-# superset of _FAVICON_CONTENT_TYPES: every favicon suffix is also a valid asset.
-_ASSET_CONTENT_TYPES: dict[str, bytes] = {
-    ".avif": b"image/avif",
-    ".css": b"text/css; charset=utf-8",
-    ".gif": b"image/gif",
-    ".html": b"text/html; charset=utf-8",
-    ".ico": b"image/x-icon",
-    ".jpeg": b"image/jpeg",
-    ".jpg": b"image/jpeg",
-    ".js": b"text/javascript; charset=utf-8",
-    ".json": b"application/json",
-    ".map": b"application/json",
-    ".mjs": b"text/javascript; charset=utf-8",
-    ".png": b"image/png",
-    ".svg": b"image/svg+xml",
-    ".txt": b"text/plain; charset=utf-8",
-    ".wasm": b"application/wasm",
-    ".webmanifest": b"application/manifest+json",
-    ".webp": b"image/webp",
-    ".woff": b"font/woff",
-    ".woff2": b"font/woff2",
-}
-
-
-# Suffixes worth gzipping at wiring; the image/font formats are already compressed and
-# a gzip pass would only add bytes and a Vary header for nothing.
-_COMPRESSIBLE_SUFFIXES: frozenset[str] = frozenset(
-    {
-        ".css",
-        ".html",
-        ".ico",
-        ".js",
-        ".json",
-        ".map",
-        ".mjs",
-        ".svg",
-        ".txt",
-        ".wasm",
-        ".webmanifest",
-    }
-)
-
-
-def _asset_etag(digest: str, *, gzip: bool = False) -> bytes:
-    """A quoted strong ``ETag`` from an already-computed digest — call
-    :func:`hashlib.sha256` once per body and format both the plain and gzip forms
-    from it, so they can never drift out of shape with each other and the hash
-    itself is never paid for twice."""
-    suffix = "-gzip" if gzip else ""
-    return f'"{digest}{suffix}"'.encode()
-
-
-def _asset_payload(file: Path, relative: str, *, gzip: bool) -> tuple[bytes, bytes | None, bytes]:
-    """One file's ``(bytes, gzip variant or None, content type)``, read once at wiring.
-    The gzip variant is deterministic (``mtime=0``) and kept only when meaningfully
-    smaller than the original."""
-    body, content_type = _read_typed_file(
-        file,
-        relative,
-        _ASSET_CONTENT_TYPES,
-        label="_include_assets:",
-        unsupported_hint=", or exclude it",
-    )
-    gz_body = None
-    if gzip and file.suffix.lower() in _COMPRESSIBLE_SUFFIXES:
-        compressed = gzip_compress(body, 9, mtime=0)
-        if len(compressed) < len(body) * 0.9:
-            gz_body = compressed
-    return body, gz_body, content_type
-
-
-def _asset_files(directory: Path) -> list[Path]:
-    """Every file under ``directory``, sorted for deterministic wiring. Dotfiles and
-    dot-directories are never served — pruned *before* descending into them, so a
-    ``.git`` checkout or a bundler's ``.cache`` sitting under the tree is never
-    walked, not just filtered out afterward. Symlinks are never served either,
-    file or directory: ``os.walk``'s default ``followlinks=False`` already keeps a
-    symlinked directory from ever being descended into, and a symlinked *file* is
-    excluded here — otherwise it would be read straight through, serving whatever it
-    points at (anywhere on disk the process can read) as if it were under
-    ``directory``."""
-    files: list[Path] = []
-    for root, dirnames, filenames in os.walk(directory):
-        dirnames[:] = [name for name in dirnames if not name.startswith(".")]
-        for filename in filenames:
-            if filename.startswith("."):
-                continue
-            file = Path(root) / filename
-            if not file.is_symlink():
-                files.append(file)
-    return sorted(files)
-
-
-def _asset_payloads(
-    directory: Path,
-    include: Sequence[str],
-    exclude: Sequence[str],
-    *,
-    gzip: bool,
-    max_total_bytes: int,
-    max_files: int,
-) -> list[tuple[str, bytes, bytes | None, bytes]]:
-    """Read every servable file under ``directory`` once, at wiring: ``(relative posix
-    path, bytes, gzipped bytes or None, content type)`` per file. The gzip variant is
-    compressed here (deterministically, ``mtime=0``) and kept only when meaningfully
-    smaller. Fails loud on a missing directory, an unsupported suffix, an unreadable
-    file, zero matches, too many files, or a total (both variants counted) over the
-    cap — never at request time. A single file already over the remaining budget is
-    rejected by its on-disk size *before* it is read or compressed, so the cap bounds
-    the cost of checking it, not just the cost of holding it."""
-    if not directory.is_dir():
-        raise WiringError(f"_include_assets directory {directory} is not a directory")
-    payloads: list[tuple[str, bytes, bytes | None, bytes]] = []
-    total = 0
-    for file in _asset_files(directory):
-        if not file.is_file():
-            continue
-        relative = file.relative_to(directory).as_posix()
-        if not any(fnmatch(relative, pattern) for pattern in include):
-            continue
-        if any(fnmatch(relative, pattern) for pattern in exclude):
-            continue
-        if len(payloads) >= max_files:
-            raise WiringError(
-                f"_include_assets: more than max_files={max_files} files matched under "
-                f"{directory} (hit at {relative}). Serve a directory this large from a "
-                f"proxy/CDN, or raise the cap deliberately",
-            )
-        if total + file.stat().st_size > max_total_bytes:
-            raise WiringError(
-                f"_include_assets: reading {relative} would exceed "
-                f"max_total_bytes={max_total_bytes} under {directory}. Assets are held "
-                f"in memory per worker — serve large or many files from a proxy/CDN, "
-                f"or raise the cap deliberately",
-            )
-        body, gz_body, content_type = _asset_payload(file, relative, gzip=gzip)
-        total += len(body) + (0 if gz_body is None else len(gz_body))
-        if total > max_total_bytes:
-            raise WiringError(
-                f"_include_assets: {total} bytes under {directory} exceeds "
-                f"max_total_bytes={max_total_bytes} (hit while reading {relative}). Assets "
-                f"are held in memory per worker — serve large or many files from a "
-                f"proxy/CDN, or raise the cap deliberately",
-            )
-        payloads.append((relative, body, gz_body, content_type))
-    if not payloads:
-        raise WiringError(
-            f"_include_assets: no files matched under {directory} "
-            f"(include={list(include)}, exclude={list(exclude)})",
-        )
-    return payloads
-
-
-def _accept_encoding_weight(directive: bytes) -> tuple[bytes, float]:
-    """One ``Accept-Encoding`` directive (e.g. ``b"gzip;q=0.5"``) as ``(name,
-    qvalue)`` (RFC 9110 §12.5.3). An unparseable ``q`` is treated as though none were
-    given — full acceptance — the same lenient reading as a directive with no ``q``
-    at all. A directive repeating ``q`` (undefined by the spec) takes the last one
-    present, consistent with how a repeated header *line* is handled by the caller."""
-    parts = directive.split(b";")
-    name = parts[0].strip().lower()
-    weight = 1.0
-    for param in parts[1:]:
-        key, _, raw_q = param.strip().partition(b"=")
-        if key.strip().lower() != b"q":
-            continue
-        try:
-            weight = float(raw_q)
-        except ValueError:
-            weight = 1.0
-    return name, weight
-
-
-def _accepts_gzip(values: Iterable[bytes]) -> bool:
-    """Whether the (possibly repeated) ``Accept-Encoding`` header values accept gzip.
-    Scans for just the two directives that matter (``gzip``, the wildcard) rather
-    than building a table of every encoding named — this runs on every asset
-    request. An explicit ``gzip`` directive wins over the wildcard; ``q=0``
-    — including ``gzip;q=0`` — is an explicit refusal (RFC 9110). No header at all is
-    treated as "don't bother", matching the identity-only behaviour a plain GET has
-    always had."""
-    gzip_weight: float | None = None
-    wildcard_weight: float | None = None
-    for value in values:
-        for directive in value.split(b","):
-            directive = directive.strip()
-            if not directive:
-                continue
-            name, weight = _accept_encoding_weight(directive)
-            if name == b"gzip":
-                gzip_weight = weight
-            elif name == b"*":
-                wildcard_weight = weight
-    if gzip_weight is not None:
-        return gzip_weight > 0
-    return (wildcard_weight or 0.0) > 0
-
-
-def _if_none_match_hit(values: Iterable[bytes], etag: bytes) -> bool:
-    """Whether any ``If-None-Match`` header value contains a token matching ``etag``
-    exactly, or the wildcard. Tokenizes on commas rather than a raw substring check,
-    so a value that merely *contains* the tag's bytes without being it — malformed
-    input, or one tag embedded inside another — can't produce a false revalidation.
-    An optional leading ``W/`` is stripped (RFC 7232's weak comparison, valid for the
-    safe GET/HEAD this handler only ever serves)."""
-    for value in values:
-        for token in value.split(b","):
-            token = token.strip()
-            if token == b"*":
-                return True
-            if token.startswith(b"W/"):
-                token = token[2:]
-            if token == etag:
-                return True
-    return False
-
-
 async def _apply_route_tail(
     tail: _RouteTail,
     headers: list[tuple[bytes, bytes]],
@@ -3592,9 +3399,9 @@ def _asset_handler(
                 accept_encoding.append(value)
             elif name == b"if-none-match":
                 if_none_match.append(value)
-        use_gz = gz_body is not None and _accepts_gzip(accept_encoding)
+        use_gz = gz_body is not None and accepts_gzip(accept_encoding)
         chosen_etag = gz_etag if use_gz else etag
-        revalidated = _if_none_match_hit(if_none_match, chosen_etag)
+        revalidated = if_none_match_hit(if_none_match, chosen_etag)
         if revalidated:
             status = 304
             headers = [*(not_modified_gz if use_gz else not_modified_plain)]
@@ -4367,7 +4174,7 @@ class BaseApp[FactoryT = None](ABC):
         cache_control_value = None if cache_control is None else cache_control.encode()
         tail = _RouteTail()
         record = _IncludeRecord(tail=tail, routes=[], cors=None, cors_off=False, middleware=())
-        payloads = _asset_payloads(
+        payloads = asset_payloads(
             directory,
             include,
             exclude,
@@ -4377,8 +4184,8 @@ class BaseApp[FactoryT = None](ABC):
         )
         for relative, body, gz_body, content_type in payloads:
             digest = sha256(body).hexdigest()[:32]
-            etag = _asset_etag(digest)
-            gz_etag = _asset_etag(digest, gzip=True)
+            etag = asset_etag(digest)
+            gz_etag = asset_etag(digest, gzip=True)
             handler = _asset_handler(
                 body,
                 gz_body,
@@ -4458,7 +4265,7 @@ class BaseApp[FactoryT = None](ABC):
         record = _IncludeRecord(tail=tail, routes=[], cors=None, cors_off=False, middleware=())
         favicon_href: str | None = None
         if isinstance(favicon, Path):
-            body, content_type = _favicon_payload(favicon)
+            body, content_type = favicon_payload(favicon)
             favicon_handler = _static_bytes_handler(body, content_type, tail)
             self.__register("GET", _parse_template("/favicon.ico"), favicon_handler)
             record.routes.append(("GET", favicon_handler))

@@ -142,6 +142,13 @@ class Notification(Camel):
     message: str
 
 
+class UploadReceipt(Camel):
+    """The size and SHA-256 digest of a streamed upload."""
+
+    size: int
+    sha256: str
+
+
 class RawForm(Camel):
     """Multipart form whose part exposes raw part headers."""
 

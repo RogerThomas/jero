@@ -137,13 +137,25 @@ Always follow the following style guide:
   registry (`_Reverser`) in `core`. The `*Target` types are un-underscored
   package-internal boundary-crossers (like `encode_sse`), not public API.
 - Handler args bind **by name**, each a msgspec Struct: `json`, `content` (raw
-  bytes), `form` (multipart) — the three body sources are mutually exclusive —
+  bytes), `content_stream`, `form` (multipart) — the four body sources are mutually
+  exclusive —
   `params` (query), `path` (URL template slots), `headers` (typed), `cookies` (typed,
   bound **verbatim and case-sensitive** — no header-style mangle, since RFC 6265 names
   are case-sensitive and routinely not valid identifiers; parsing is lenient — a
   malformed fragment or an unknown name is skipped, never a 400 — but *your* declared
   fields are strict, same as headers), `raw_headers`
-  (opaque `RawHeaders` bag), `user` (auth result). Return a Struct, `list[Struct]`,
+  (opaque `RawHeaders` bag), `user` (auth result). **`content_stream: ContentStream`**
+  is the final escape hatch for any body jero has no typed vocabulary for: nothing is
+  buffered at binding; the handler (async only, a `WiringError` otherwise) reads the
+  body **once**, via `async for chunk in content_stream` (server-delivered chunks, empty
+  ones skipped) or `content_stream.iter_chunks(chunk_size=n)` (re-framed). A mid-body
+  disconnect raises `ClientDisconnectedError`; jero answers nothing and logs nothing (the
+  single exception funnel drops it, and registering a handler for it is a
+  `WiringError`). The route hands the response side `receive_after_body` instead of the
+  raw `receive`, so a streaming response that reads the body as it streams never has
+  its chunks swallowed by the disconnect watcher. OpenAPI documents it exactly like
+  `content`. `TestClient`'s `content=` also takes an `Iterable[bytes]` (one ASGI message
+  per item) to exercise multi-chunk bodies. Return a Struct, `list[Struct]`,
   `bytes`, or a response wrapper to control headers/status: `JSONResponse[T, H]` /
   `BytesResponse[H]` / a streaming response (`NDJSONStreamingResponse[T, H]`, …).
   A wrapper's `T` may also be a **union of tagged Structs** (mixed streams — chunks
@@ -352,6 +364,13 @@ Always follow the following style guide:
   `Channel[T]` fan-out primitive.
   `jero/links.py` — `Location` / `Link` and their reverse-routing targets (a leaf module
   `core` and `streaming` both import). `jero/headers.py` — the `RawHeaders` opaque bag.
+  `jero/content_stream.py` — `ContentStream` and `ClientDisconnectedError` (a leaf
+  module `core` imports).
+  `jero/_assets.py` — the sender-free half of `_include_assets` and the OpenAPI favicon
+  (wiring-time file reads, content types, gzip variants, strong `ETag`s, the
+  `Accept-Encoding` / `If-None-Match` checks); the asset handler stays in `core`. A leaf
+  depending only on `_wiring_types`, split out to keep `core` under pylint's 5000-line
+  module cap.
   `jero/cookies.py` — `SetCookie` (the response-side vocabulary, secure-by-default
   validation, `expire()`), `encode_set_cookie`, and the request-side `parse_cookie_header`
   — a leaf module mirroring `headers.py`'s split, imported by `core`, `streaming`, and
@@ -390,8 +409,9 @@ Always follow the following style guide:
 ## Status & sharp edges
 
 - **Built**: routing + path-param templates, Resource/Endpoint, all binding sources
-  (incl. typed `headers`, typed `cookies` — verbatim/case-sensitive, lenient parsing,
-  strict binding — and the opaque `raw_headers`), auth (required *and* optional,
+  (incl. the streamed `content_stream` body, typed `headers`, typed `cookies` —
+  verbatim/case-sensitive, lenient parsing, strict binding — and the opaque
+  `raw_headers`), auth (required *and* optional,
   header/cookie/hybrid sources via `Auth`/`CookieAuth`/`HybridAuth`), cookie responses
   (`SetCookie` on every wrapper, secure by default, `expire()`), REST semantics,
   response kinds — generic `JSONResponse[T, H]` / `BytesResponse[H]` / streaming
