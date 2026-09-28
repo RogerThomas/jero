@@ -118,12 +118,10 @@ class Digest(Struct):
 
 
 class UploadsEndpoint(Endpoint, path="/uploads"):
-    _chunk_size: int = 64 * 1024
-
     async def post(self, content_stream: ContentStream) -> Digest:
         digest = hashlib.sha256()
         size = 0
-        async for chunk in content_stream.iter_chunks(chunk_size=self._chunk_size):
+        async for chunk in content_stream:
             digest.update(chunk)
             size += len(chunk)
         return Digest(size=size, sha256=digest.hexdigest())
@@ -137,9 +135,24 @@ class App(BaseApp):
 app = App()
 ```
 
-- `async for chunk in content_stream` yields the chunks exactly as the server delivers
-  them (their sizes are the server's choice). `content_stream.iter_chunks(chunk_size=n)`
-  re-frames them to `n` bytes each, with a shorter final chunk.
+Plain iteration yields the chunks exactly as the server delivers them, so their sizes are
+the server's choice. To control the size, iterate `iter_chunks(chunk_size=n)` instead:
+it re-frames the body into `n`-byte chunks, with a shorter final one.
+
+```python
+# doc-example: fragment
+class UploadsEndpoint(Endpoint, path="/uploads"):
+    _chunk_size: int = 64 * 1024
+
+    async def post(self, content_stream: ContentStream) -> Digest:
+        digest = hashlib.sha256()
+        size = 0
+        async for chunk in content_stream.iter_chunks(chunk_size=self._chunk_size):
+            digest.update(chunk)
+            size += len(chunk)
+        return Digest(size=size, sha256=digest.hexdigest())
+```
+
 - Iteration is `async for`, so the handler must be `async def`; a sync handler taking
   `content_stream` is a `WiringError` at startup.
 - The body can be read **once**. A second read raises `RuntimeError`.
