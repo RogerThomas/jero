@@ -8,7 +8,7 @@ from msgspec import Meta, Struct
 from msgspec.json import encode as json_encode
 
 from jero import BaseApp, Endpoint, FilePart, FormPart, Resource, StreamingResponse
-from jero.testing import TestClient
+from jero.testing import TestClient, TestResponse
 
 
 class Camel(Struct, rename="camel"):
@@ -572,3 +572,101 @@ def test_stream_post_sends_a_multipart_body() -> None:
         client.stream_post("/file-stream", files={"document": ("file-name", b"data")}) as chunks,
     ):
         assert list(chunks) == [b"data"]
+
+
+class SignupForm(Camel):
+    """A file-free form, so it binds from a url-encoded body as well as multipart."""
+
+    name: str
+    count: int
+    tags: list[str]
+    note: str | None = None
+
+
+class SignupEndpoint(Endpoint, path="/signup"):
+    """Echoes the bound file-free form."""
+
+    async def post(self, form: SignupForm) -> SignupForm:
+        """Return the bound form."""
+        return form
+
+
+class SignupApp(BaseApp):
+    """App wiring the file-free signup form and the file-bearing jobs form."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(SignupEndpoint())
+        self._include_endpoint(UploadEndpoint())
+
+
+@pytest.fixture(name="signup_client")
+def _signup_client() -> Generator[TestClient]:
+    with TestClient(SignupApp()) as client:
+        yield client
+
+
+def _post_urlencoded(
+    client: TestClient,
+    path: str,
+    body: bytes,
+    content_type: str = "application/x-www-form-urlencoded",
+) -> TestResponse:
+    return client.post(path, content=body, headers={"content-type": content_type})
+
+
+def test_file_free_form_binds_a_urlencoded_body(signup_client: TestClient) -> None:
+    """A form with no files binds from url-encoded pairs: percent/plus decoding, repeated
+    names into a list, scalars converted."""
+    resp = _post_urlencoded(
+        signup_client, "/signup", b"name=first+name&count=2&tags=a&tags=b&note=%C3%A9"
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"name": "first name", "count": 2, "tags": ["a", "b"], "note": "\u00e9"}
+
+
+def test_urlencoded_blank_value_binds_an_empty_string(signup_client: TestClient) -> None:
+    """``name=`` binds ``""``, as an empty multipart part would; absent fields default."""
+    resp = _post_urlencoded(signup_client, "/signup", b"name=&count=1")
+
+    assert resp.json() == {"name": "", "count": 1, "tags": [], "note": None}
+
+
+def test_urlencoded_content_type_parameters_are_accepted(signup_client: TestClient) -> None:
+    """A charset parameter on the content type doesn't stop url-encoded binding."""
+    resp = _post_urlencoded(
+        signup_client,
+        "/signup",
+        b"name=name&count=1",
+        "application/x-www-form-urlencoded; charset=utf-8",
+    )
+
+    assert resp.status_code == 200
+
+
+def test_file_free_form_still_binds_multipart(signup_client: TestClient) -> None:
+    """Url-encoded is an addition: the same form still binds from multipart."""
+    resp = signup_client.post("/signup", data={"name": "name", "count": "1", "tags": ["tag"]})
+
+    assert resp.json() == {"name": "name", "count": 1, "tags": ["tag"], "note": None}
+
+
+def test_form_with_files_rejects_a_urlencoded_body(signup_client: TestClient) -> None:
+    """A url-encoded body can't carry files, so a form with a FilePart is multipart-only."""
+    resp = _post_urlencoded(signup_client, "/jobs", b"jobType=export-text")
+
+    assert resp.status_code == 415
+
+
+def test_urlencoded_missing_required_field_is_422(signup_client: TestClient) -> None:
+    """A required field absent from the url-encoded body is a validation failure."""
+    resp = _post_urlencoded(signup_client, "/signup", b"name=name")
+
+    assert resp.status_code == 422
+
+
+def test_urlencoded_non_utf8_field_name_is_400(signup_client: TestClient) -> None:
+    """A field name that isn't valid UTF-8 once percent-decoded is a malformed request."""
+    resp = _post_urlencoded(signup_client, "/signup", b"%FF=1")
+
+    assert resp.status_code == 400

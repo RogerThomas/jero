@@ -9,7 +9,7 @@ learns *which* sources a handler wants, and the request path just fills them in.
 | `json`        | request body (JSON)             | a `Struct`               |
 | `content`     | request body (raw)              | `bytes`                  |
 | `content_stream` | request body (raw, streamed) | `ContentStream`          |
-| `form`        | `multipart/form-data` body      | a `Struct` (see [Forms](forms.md)) |
+| `form`        | form body (multipart, or url-encoded without files) | a `Struct` (see [Forms](forms.md)) |
 | `params`      | query string                    | a `Struct`               |
 | `path`        | URL template slots              | a `Struct`               |
 | `headers`     | request headers                 | a `Struct`               |

@@ -226,12 +226,15 @@ class FormFieldSpec:
 @dataclass(slots=True)
 class BodySpec:
     """A request body: a ``model`` (referenced by ``$ref``), a set of multipart
-    ``form_fields``, or neither (raw bytes -> binary schema)."""
+    ``form_fields``, or neither (raw bytes -> binary schema). ``alternate_content_types``
+    are further media types accepting the same schema (a file-free form's url-encoded
+    twin of its ``multipart/form-data``)."""
 
     content_type: str
     model: type[Struct] | None = None
     form_fields: tuple[FormFieldSpec, ...] = ()
     required: bool = True
+    alternate_content_types: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -635,10 +638,11 @@ def _request_body(body: BodySpec, schemas: _Schemas) -> dict[str, Any]:
         composed = schemas.model_examples(body.model)
         if composed:
             examples = _examples_map(composed)
-    return {
-        "required": body.required,
-        "content": _content(body.content_type, _body_schema(body, schemas), examples),
-    }
+    schema = _body_schema(body, schemas)
+    content = _content(body.content_type, schema, examples)
+    for content_type in body.alternate_content_types:
+        content |= _content(content_type, schema, examples)
+    return {"required": body.required, "content": content}
 
 
 def _response_headers(headers: tuple[type[Struct], ...], schemas: _Schemas) -> dict[str, Any]:

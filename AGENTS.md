@@ -74,7 +74,8 @@ Always follow the following style guide:
   direct push to `main` needs the same form). Pre-1.0, `feat`/`fix` bump the patch and
   breaking changes bump the minor. `on-release-main.yml` keeps a release PR open (version
   in `pyproject.toml` + `uv.lock`, `CHANGELOG.md`); merging it tags, publishes to PyPI,
-  and deploys the docs. Never bump the version or cut a release by hand.
+  and deploys the docs. `task release-preview` shows the pending release PR;
+  `task release` merges it. Never bump the version or cut a release by hand.
 - **Keep this file current.** After any relatively sizable change — a new feature,
   a changed convention, a dependency or supported-version bump, a repo-layout move —
   update `AGENTS.md` in the same change so it never drifts from how the project
@@ -137,8 +138,10 @@ Always follow the following style guide:
   registry (`_Reverser`) in `core`. The `*Target` types are un-underscored
   package-internal boundary-crossers (like `encode_sse`), not public API.
 - Handler args bind **by name**, each a msgspec Struct: `json`, `content` (raw
-  bytes), `content_stream`, `form` (multipart) — the four body sources are mutually
-  exclusive —
+  bytes), `content_stream`, `form` (multipart; also `application/x-www-form-urlencoded`
+  when the form Struct has no `FilePart` field, decided once at wiring as
+  `FormSpec.urlencoded`, else a url-encoded body is a 415) — the four body sources are
+  mutually exclusive —
   `params` (query), `path` (URL template slots), `headers` (typed), `cookies` (typed,
   bound **verbatim and case-sensitive** — no header-style mangle, since RFC 6265 names
   are case-sensitive and routinely not valid identifiers; parsing is lenient — a
