@@ -117,7 +117,10 @@ repeats = form.blob.raw_headers.getlist("X-Checksum")  # exact, as sent
 It can't carry files, so the rule follows from the type:
 
 - **A form with no `FilePart` field** binds from either content type, with the same
-  `Struct`, and the request's `Content-Type` picks the parser.
+  `Struct`, and the request's `Content-Type` picks the parser. A raw `bytes` or
+  `FormPart[bytes]` field doesn't count as a file (only `FilePart` requires a filename):
+  a url-encoded body can carry it percent-encoded, and the field receives the decoded
+  bytes.
 - **A form with a `FilePart` field** is multipart-only. A url-encoded request to it is a
   **415**.
 
