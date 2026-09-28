@@ -273,6 +273,47 @@ def test_streaming_response_reading_the_body_sees_every_chunk() -> None:
     assert resp.content == b"ABCD"
 
 
+def test_stream_post_sends_a_multi_chunk_body() -> None:
+    """stream_post takes the same chunked content= as post."""
+    with (
+        TestClient(EchoApp()) as client,
+        client.stream_post("/echo", content=[b"a", b"b"]) as chunks,
+    ):
+        assert list(chunks) == [b"A", b"B"]
+
+
+class RelayEndpoint(Endpoint, path="/relay"):
+    """Relays a body it reads elsewhere; that read sees its client leave."""
+
+    async def _relay(self) -> AsyncIterator[bytes]:
+        yield b"relayed"
+        raise ClientDisconnectedError()
+
+    async def get(self) -> StreamingResponse:
+        """Relay until the far side's client disconnects."""
+        return StreamingResponse(stream=self._relay())
+
+
+class RelayApp(BaseApp):
+    """App wiring the relay endpoint."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(RelayEndpoint())
+
+
+def test_a_source_raising_client_disconnected_ends_the_stream_quietly(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A ClientDisconnectedError out of a stream source ends it as a disconnect, not a
+    logged fault, even while this request's own client is still connected."""
+    with caplog.at_level(logging.ERROR, logger="jero"), TestClient(RelayApp()) as client:
+        resp = client.get("/relay")
+
+    assert resp.status_code == 200
+    assert resp.content == b"relayed"
+    assert caplog.text == ""
+
+
 # ---------------------------------------------------------------------------
 # Client disconnects mid-body (raw ASGI: the client leaves partway through)
 # ---------------------------------------------------------------------------

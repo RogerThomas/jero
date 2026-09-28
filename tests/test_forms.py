@@ -1,13 +1,13 @@
 """Multipart form binding: part kinds, typed headers, and REST error codes."""
 
-from collections.abc import Generator
+from collections.abc import AsyncIterator, Generator
 from typing import Annotated, Literal
 
 import pytest
 from msgspec import Meta, Struct
 from msgspec.json import encode as json_encode
 
-from jero import BaseApp, Endpoint, FilePart, FormPart, Resource
+from jero import BaseApp, Endpoint, FilePart, FormPart, Resource, StreamingResponse
 from jero.testing import TestClient
 
 
@@ -539,3 +539,36 @@ def test_non_utf8_scalar_form_part_is_422() -> None:
             headers={"content-type": "multipart/form-data; boundary=bad-utf8-boundary"},
         )
     assert resp.status_code == 422
+
+
+class FileForm(Struct):
+    """A form carrying one file."""
+
+    document: FilePart
+
+
+class FileStreamEndpoint(Endpoint, path="/file-stream"):
+    """Streams an uploaded file's bytes back."""
+
+    async def _file_bytes(self, data: bytes) -> AsyncIterator[bytes]:
+        yield data
+
+    async def post(self, form: FileForm) -> StreamingResponse:
+        """Stream the posted file back."""
+        return StreamingResponse(stream=self._file_bytes(form.document.data))
+
+
+class FileStreamApp(BaseApp):
+    """App wiring the file-stream endpoint."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(FileStreamEndpoint())
+
+
+def test_stream_post_sends_a_multipart_body() -> None:
+    """stream_post encodes files= as multipart, like post."""
+    with (
+        TestClient(FileStreamApp()) as client,
+        client.stream_post("/file-stream", files={"document": ("file-name", b"data")}) as chunks,
+    ):
+        assert list(chunks) == [b"data"]
