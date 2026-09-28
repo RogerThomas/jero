@@ -39,9 +39,14 @@ These pull against each other constantly; keep all three in mind on every change
 
 ## Working on jero
 
-- **Read `style-guide.md` before writing code** — project conventions beyond what
-  ruff/pyright enforce (dataclasses, no globals, member ordering, no nested
-  funcs/classes, etc.).
+### Style Guide
+
+Always follow the following style guide:
+
+@./style-guide.md
+
+### Other Rules and Practices
+
 - pyright **strict** and ruff must stay clean; tests must pass. `task pyright`,
   `task ruff`, `task test` — or run everything at once with `task check`.
 - **Pytest profiles:** the test tasks accept `PYTEST_PROFILE=agent|dev` to select a
@@ -63,6 +68,13 @@ These pull against each other constantly; keep all three in mind on every change
   ignore a rule for a single line, so don't always avoid this. Use pragmatically, but sparingly.
 - For framework-level / design changes, **discuss the design first** — don't just
   implement. Give options + a recommendation, then build once decided.
+- **Releases are release-please, driven by Conventional Commits.** PRs are squash-merged
+  with the PR title as the commit, so the title *is* the release input: `feat: ...`,
+  `fix: ...`, `docs: ...`, `chore: ...`, `!` for breaking (`pr-title.yml` enforces it; a
+  direct push to `main` needs the same form). Pre-1.0, `feat`/`fix` bump the patch and
+  breaking changes bump the minor. `on-release-main.yml` keeps a release PR open (version
+  in `pyproject.toml` + `uv.lock`, `CHANGELOG.md`); merging it tags, publishes to PyPI,
+  and deploys the docs. Never bump the version or cut a release by hand.
 - **Keep this file current.** After any relatively sizable change — a new feature,
   a changed convention, a dependency or supported-version bump, a repo-layout move —
   update `AGENTS.md` in the same change so it never drifts from how the project

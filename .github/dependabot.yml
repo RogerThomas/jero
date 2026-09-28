@@ -15,6 +15,9 @@ updates:
     labels:
       - "dependencies"
       - "python"
+    # Conventional Commit PR titles (checked by pr-title.yml; read by release-please).
+    commit-message:
+      prefix: "chore(deps)"
 
   # GitHub Actions used in workflows and the custom composite action
   - package-ecosystem: "github-actions"
@@ -31,3 +34,6 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
+    # Conventional Commit PR titles (checked by pr-title.yml; read by release-please).
+    commit-message:
+      prefix: "chore(deps)"

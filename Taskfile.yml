@@ -73,32 +73,6 @@ tasks:
       - task: clean-build
       - uv build
 
-  release:
-    # Publishing to PyPI is not done here: the GitHub release fires
-    # .github/workflows/on-release-main.yml, which re-checks the tag against the
-    # pyproject version, builds, uploads via PyPI Trusted Publishing (OIDC, no token),
-    # then deploys the docs to Pages.
-    desc: 'Bump the version (defaults to patch) and cut a GitHub release; PyPI publish + docs deploy follow in CI (on-release-main.yml). Usage: task release [-- major|minor|patch]'
-    cmds:
-      - |
-        set -eu
-        bump="{{.CLI_ARGS}}"
-        bump="${bump:-patch}"
-        case "$bump" in
-          major|minor|patch) ;;
-          *) echo "usage: task release -- major|minor|patch" >&2; exit 1 ;;
-        esac
-        if [ -n "$(git status --porcelain)" ]; then
-          echo "working tree is not clean — commit or stash changes before releasing" >&2
-          exit 1
-        fi
-        uv version --bump "$bump"
-        uv lock
-        version="$(uv version --short)"
-        git commit -am "release $version"
-        git push
-        gh release create "$version" --target main --title "$version" --generate-notes
-
   docs:
     desc: Build and serve the documentation
     cmd: uv run zensical serve

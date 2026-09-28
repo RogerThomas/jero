@@ -114,7 +114,11 @@ git commit -m "Your detailed description of your changes."
 git push origin name-of-your-bugfix-or-feature
 ```
 
-11. Submit a pull request through the GitHub website.
+11. Submit a pull request through the GitHub website. Give it a
+    [Conventional Commits](https://www.conventionalcommits.org/) title (`feat: ...`,
+    `fix: ...`, `docs: ...`; `feat!: ...` for a breaking change): PRs are squash-merged
+    with the title as the commit message, and releases and the changelog are generated
+    from those titles.
 
 # Pull Request Guidelines
 
