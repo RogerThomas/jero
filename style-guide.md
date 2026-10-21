@@ -376,7 +376,7 @@ The rule targets *data and configuration* globals (URLs, lookup tables, default 
 
 ```Python
 class Client:
-    _http_client: niquests.Session
+    _http_client: pyreqwest.client.SyncClient
     _base_url: str = "http://url/api"
 ```
 
@@ -387,7 +387,7 @@ _BASE_URL: str = "http://url/api"
 
 
 class Client:
-    _http_client: niquests.Session
+    _http_client: pyreqwest.client.SyncClient
 ```
 
 Class-based settings (or similar dependency-injected configuration) are preferred over module-level globals. This keeps related state colocated with the class that owns it, makes the dependency surface explicit, and avoids hidden coupling between modules.
