@@ -1,0 +1,73 @@
+name: HTTP benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: Seconds per measured attempt (1-60)
+        type: number
+        default: 10
+      runs:
+        description: Attempts per framework and workload (1-5)
+        type: number
+        default: 3
+      vus:
+        description: Concurrent virtual users (1-128)
+        type: number
+        default: 32
+
+permissions:
+  contents: read
+
+concurrency:
+  group: http-benchmarks-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.13.4'
+          python-version: '3.14'
+          enable-cache: true
+
+      - uses: grafana/setup-k6-action@v1
+        with:
+          k6-version: '2.3.0'
+
+      - name: Install benchmark dependencies and the checked-out jero
+        run: uv sync --frozen --no-dev --group benchmark
+
+      - name: Run benchmarks
+        env:
+          BENCHMARK_DURATION: ${{ inputs.duration }}
+          BENCHMARK_RUNS: ${{ inputs.runs }}
+          BENCHMARK_VUS: ${{ inputs.vus }}
+        run: |
+          uv run --no-sync yeet ./benchmarks/ci/run.py \
+            --duration "$BENCHMARK_DURATION" \
+            --runs "$BENCHMARK_RUNS" \
+            --vus "$BENCHMARK_VUS"
+
+      - name: Publish report in the workflow summary
+        if: always()
+        run: |
+          if [ -f benchmark-results/report.md ]; then
+            cat benchmark-results/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Benchmark setup failed; see the workflow logs.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Save report and raw results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmarks-${{ github.sha }}-${{ github.run_attempt }}
+          path: benchmark-results/
+          retention-days: 30
+          if-no-files-found: warn

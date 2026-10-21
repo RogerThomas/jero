@@ -13,8 +13,8 @@ class RawHeaders:
     reading values you act on (model those in a typed ``headers`` Struct). Lookups
     are case-insensitive (``raw["X-Trace-Id"] == raw["x-traceid"]``); iteration,
     ``items`` and ``repr`` keep the casing as sent. Registers as
-    ``Mapping[str, str]`` so it drops straight into ``niquests(headers=...)``; pass
-    :meth:`multi_items` instead when repeated headers must survive.
+    ``Mapping[str, str]`` so it drops straight into pyreqwest's ``request.headers(raw)``;
+    use ``request.headers(raw.multi_items())`` when repeated headers must survive.
     """
 
     _pairs: list[tuple[str, str]]  # decoded, original casing, in order

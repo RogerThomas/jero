@@ -34,10 +34,13 @@ app's exit stacks. The app owns a sync
 and closes everything in reverse order at shutdown, even if `wire` fails partway:
 
 ```python
+from pyreqwest.client import ClientBuilder
+
+
 class App(BaseApp):
     async def wire(self) -> None:
-        client = await self._aenter(niquests.AsyncSession())  # closed at shutdown
-        cache = self._enter(open_cache())                     # sync context manager
+        client = await self._aenter(ClientBuilder().build())  # closed at shutdown
+        cache = self._enter(open_cache())                    # sync context manager
         self._include_resource(WidgetResource(client, cache))
 ```
 
@@ -52,12 +55,16 @@ stacks. It's then `self._factory` inside `wire`:
 
 ```python
 # doc-example: fragment (illustrative snippet, not a runnable app)
+from pyreqwest.client import ClientBuilder
+
 from jero import BaseApp, BaseFactory
 
 
 class Factory(BaseFactory):
     async def create_widget_service(self) -> WidgetService:
-        client = await self._aenter(niquests.AsyncSession(base_url="https://api.example.com"))
+        client = await self._aenter(
+            ClientBuilder().base_url("https://api.example.com").build()
+        )
         return WidgetService(client)
 
 
@@ -80,23 +87,23 @@ the factory on them exactly as an app does at startup, and unwinds everything on
 exit — even if the block raises:
 
 ```python
+#!yeet
 # doc-example: fragment (illustrative snippet, not a runnable app)
-import asyncio
 from dataclasses import dataclass
 
-import niquests
+from pyreqwest.client import Client, ClientBuilder
 
 from jero import BaseFactory
 
 
 @dataclass
 class WidgetService:
-    _client: niquests.AsyncSession
+    _client: Client
 
 
 class Factory(BaseFactory):
     async def create_widget_service(self) -> WidgetService:
-        client = await self._aenter(niquests.AsyncSession())
+        client = await self._aenter(ClientBuilder().build())
         return WidgetService(client)
 
 
@@ -105,10 +112,10 @@ async def main() -> None:
         widget_service = await factory.create_widget_service()
         ...  # the nightly job, the notebook cell, the script body
     # everything opened via _enter / _aenter is closed here
-
-
-asyncio.run(main())
 ```
+
+Save the standalone script as `job.py`, run `chmod +x job.py`, and invoke it with
+`uv run yeet ./job.py`.
 
 Same factory, same `create_*` methods, same teardown guarantees — no app, routes, or
 server. (In sync *test* code, use `FactoryHarness` — the sync bridge over `open()` —

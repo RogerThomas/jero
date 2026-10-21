@@ -394,6 +394,10 @@ Always follow the following style guide:
   truth**: the worked example in the docs, the app the test suite runs against, and a
   typed consumer of the public API that every type checker validates. Keep it working
   and bounded (it demonstrates the shape; resist turning it into a feature dumping ground).
+  Its upstream HTTP client is pyreqwest: build the async `Client` with `ClientBuilder`,
+  open it with `_aenter`, send via `request.build().send()`, and decode the awaited
+  `response.bytes()` buffer with msgspec. The sync equivalents are `SyncClientBuilder`
+  and `SyncClient`, opened with `_enter`.
 - `tests/` — pytest suite driven through `TestClient` against `demo_app/` (plus small
   local apps for focused cases).
 - `plans/` — design plans for not-yet-built work, fully designed with decisions locked,
@@ -406,8 +410,15 @@ Always follow the following style guide:
   record. A fix isn't done until it has a regression test. **Never delete a bug note
   that already exists** — when its bug is fixed, flip its row to `Done` in the manifest
   and update the Open/Done counts rather than removing it.
-- The competitor/benchmark harness lives in a **separate repo**, not here. (The
-  framework's own example app, `demo_app/`, *is* in this repo — see above.)
+- `benchmarks/ci/` is the small GitHub Actions HTTP suite: jero vs FastAPI, initially
+  `GET /info` and ryjwt-authenticated `POST /movies`. Its manual `benchmarks.yml`
+  workflow runs both sequentially under granian on the same runner, publishes a
+  Markdown job summary, and uploads all attempts/logs as artifacts. Dependencies
+  are in the `benchmark` group (also included by `dev` so the apps stay checked).
+  Its CLI is a typed async yeetr entry point: `uv run yeet ./benchmarks/ci/run.py`.
+  The database and HTTP-upstream workloads are planned additions. See its README
+  for local runs. The full competitor/EC2 harness remains in a **separate repo**;
+  keep its results separate from the shared-runner CI numbers.
 
 ## Status & sharp edges
 
