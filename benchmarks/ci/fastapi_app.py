@@ -3,6 +3,8 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from os import getpid
+from time import monotonic, process_time
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
@@ -14,7 +16,7 @@ from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 from pyreqwest.client import Client
 
-from benchmarks.ci.backends import Settings
+from benchmarks.ci.backends import Settings, seed_database
 from benchmarks.ci.common import Claims, Workload
 
 
@@ -122,6 +124,19 @@ class Services:
         return profile
 
 
+class CPUCounter(BaseModel):
+    """Worker-wide CPU and monotonic clocks sampled outside measured requests."""
+
+    pid: int
+    cpu_seconds: float
+    wall_seconds: float
+
+
+async def get_cpu() -> CPUCounter:
+    """Include CPU time from every thread in the sole worker process."""
+    return CPUCounter(pid=getpid(), cpu_seconds=process_time(), wall_seconds=monotonic())
+
+
 @dataclass(eq=False)
 class JWTAuth:
     """An async dependency keeps authentication on the server's event loop."""
@@ -174,6 +189,7 @@ def create_app() -> FastAPI:
     async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         nonlocal services
         settings = Settings.from_environment()
+        await seed_database(settings)
         async with settings.client() as client, settings.pool(Profile) as pool:
             await pool.wait(timeout=15)
             services = Services(client, pool)
@@ -201,6 +217,7 @@ def create_app() -> FastAPI:
     application.post("/movies", status_code=201)(create_movie)
     application.get("/catalog")(get_catalog)
     application.get("/users/me")(get_profile)
+    application.get("/_benchmark/cpu")(get_cpu)
     return application
 
 

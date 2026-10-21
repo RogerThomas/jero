@@ -1,6 +1,8 @@
 """jero's idiomatic implementation of the four HTTP workloads."""
 
 from dataclasses import dataclass, field
+from os import getpid
+from time import monotonic, process_time
 from uuid import UUID, uuid4
 
 import msgspec
@@ -10,9 +12,10 @@ from psycopg import AsyncConnection
 from psycopg_pool import AsyncConnectionPool
 from pyreqwest.client import Client
 
-from benchmarks.ci.backends import Settings
+from benchmarks.ci.backends import Settings, seed_database
 from benchmarks.ci.common import (
     Claims,
+    CPUCounter,
     Info,
     Movie,
     MovieIn,
@@ -137,6 +140,7 @@ class App(BaseApp):
     async def wire(self) -> None:
         """Own both connection pools and mount the four workloads."""
         settings = Settings.from_environment()
+        await seed_database(settings)
         client = await self._aenter(settings.client())
         pool = await self._aenter(settings.pool(Profile))
         await pool.wait(timeout=15)
@@ -145,6 +149,15 @@ class App(BaseApp):
         self._include_resource(MoviesResource(), auth=auth)
         self._include_endpoint(CatalogEndpoint(client))
         self._include_endpoint(ProfileEndpoint(pool), auth=auth)
+        self._include_endpoint(CPUEndpoint())
+
+
+class CPUEndpoint(Endpoint, path="/_benchmark/cpu"):
+    """Measure the sole server worker without sampling during load."""
+
+    async def get(self) -> CPUCounter:
+        """Include CPU time from every thread in the worker process."""
+        return CPUCounter(pid=getpid(), cpu_seconds=process_time(), wall_seconds=monotonic())
 
 
 app = App()

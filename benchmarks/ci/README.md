@@ -1,88 +1,115 @@
 # HTTP benchmarks on GitHub Actions
 
-Run **HTTP benchmarks** from the repository's Actions tab. The workflow checks out
-the selected ref, installs that checkout of jero, and runs jero and FastAPI
-sequentially on the same `ubuntu-24.04` runner. Both use granian, asyncio, one worker,
-and the same server CPU. Every measured app and supporting service gets exactly
-one logical CPU: app, k6, PostgreSQL, and upstream each have a distinct CPU.
-k6 also uses `GOMAXPROCS=1`; PostgreSQL has a one-CPU Docker quota, and the runner
-reads back and verifies its CPU limits before seeding or measuring.
+Run **HTTP benchmarks** manually from Actions. Docker Bake builds the shared
+Python app image, the k6 runner, and the Rust upstream. Compose runs one framework
+at a time using `compose.yml` plus `compose.jero.yml` or `compose.fastapi.yml`.
+Both apps use Python 3.14.8, granian, uvloop, and one worker on the same single CPU.
+Reports appear in the job summary; all attempts and logs are retained for 30 days.
+No external results service is involved.
 
-The workloads come from the larger `jero-benchmarks` harness:
+## CPU allocation and interpreting results
 
-- `GET /info`: build a medium typed JSON response and a fresh UUID response header.
-- `POST /movies`: verify an HS256 bearer JWT with **ryjwt from PyPI**, validate a
-  five-field JSON body, and return a new UUID plus the authenticated user.
-- `GET /catalog`: fetch a nested product from a real, API-key-protected local HTTP
-  upstream using pyreqwest, decode/validate every field, then serialize the result.
-- `GET /users/me`: verify the JWT, acquire a PostgreSQL connection, execute a
-  parameterized query for its subject, and return the six-column typed profile.
+Every app has a one-CPU affinity and quota. The generator needs spare capacity to
+measure that app: a saturated k6 process can hide the faster framework's capacity.
+The default four-CPU runner layout is:
 
-Both apps decode the same JWT claims into a msgspec Struct with ryjwt. jero uses
-its native binding and serialization; FastAPI uses its normal Pydantic models,
-async auth dependency, and response validation. The signing key is fixed public
-benchmark data and is not a deployment credential.
+| Component | CPUs | Quota |
+| :--- | :--- | :--- |
+| App | 0 | 1 CPU |
+| k6 | 1,2 | 2 CPUs |
+| PostgreSQL | 3 | 1 CPU |
+| Rust upstream | 3 | 1 CPU |
 
-Both apps use pyreqwest with identical settings and a psycopg pool of eight
-autocommit connections. Clients and pools open at startup and close at shutdown. The database
-is seeded before either app starts; every measured profile request queries it.
-The upstream is a separate one-worker granian process, shared by both frameworks.
+The two supporting services share a CPU; each measured workload uses only one of
+them. App and generator CPUs do not overlap with supporting services. The runner
+uses actual available CPU IDs, verifies every container's affinity and quota
+before startup, and checks the benchmark container's actual affinity at runtime.
 
-Defaults: 32 concurrent users, 2 seconds of warmup per workload, and three measured
-10-second attempts per framework/workload. The report selects the attempt with
-median throughput and displays that attempt's mean and p99 latency. All attempts
-are saved. Before measuring, the runner verifies the complete successful response
-contracts, missing/invalid/expired JWT rejection, invalid-body rejection, upstream
-API-key rejection, and a 404 for a valid JWT whose subject has no database row. k6
-also checks responses under load; any failed request or check fails the run.
+The AWS suite's current layout is larger: app `0`, PostgreSQL `1,2`, upstream
+`3,4`, k6 `5,6`. It also runs on dedicated Graviton hardware rather than shared
+x86 virtual CPUs. This four-CPU suite is not an exact AWS reproduction. Its
+PostgreSQL driver is psycopg; the AWS suite currently uses a vendored fastpg wheel.
 
-The report records **k6 CPU**, the load generator's CPU usage (100% is its one
-allocated core, not the framework's utilization). This helps
-investigate whether the runner is limited by the generator. k6 is the initial tool
-because its per-response assertions verify both status and payload under load;
-alternatives such as oha can be evaluated if generator capacity limits the results.
+The report shows **App CPU** and **k6 CPU** separately. App CPU samples the sole
+worker's process CPU clock, including all its threads, before and after each
+attempt. k6 CPU comes from its child-process resource usage. These averages
+include process startup/shutdown; 100% means one CPU. k6's header states its total
+budget (normally 200%). Attempts using at least 90% of that budget are marked
+**generator saturated** and cannot establish full framework capacity on their own.
 
-The Markdown report appears directly in the workflow summary. Its artifact, kept
-for 30 days, contains `report.md`, `results.json` with configuration/versions/commit,
-every raw k6 summary (including warmups), and app/upstream/database/load-generator logs. Failed
-runs retain logs and a report marked incomplete.
+`--load-cpus 1` deliberately tests with one generator CPU instead; the default is
+two. For more than two, the Docker host needs additional CPUs so app and generator
+remain separate from supporting services. All allocations appear in the report.
 
-GitHub-hosted runners can differ between runs. Use the within-run comparison;
-these numbers do not replace the dedicated EC2 suite or its published figures.
+## Workloads and fairness
+
+- `GET /info`: construct medium typed JSON and a fresh UUID response header.
+- JWT `POST /movies`: verify HS256 with **ryjwt from PyPI**, validate five input
+  fields, and return a new UUID plus the authenticated user.
+- `GET /catalog`: fetch from a real API-key-protected Rust/axum upstream, decode
+  and validate its nested static JSON, then serialize the result.
+- JWT `GET /users/me`: acquire a PostgreSQL connection, execute a parameterized
+  query for the verified subject, and return a six-column typed profile.
+
+Both apps use equivalent pyreqwest settings and 64-connection psycopg pools.
+Resources open during startup and close at shutdown. A fresh database is seeded
+at app startup before measurement; every profile request performs a real query.
+jero uses msgspec models and native binding/serialization; FastAPI uses Pydantic,
+an async auth dependency, and normal response validation.
+
+Before load, the worker checks complete response contracts, upstream API-key
+rejection, missing/malformed/expired JWT rejection, invalid JSON input, and a valid
+JWT whose subject has no row. During load, k6 uses the AWS suite's lightweight
+checks: status/header for `/info`, and status/selected identity fields for the
+other workloads. Full JSON validation stays in preflight so extra generator work
+does not distort the comparison. Any failed request or assertion fails the run.
+
+Defaults are 32 VUs, two seconds of warmup per workload, and three 10-second
+attempts. The report selects the median-throughput attempt and that attempt's
+latency and CPU measurements. This differs from the AWS suite's best-of-three
+selection. All raw attempts remain available.
 
 ## Run locally
 
-Use Linux with at least four available logical CPUs, Docker, and
-[k6](https://grafana.com/docs/k6/latest/set-up/install-k6/). The runner deliberately
-rejects platforms where it cannot enforce one-CPU affinity. From the repository root:
+Docker must have at least four available CPUs. From the repository root:
 
 ```sh
 uv sync --group benchmark
-docker run -d --name jero-benchmark-db --cpus 1 -p 127.0.0.1:5432:5432 \
-  -e POSTGRES_USER=benchmark -e POSTGRES_PASSWORD=benchmark \
-  -e POSTGRES_DB=benchmark postgres:17
-uv run --no-sync yeet ./benchmarks/ci/run.py --database-container jero-benchmark-db
+docker buildx bake -f benchmarks/ci/docker-bake.hcl --load
+uv run --no-sync yeet ./benchmarks/ci/run.py
 
-# Short end-to-end smoke run, including auth/validation checks:
+# Short end-to-end validation of both complete stacks:
 uv run --no-sync yeet ./benchmarks/ci/run.py --duration 1 --runs 1 --vus 2 \
-  --warmup 1 --output /tmp/jero-benchmark-smoke --database-container jero-benchmark-db
+  --warmup 1 --output /tmp/jero-benchmark-smoke
 ```
 
-Use a fresh output directory for each run. Ports 8000 and 8001 must be free;
-PostgreSQL uses 5432. The runner assigns the first four CPUs from the host's allowed
-affinity set to app, k6, PostgreSQL, and upstream respectively. It updates the supplied
-PostgreSQL container's affinity and quota, so use a dedicated benchmark container.
-Set `BENCHMARK_DATABASE_DSN` if that container uses a different local database port.
-The workflow starts its own PostgreSQL service container and saves its logs; for
-local runs, collect them with `docker logs jero-benchmark-db`.
+The orchestrator creates a unique Compose project per framework, verifies CPU
+limits, runs `up --no-build --exit-code-from benchmark`, collects logs, then runs
+`down --volumes`. Apps, database, and upstream expose no host ports. Every run
+needs a fresh output directory; Compose stacks and their anonymous database
+volumes are removed even when the benchmark fails.
 
-## Run a PR branch
-
-Select the branch in the workflow's **Run workflow** menu, or use:
+To run a single overlay directly after Bake (default CPU IDs 0–3):
 
 ```sh
-gh workflow run benchmarks.yml --ref YOUR_BRANCH -f duration=1 -f runs=1 -f vus=2
+docker compose -f benchmarks/ci/compose.yml -f benchmarks/ci/compose.jero.yml \
+  up --no-build --exit-code-from benchmark
+docker compose -f benchmarks/ci/compose.yml -f benchmarks/ci/compose.jero.yml \
+  down --volumes
 ```
 
-The workflow remains manual. More frameworks can be added to these four workloads
-without changing the artifact/report flow or introducing an external results service.
+Replace `compose.jero.yml` with `compose.fastapi.yml` for FastAPI. Direct Compose
+runs write the framework's report under `benchmark-results/`; the yeetr
+orchestrator also creates the combined comparison and saves resolved image IDs.
+
+## Validate a PR branch
+
+Select the branch in **Run workflow**, or use:
+
+```sh
+gh workflow run benchmarks.yml --ref YOUR_BRANCH -f duration=3 -f runs=3 -f vus=100
+```
+
+Artifacts contain `report.md`, typed `results.json`, each framework's report,
+every k6 summary and warmup, and Compose logs for all services. Failed runs retain
+partial results and an incomplete report. The workflow remains manual.

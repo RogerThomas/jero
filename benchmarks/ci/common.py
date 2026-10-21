@@ -60,6 +60,14 @@ class Claims(Struct):
     exp: int
 
 
+class CPUCounter(Struct):
+    """Worker-wide CPU and monotonic clocks sampled outside measured requests."""
+
+    pid: int
+    cpu_seconds: float
+    wall_seconds: float
+
+
 class Vendor(Struct):
     """The nested vendor in the upstream product."""
 
@@ -118,14 +126,14 @@ class Workload:
     def product() -> Product:
         """The upstream's fixed, nested catalog response."""
         return Product(
-            id="product-1",
-            title="Mechanical keyboard",
+            id="prod-1",
+            title="Mechanical Keyboard",
             price=129.99,
             in_stock=True,
             tags=["electronics", "peripherals", "keyboard"],
-            rating=4.8,
-            description="A compact mechanical keyboard for the benchmark catalog.",
-            vendor=Vendor(id="vendor-1", name="Benchmark Vendor"),
+            rating=4.7,
+            description="A tactile mechanical keyboard with hot-swappable switches.",
+            vendor=Vendor(id="vendor-9", name="KeyCo"),
         )
 
     @staticmethod

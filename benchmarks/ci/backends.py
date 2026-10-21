@@ -47,8 +47,8 @@ class Settings:
         """Use the same fixed pool size and construct each framework's typed model."""
         return AsyncConnectionPool(
             self.database_dsn,
-            min_size=8,
-            max_size=8,
+            min_size=64,
+            max_size=64,
             kwargs={"row_factory": class_row(model), "autocommit": True},
             open=False,
         )

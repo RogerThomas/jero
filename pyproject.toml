@@ -43,6 +43,7 @@ benchmark = [
     "psycopg[binary,pool]>=3.3.0",
     "pyreqwest>=0.15.0",
     "ryjwt[msgspec]>=0.2.2",
+    "uvloop>=0.22.0",
     "yeetr>=2026.7.1.post1",
 ]
 dev = [
