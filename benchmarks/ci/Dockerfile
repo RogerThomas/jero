@@ -14,6 +14,11 @@ COPY jero ./jero
 COPY benchmarks/ci ./benchmarks/ci
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --group benchmark
+ARG JERO_VERSION=""
+RUN if [ -n "$JERO_VERSION" ]; then \
+      uv pip install --no-deps --reinstall "jero==$JERO_VERSION" \
+      && rm -rf /app/jero; \
+    fi
 ENTRYPOINT ["python", "-m", "granian", "--interface", "asgi", "--host", "0.0.0.0", "--workers", "1", "--loop", "uvloop", "--log-level", "warning"]
 
 FROM app AS runner

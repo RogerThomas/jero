@@ -1,4 +1,4 @@
-name: HTTP benchmarks
+name: HTTP benchmarks (release A/B diagnostic)
 
 on:
   workflow_dispatch:
@@ -55,7 +55,7 @@ jobs:
       - name: Install benchmark dependencies and the checked-out jero
         run: uv sync --frozen --no-dev --group benchmark
 
-      - name: Run benchmarks
+      - name: Run current checkout
         env:
           BENCHMARK_DURATION: ${{ inputs.duration }}
           BENCHMARK_RUNS: ${{ inputs.runs }}
@@ -64,16 +64,39 @@ jobs:
           uv run --no-sync yeet ./benchmarks/ci/run.py \
             --duration "$BENCHMARK_DURATION" \
             --runs "$BENCHMARK_RUNS" \
-            --vus "$BENCHMARK_VUS"
+            --vus "$BENCHMARK_VUS" --output benchmark-results/checkout
+
+      - name: Build published jero 0.1.1 with the same dependencies
+        uses: docker/bake-action@v7
+        with:
+          source: .
+          files: benchmarks/ci/docker-bake.hcl
+          targets: app,runner
+          load: true
+          set: |
+            app.args.JERO_VERSION=0.1.1
+            runner.args.JERO_VERSION=0.1.1
+
+      - name: Run published release on the same machine
+        env:
+          BENCHMARK_DURATION: ${{ inputs.duration }}
+          BENCHMARK_RUNS: ${{ inputs.runs }}
+          BENCHMARK_VUS: ${{ inputs.vus }}
+        run: |
+          uv run --no-sync yeet ./benchmarks/ci/run.py \
+            --duration "$BENCHMARK_DURATION" \
+            --runs "$BENCHMARK_RUNS" \
+            --vus "$BENCHMARK_VUS" --output benchmark-results/release-0.1.1
 
       - name: Publish report in the workflow summary
         if: always()
         run: |
-          if [ -f benchmark-results/report.md ]; then
-            cat benchmark-results/report.md >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo 'Benchmark setup failed; see the workflow logs.' >> "$GITHUB_STEP_SUMMARY"
-          fi
+          for profile in checkout release-0.1.1; do
+            echo "## $profile" >> "$GITHUB_STEP_SUMMARY"
+            if [ -f "benchmark-results/$profile/report.md" ]; then
+              cat "benchmark-results/$profile/report.md" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
 
       - name: Save report and raw results
         if: always()
