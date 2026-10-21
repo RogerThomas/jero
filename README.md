@@ -6,6 +6,7 @@
   <a href="https://pypi.org/project/jero/"><img src="https://img.shields.io/pypi/v/jero" alt="PyPI"></a>
   <a href="https://github.com/RogerThomas/jero/actions/workflows/main.yml?query=branch%3Amain"><img src="https://github.com/RogerThomas/jero/actions/workflows/main.yml/badge.svg?branch=main" alt="Build status"></a>
   <a href="https://codecov.io/gh/RogerThomas/jero"><img src="https://img.shields.io/codecov/c/github/RogerThomas/jero/main" alt="codecov"></a>
+  <a href="https://app.codspeed.io/RogerThomas/jero?utm_source=badge"><img src="https://img.shields.io/endpoint?url=https://codspeed.io/badge.json" alt="CodSpeed"/></a>
   <a href="https://pypi.org/project/jero/"><img src="https://img.shields.io/pypi/pyversions/jero" alt="Python versions"></a>
   <a href="https://github.com/RogerThomas/jero/blob/main/LICENSE"><img src="https://img.shields.io/pypi/l/jero" alt="License"></a>
 </p>
@@ -123,10 +124,10 @@ the factory type (`BaseApp[Factory]`), exposing it as `self._factory` in `wire`.
 ```python
 from dataclasses import dataclass
 
-import niquests
 from msgspec import Struct
 from msgspec.json import decode as json_decode
 from msgspec.json import encode as json_encode
+from pyreqwest.client import Client, ClientBuilder
 
 from jero import BaseApp, BaseFactory, HTTPError, Resource
 
@@ -155,17 +156,18 @@ class Widget(WidgetIn):
 class WidgetService:
     """Owns the upstream HTTP client; built once by the factory."""
 
-    _client: niquests.AsyncSession
+    _client: Client
 
     async def fetch(self, widget_id: str) -> Widget:
-        resp = await self._client.get(f"/widgets/{widget_id}")
-        if resp.status_code == 404:
+        resp = await self._client.get(f"/widgets/{widget_id}").build().send()
+        if resp.status == 404:
             raise WidgetNotFoundError()
-        return json_decode(resp.content, type=Widget)
+        return json_decode(await resp.bytes(), type=Widget)
 
     async def create(self, data: WidgetIn) -> Widget:
-        resp = await self._client.post("/widgets", data=json_encode(data))
-        return json_decode(resp.content, type=Widget)
+        request = self._client.post("/widgets").header("Content-Type", "application/json")
+        resp = await request.body_bytes(json_encode(data)).build().send()
+        return json_decode(await resp.bytes(), type=Widget)
 
 
 @dataclass
@@ -183,7 +185,9 @@ class WidgetResource(Resource, path="/widgets"):
 
 class Factory(BaseFactory):
     async def create_widget_service(self) -> WidgetService:
-        client = await self._aenter(niquests.AsyncSession(base_url="https://api.example.com"))
+        client = await self._aenter(
+            ClientBuilder().base_url("https://api.example.com").build()
+        )
         return WidgetService(client)
 
 
