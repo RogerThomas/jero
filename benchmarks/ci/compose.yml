@@ -1,8 +1,8 @@
 services:
   postgres:
     image: postgres:18-alpine
-    cpus: 1.0
-    cpuset: "${BENCHMARK_DATABASE_CPU:-3}"
+    cpus: "${BENCHMARK_BACKEND_CPU_COUNT:-1}"
+    cpuset: "${BENCHMARK_DATABASE_CPUS:-3}"
     command: ["postgres", "-c", "max_connections=200"]
     environment:
       POSTGRES_USER: benchmark
@@ -17,8 +17,8 @@ services:
   upstream:
     image: jero-benchmark-upstream:local
     pull_policy: never
-    cpus: 1.0
-    cpuset: "${BENCHMARK_UPSTREAM_CPU:-3}"
+    cpus: "${BENCHMARK_BACKEND_CPU_COUNT:-1}"
+    cpuset: "${BENCHMARK_UPSTREAM_CPUS:-3}"
     environment:
       UPSTREAM_API_KEY: benchmark-upstream-key
     ulimits:
@@ -46,8 +46,8 @@ services:
       BENCHMARK_RUN_URL: "${BENCHMARK_RUN_URL:-}"
       BENCHMARK_APP_CPU: "${BENCHMARK_APP_CPU:-0}"
       BENCHMARK_LOAD_CPUS: "${BENCHMARK_LOAD_CPUS:-1,2}"
-      BENCHMARK_DATABASE_CPU: "${BENCHMARK_DATABASE_CPU:-3}"
-      BENCHMARK_UPSTREAM_CPU: "${BENCHMARK_UPSTREAM_CPU:-3}"
+      BENCHMARK_DATABASE_CPUS: "${BENCHMARK_DATABASE_CPUS:-3}"
+      BENCHMARK_UPSTREAM_CPUS: "${BENCHMARK_UPSTREAM_CPUS:-3}"
     command:
       - --duration
       - "${BENCHMARK_DURATION:-10}"

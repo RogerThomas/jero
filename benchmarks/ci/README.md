@@ -7,6 +7,12 @@ Both apps use Python 3.14.8, granian, uvloop, and one worker on the same single 
 Reports appear in the job summary; all attempts and logs are retained for 30 days.
 No external results service is involved.
 
+The manual workflow offers `ubuntu-24.04` (x86) or `ubuntu-24.04-arm` (ARM), both
+standard four-CPU GitHub-hosted runners that are free for public repositories.
+The images build natively on the chosen architecture, with separate build caches.
+Changing architecture changes the benchmark environment; compare frameworks in
+the same run rather than treating results from different machines as equivalent.
+
 ## CPU allocation and interpreting results
 
 Every app has a one-CPU affinity and quota. The generator needs spare capacity to
@@ -40,6 +46,31 @@ budget (normally 200%). Attempts using at least 90% of that budget are marked
 `--load-cpus 1` deliberately tests with one generator CPU instead; the default is
 two. For more than two, the Docker host needs additional CPUs so app and generator
 remain separate from supporting services. All allocations appear in the report.
+`--backend-cpus N` assigns N CPUs to each supporting service (default one).
+Except for the single shared support CPU on a four-CPU host, backend allocations
+must be separate; insufficient capacity fails before any containers start.
+
+On a larger host, for example a 16-core runner:
+
+```sh
+uv run --no-sync yeet ./benchmarks/ci/run.py --load-cpus 4 --backend-cpus 2
+```
+
+The app keeps one CPU, k6 gets four, and each backend gets two. Other CPU IDs are
+left out of these container allocations. The workflow exposes both CPU counts as
+manual inputs; standard four-CPU runners need their default two/one settings.
+
+### CodSpeed eligibility
+
+[CodSpeed Macro Runners](https://codspeed.io/docs/features/macro-runners) offer
+dedicated 16-core Graviton hosts with 600 free minutes per month. They run GitHub
+Actions jobs, so logs and artifacts can stay in GitHub. However, their
+[GitHub Actions prerequisites](https://codspeed.io/docs/integrations/ci/github-actions/macro-runners)
+require an **organization-owned repository**, CodSpeed enabled on that repository,
+and their walltime action. Personal repositories cannot use these runners.
+`RogerThomas/jero` is currently a personal repository; selecting a CodSpeed label
+without changing that would leave the job without a usable runner. The workflow
+therefore offers the working GitHub-hosted options until eligibility is resolved.
 
 ## Workloads and fairness
 
@@ -108,6 +139,10 @@ Select the branch in **Run workflow**, or use:
 
 ```sh
 gh workflow run benchmarks.yml --ref YOUR_BRANCH -f duration=3 -f runs=3 -f vus=100
+
+# Native ARM on GitHub's free runner:
+gh workflow run benchmarks.yml --ref YOUR_BRANCH -f runner=ubuntu-24.04-arm \
+  -f load_cpus=2 -f backend_cpus=1 -f duration=3 -f runs=3 -f vus=100
 ```
 
 Artifacts contain `report.md`, typed `results.json`, each framework's report,

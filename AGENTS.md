@@ -417,7 +417,11 @@ Always follow the following style guide:
   images; `compose.yml` plus `compose.<framework>.yml` defines each stack. The app
   has one CPU, k6 defaults to two, and PostgreSQL/upstream each have one CPU
   (sharing the remaining CPU on four-CPU hosts). Affinity and quotas are verified
-  before startup. Its manual `benchmarks.yml`
+  before startup. `--load-cpus` and `--backend-cpus` permit larger allocations
+  on larger hosts while keeping the app on one CPU. Its manual `benchmarks.yml`
+  offers free GitHub-hosted x86/ARM runners and both CPU counts as inputs, with
+  architecture-specific build caches. CodSpeed requires an organization-owned
+  repository; this personal repo cannot use its macro runners yet. The
   workflow runs both sequentially under granian/uvloop on the same runner, publishes a
   Markdown job summary, and uploads all attempts/logs as artifacts. Dependencies
   are in the `benchmark` group (also included by `dev` so the apps stay checked).

@@ -57,8 +57,8 @@ async def _metadata(duration: int, runs: int, vus: int, warmup: int) -> Report:
         cpu=cpu,
         server_cpus=[int(os.environ["BENCHMARK_APP_CPU"])],
         load_cpus=load_cpus,
-        database_cpus=[int(os.environ["BENCHMARK_DATABASE_CPU"])],
-        upstream_cpus=[int(os.environ["BENCHMARK_UPSTREAM_CPU"])],
+        database_cpus=[int(cpu) for cpu in os.environ["BENCHMARK_DATABASE_CPUS"].split(",")],
+        upstream_cpus=[int(cpu) for cpu in os.environ["BENCHMARK_UPSTREAM_CPUS"].split(",")],
         versions={
             name: version(name)
             for name in (

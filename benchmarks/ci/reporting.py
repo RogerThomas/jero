@@ -94,8 +94,9 @@ def markdown(report: Report) -> str:
         ),
         "",
         (
-            "Each app, upstream, and PostgreSQL is capped at one logical CPU. "
-            f"k6 has {len(report.load_cpus)} CPU(s)."
+            f"Each app is capped at one logical CPU. k6 has {len(report.load_cpus)} CPU(s), "
+            f"upstream has {len(report.upstream_cpus)}, "
+            f"and PostgreSQL has {len(report.database_cpus)}."
         ),
         "",
         (
@@ -140,8 +141,8 @@ def markdown(report: Report) -> str:
         f"- OS: {report.platform}",
         f"- App CPUs: {report.server_cpus} (one-CPU quota)",
         f"- k6 CPUs: {report.load_cpus}",
-        f"- Upstream CPUs: {report.upstream_cpus} (one-CPU quota)",
-        f"- PostgreSQL CPUs: {report.database_cpus} (one-CPU quota)",
+        f"- Upstream CPUs: {report.upstream_cpus} ({len(report.upstream_cpus)}-CPU quota)",
+        f"- PostgreSQL CPUs: {report.database_cpus} ({len(report.database_cpus)}-CPU quota)",
         f"- PostgreSQL image: {report.database_image}",
         f"- k6: {report.k6}",
     ]

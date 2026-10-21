@@ -30,8 +30,8 @@ class Allocation(Struct):
 
     app: int
     load: list[int]
-    database: int
-    upstream: int
+    database: list[int]
+    upstream: list[int]
 
 
 class Limits(Struct, rename={"cpuset": "CpusetCpus", "nano_cpus": "NanoCpus"}):
@@ -61,7 +61,7 @@ async def _command(*command: str, environment: dict[str, str] | None = None) -> 
     return output.decode().strip()
 
 
-async def _allocation(count: int) -> Allocation:
+async def _allocation(count: int, backend_count: int) -> Allocation:
     if sys.platform == "linux":
         cpus = sorted(os.sched_getaffinity(0))
     else:
@@ -69,7 +69,15 @@ async def _allocation(count: int) -> Allocation:
     if len(cpus) < 4 or not 1 <= count <= len(cpus) - 2:
         raise ValueError("Need at least four CPUs, reserving one for the app and one for services")
     remaining = cpus[1 + count :]
-    return Allocation(cpus[0], cpus[1 : 1 + count], remaining[0], remaining[-1])
+    if backend_count < 1:
+        raise ValueError("backend_cpus must be positive")
+    if len(cpus) == 4 and len(remaining) == 1 and backend_count == 1:
+        return Allocation(cpus[0], cpus[1 : 1 + count], remaining, remaining)
+    if len(remaining) < 2 * backend_count:
+        raise ValueError("Not enough CPUs for separate database and upstream allocations")
+    return Allocation(
+        cpus[0], cpus[1 : 1 + count], remaining[:backend_count], remaining[-backend_count:]
+    )
 
 
 async def _verify(
@@ -81,8 +89,8 @@ async def _verify(
     for service, cpus in (
         ("app", [allocation.app]),
         ("benchmark", allocation.load),
-        ("postgres", [allocation.database]),
-        ("upstream", [allocation.upstream]),
+        ("postgres", allocation.database),
+        ("upstream", allocation.upstream),
     ):
         identifier = await _command(
             *compose, "ps", "--all", "--quiet", service, environment=environment
@@ -199,6 +207,7 @@ async def main(
     warmup: int = 2,
     output: Path = Path("benchmark-results"),
     load_cpus: int = 2,
+    backend_cpus: int = 1,
 ) -> None:
     """Run the Bake-built Compose stacks sequentially and retain logs on failure.
 
@@ -208,7 +217,8 @@ async def main(
         vus: Concurrent virtual users (1-128).
         warmup: Unmeasured seconds before each workload (1-10).
         output: A new directory for all artifacts.
-        load_cpus: Generator CPUs; apps and supporting services always have one each.
+        load_cpus: Generator CPUs; the app always has one CPU.
+        backend_cpus: CPUs per supporting service; larger allocations must not overlap.
     """
     for name, value, limit in (
         ("duration", duration, 60),
@@ -218,7 +228,7 @@ async def main(
     ):
         if not 1 <= value <= limit:
             raise ValueError(f"{name} must be from 1 through {limit}")
-    allocation = await _allocation(load_cpus)
+    allocation = await _allocation(load_cpus, backend_cpus)
     options = Options(duration, runs, vus, warmup, output.resolve(), load_cpus)
     options.output.mkdir(parents=True, exist_ok=False)
     environment = {
@@ -231,8 +241,9 @@ async def main(
         "BENCHMARK_APP_CPU": str(allocation.app),
         "BENCHMARK_LOAD_CPUS": ",".join(map(str, allocation.load)),
         "BENCHMARK_LOAD_CPU_COUNT": str(load_cpus),
-        "BENCHMARK_DATABASE_CPU": str(allocation.database),
-        "BENCHMARK_UPSTREAM_CPU": str(allocation.upstream),
+        "BENCHMARK_DATABASE_CPUS": ",".join(map(str, allocation.database)),
+        "BENCHMARK_UPSTREAM_CPUS": ",".join(map(str, allocation.upstream)),
+        "BENCHMARK_BACKEND_CPU_COUNT": str(backend_cpus),
         "BENCHMARK_COMMIT": await _command("git", "rev-parse", "HEAD"),
     }
     if "GITHUB_RUN_ID" in os.environ:
