@@ -1,6 +1,8 @@
 # HTTP benchmarks on GitHub Actions
 
-Run **HTTP benchmarks** manually from Actions. Docker Bake builds the shared
+Select `http` or `all` in the **Benchmarks** workflow's manual run. See the
+[suite overview](../README.md) for CodSpeed CPU regression checks and shared
+workloads. Docker Bake builds the shared
 Python app image, the k6 runner, and the Rust upstream. Compose runs one framework
 at a time using `compose.yml` plus `compose.jero.yml` or `compose.fastapi.yml`.
 Both apps use Python 3.14.8, granian, uvloop, and one worker on the same single CPU.
@@ -138,13 +140,14 @@ orchestrator also creates the combined comparison and saves resolved image IDs.
 Select the branch in **Run workflow**, or use:
 
 ```sh
-gh workflow run benchmarks.yml --ref YOUR_BRANCH -f duration=3 -f runs=3 -f vus=100
+gh workflow run codspeed.yml --ref YOUR_BRANCH -f suite=http \
+  -f duration=3 -f runs=3 -f vus=100
 
 # Native ARM on GitHub's free runner:
-gh workflow run benchmarks.yml --ref YOUR_BRANCH -f runner=ubuntu-24.04-arm \
+gh workflow run codspeed.yml --ref YOUR_BRANCH -f suite=http -f runner=ubuntu-24.04-arm \
   -f load_cpus=2 -f backend_cpus=1 -f duration=3 -f runs=3 -f vus=100
 ```
 
 Artifacts contain `report.md`, typed `results.json`, each framework's report,
 every k6 summary and warmup, and Compose logs for all services. Failed runs retain
-partial results and an incomplete report. The workflow remains manual.
+partial results and an incomplete report. The HTTP job remains manual.

@@ -1,4 +1,4 @@
-name: CodSpeed
+name: Benchmarks
 
 on:
   push:
@@ -7,19 +7,58 @@ on:
   pull_request:
   # Lets CodSpeed trigger backtest runs to build initial history.
   workflow_dispatch:
+    inputs:
+      suite:
+        description: Benchmark mode (HTTP options apply only to http or all)
+        type: choice
+        options:
+          - cpu
+          - http
+          - all
+        default: cpu
+      runner:
+        description: HTTP runner (both are free for public repositories)
+        type: choice
+        options:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+        default: ubuntu-24.04
+      load_cpus:
+        description: CPUs for k6 (must leave capacity for app and backends)
+        type: number
+        default: 2
+      backend_cpus:
+        description: CPUs per backend (1 on standard four-CPU runners)
+        type: number
+        default: 1
+      duration:
+        description: Seconds per measured HTTP attempt (1-60)
+        type: number
+        default: 10
+      runs:
+        description: Attempts per framework and HTTP workload (1-5)
+        type: number
+        default: 3
+      vus:
+        description: Concurrent HTTP virtual users (1-128)
+        type: number
+        default: 32
 
 permissions:
   contents: read
-  id-token: write # OpenID Connect authentication with CodSpeed
-
-concurrency:
-  group: codspeed-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   codspeed:
-    name: Run benchmarks
+    name: CPU (CodSpeed)
+    if: github.event_name != 'workflow_dispatch' || inputs.suite != 'http'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write # OpenID Connect authentication with CodSpeed
+    concurrency:
+      group: codspeed-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - name: Check out
         uses: actions/checkout@v7
@@ -34,3 +73,72 @@ jobs:
         with:
           mode: simulation
           run: uv run pytest benchmarks/codspeed --codspeed --timeout=0
+
+  http:
+    name: HTTP (k6)
+    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'http' || inputs.suite == 'all')
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    concurrency:
+      group: http-benchmarks-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.13.4'
+          python-version: '3.14'
+          enable-cache: true
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build shared app and load-generator images
+        uses: docker/bake-action@v7
+        with:
+          source: .
+          files: benchmarks/ci/docker-bake.hcl
+          load: true
+          set: |
+            app.cache-from=type=gha,scope=jero-benchmark-app-${{ runner.arch }}
+            app.cache-to=type=gha,mode=max,scope=jero-benchmark-app-${{ runner.arch }}
+            runner.cache-from=type=gha,scope=jero-benchmark-runner-${{ runner.arch }}
+            runner.cache-to=type=gha,mode=max,scope=jero-benchmark-runner-${{ runner.arch }}
+            upstream.cache-from=type=gha,scope=jero-benchmark-upstream-${{ runner.arch }}
+            upstream.cache-to=type=gha,mode=max,scope=jero-benchmark-upstream-${{ runner.arch }}
+
+      - name: Install benchmark dependencies and the checked-out jero
+        run: uv sync --frozen --no-dev --group benchmark
+
+      - name: Run HTTP benchmarks
+        env:
+          BENCHMARK_DURATION: ${{ inputs.duration }}
+          BENCHMARK_RUNS: ${{ inputs.runs }}
+          BENCHMARK_VUS: ${{ inputs.vus }}
+          BENCHMARK_LOAD_CPU_COUNT: ${{ inputs.load_cpus }}
+          BENCHMARK_BACKEND_CPU_COUNT: ${{ inputs.backend_cpus }}
+        run: |
+          uv run --no-sync yeet ./benchmarks/ci/run.py \
+            --duration "$BENCHMARK_DURATION" \
+            --runs "$BENCHMARK_RUNS" \
+            --vus "$BENCHMARK_VUS" \
+            --load-cpus "$BENCHMARK_LOAD_CPU_COUNT" \
+            --backend-cpus "$BENCHMARK_BACKEND_CPU_COUNT"
+
+      - name: Publish HTTP report in the workflow summary
+        if: always()
+        run: |
+          if [ -f benchmark-results/report.md ]; then
+            cat benchmark-results/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Benchmark setup failed; see the workflow logs.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Save HTTP report and raw results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmarks-${{ github.sha }}-${{ github.run_attempt }}
+          path: benchmark-results/
+          retention-days: 30
+          if-no-files-found: warn
