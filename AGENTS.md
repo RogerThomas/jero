@@ -422,7 +422,8 @@ Always follow the following style guide:
   Markdown job summary, and uploads all attempts/logs as artifacts. Dependencies
   are in the `benchmark` group (also included by `dev` so the apps stay checked).
   Its CLI is a typed async yeetr entry point:
-  `uv run yeet ./benchmarks/ci/run.py` (after `docker buildx bake --load`).
+  `uv run yeet ./benchmarks/ci/run.py`, after
+  `docker buildx bake -f benchmarks/ci/docker-bake.hcl --load`.
   Both apps own equivalent startup/shutdown-managed connection pools, and the
   harness seeds the database and checks auth, payloads, and missing users before
   measuring. k6 uses the AWS suite's lightweight checks during load. Reports show

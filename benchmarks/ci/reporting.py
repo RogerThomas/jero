@@ -127,7 +127,7 @@ def markdown(report: Report) -> str:
             "",
             (
                 "| Framework | req/s | Mean (ms) | p99 (ms) | App CPU (max 100%) | "
-                f"k6 CPU (max {100 * len(report.load_cpus)}%) | Note | Attempt |"
+                f"k6 CPU (max {100 * len(report.load_cpus)}%) | Note | Selected attempt |"
             ),
             "| :--- | ---: | ---: | ---: | ---: | ---: | :--- | ---: |",
             *_rows(report, workload),
