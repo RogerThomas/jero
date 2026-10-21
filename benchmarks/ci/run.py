@@ -21,10 +21,11 @@ from uuid import UUID
 import msgspec
 from msgspec import Struct
 
-from benchmarks.ci.common import Claims, Info, Movie, Nested, User, Workload
+from benchmarks.ci.backends import Settings, seed_database
+from benchmarks.ci.common import Claims, Info, Movie, Nested, Product, Profile, User, Workload
 
 type Framework = Literal["jero", "fastapi"]
-type WorkloadName = Literal["info", "movies"]
+type WorkloadName = Literal["info", "movies", "catalog", "profile"]
 
 
 class Options(Struct):
@@ -35,6 +36,7 @@ class Options(Struct):
     vus: int
     warmup: int
     output: Path
+    database_container: str
 
 
 class Metrics(Struct):
@@ -69,6 +71,8 @@ class Report(Struct):
     cpu: str
     server_cpus: list[int]
     load_cpus: list[int]
+    upstream_cpus: list[int]
+    database_cpus: list[int]
     versions: dict[str, str]
     k6: str
     duration_seconds: int
@@ -77,6 +81,14 @@ class Report(Struct):
     warmup_seconds: int
     attempts: list[Attempt] = msgspec.field(default_factory=list[Attempt])
     complete: bool = False
+    database_image: str = ""
+
+
+class ContainerLimits(Struct, rename={"cpuset_cpus": "CpusetCpus", "nano_cpus": "NanoCpus"}):
+    """The Docker CPU constraints read back after configuring PostgreSQL."""
+
+    cpuset_cpus: str
+    nano_cpus: int
 
 
 class Response(Struct):
@@ -95,8 +107,8 @@ def _command(name: str) -> str:
 
 
 def _affinity(cpus: list[int]) -> list[str]:
-    if not cpus:
-        return []
+    if len(cpus) != 1:
+        raise RuntimeError("Every benchmark process must be pinned to exactly one CPU")
     return [_command("taskset"), "--cpu-list", ",".join(map(str, cpus))]
 
 
@@ -111,13 +123,14 @@ async def _capture(*command: str) -> str:
 
 
 async def _metadata(options: Options) -> Report:
-    server_cpus: list[int] = []
-    load_cpus: list[int] = []
     if sys.platform == "linux":
         cpus = sorted(os.sched_getaffinity(0))
-        if len(cpus) < 2:
-            raise RuntimeError("The Linux benchmark needs at least two CPUs")
-        server_cpus, load_cpus = cpus[:1], cpus[1:]
+    else:
+        raise RuntimeError("Run benchmarks on Linux or GitHub Actions to enforce one-CPU affinity")
+    if len(cpus) < 4:
+        raise RuntimeError(
+            "The benchmark needs four CPUs: one each for app, k6, upstream, database"
+        )
     cpu = platform.processor() or platform.machine()
     cpuinfo = Path("/proc/cpuinfo")
     if cpuinfo.is_file():
@@ -142,11 +155,23 @@ async def _metadata(options: Options) -> Report:
         python=platform.python_version(),
         platform=platform.platform(),
         cpu=cpu,
-        server_cpus=server_cpus,
-        load_cpus=load_cpus,
+        server_cpus=cpus[:1],
+        load_cpus=cpus[1:2],
+        database_cpus=cpus[2:3],
+        upstream_cpus=cpus[3:4],
         versions={
             name: version(name)
-            for name in ("jero", "fastapi", "granian", "msgspec", "pydantic", "ryjwt")
+            for name in (
+                "jero",
+                "fastapi",
+                "granian",
+                "msgspec",
+                "pydantic",
+                "ryjwt",
+                "pyreqwest",
+                "psycopg",
+                "psycopg-pool",
+            )
         },
         k6=await _capture(_command("k6"), "version"),
         duration_seconds=options.duration,
@@ -157,9 +182,14 @@ async def _metadata(options: Options) -> Report:
 
 
 def _request(
-    method: str, path: str, body: bytes | None = None, token: str | None = None
+    method: str,
+    path: str,
+    body: bytes | None = None,
+    token: str | None = None,
+    *,
+    port: int = 8000,
 ) -> Response:
-    connection = HTTPConnection("127.0.0.1", 8000, timeout=1)
+    connection = HTTPConnection("127.0.0.1", port, timeout=1)
     headers = {"Content-Type": "application/json"}
     if token is not None:
         headers["Authorization"] = f"Bearer {token}"
@@ -210,14 +240,38 @@ def _smoke(token: str) -> None:
     invalid_body = body.replace(b"2026", b'"invalid"')
     if _request("POST", "/movies", invalid_body, token).status != 422:
         raise RuntimeError("POST /movies accepted an invalid body")
+    _smoke_backends(token, expired)
 
 
-async def _ready(process: asyncio.subprocess.Process) -> None:
+def _smoke_backends(token: str, expired: str) -> None:
+    response = _request("GET", "/catalog")
+    if (
+        response.status != 200
+        or msgspec.json.decode(response.body, type=Product) != Workload.product()
+    ):
+        raise RuntimeError("GET /catalog returned an unexpected upstream product")
+    response = _request("GET", "/users/me", token=token)
+    if (
+        response.status != 200
+        or msgspec.json.decode(response.body, type=Profile) != Workload.profile()
+    ):
+        raise RuntimeError("GET /users/me returned an unexpected database profile")
+    for invalid in (None, "invalid", expired, token + "invalid"):
+        if _request("GET", "/users/me", token=invalid).status != 401:
+            raise RuntimeError("GET /users/me accepted invalid credentials")
+    missing = Workload.signing_key().encode(Claims(sub="missing-user", name="name", exp=4102444800))
+    if _request("GET", "/users/me", token=missing).status != 404:
+        raise RuntimeError("GET /users/me did not look up the authenticated user")
+
+
+async def _ready(
+    process: asyncio.subprocess.Process, port: int = 8000, path: str = "/info"
+) -> None:
     for _ in range(300):
         if process.returncode is not None:
             raise RuntimeError("Server exited before becoming ready; see the server log")
         try:
-            if _request("GET", "/info").status == 200:
+            if _request("GET", path, port=port).status == 200:
                 return
         except OSError:
             pass
@@ -237,6 +291,17 @@ async def _stop(process: asyncio.subprocess.Process) -> None:
             await process.wait()
 
 
+async def _verify_affinity(process: asyncio.subprocess.Process, cpus: list[int]) -> None:
+    if sys.platform == "linux":
+        for _ in range(100):
+            if process.returncode is not None:
+                raise RuntimeError("Benchmark process exited before its CPU affinity was verified")
+            if os.sched_getaffinity(process.pid) == set(cpus):
+                return
+            await asyncio.sleep(0.01)
+    raise RuntimeError("Could not verify the benchmark process's one-CPU affinity")
+
+
 async def _load(
     options: Options, report: Report, workload: WorkloadName, name: str, token: str, duration: int
 ) -> Metrics:
@@ -248,7 +313,10 @@ async def _load(
         "VUS": str(options.vus),
         "TOKEN": token,
         "MOVIE": msgspec.json.encode(Workload.movie()).decode(),
+        "PRODUCT": msgspec.json.encode(Workload.product()).decode(),
+        "PROFILE": msgspec.json.encode(Workload.profile()).decode(),
         "RESULT_FILE": str(result_file),
+        "GOMAXPROCS": "1",
     }
     cpu_before = resource.getrusage(resource.RUSAGE_CHILDREN)
     started = perf_counter()
@@ -266,6 +334,7 @@ async def _load(
             start_new_session=True,
         )
         try:
+            await _verify_affinity(process, report.load_cpus)
             code = await asyncio.wait_for(process.wait(), timeout=duration + 30)
         finally:
             await _stop(process)
@@ -312,9 +381,10 @@ async def _framework(options: Options, report: Report, framework: Framework) -> 
         )
         try:
             await _ready(process)
+            await _verify_affinity(process, report.server_cpus)
             token = Workload.token()
             _smoke(token)
-            workloads: tuple[WorkloadName, ...] = ("info", "movies")
+            workloads: tuple[WorkloadName, ...] = ("info", "movies", "catalog", "profile")
             for workload in workloads:
                 await _load(
                     options,
@@ -333,6 +403,81 @@ async def _framework(options: Options, report: Report, framework: Framework) -> 
             await _stop(process)
 
 
+async def _database(options: Options, report: Report) -> None:
+    if not options.database_container:
+        raise ValueError("Pass --database-container with the local PostgreSQL container name or ID")
+    cpu = str(report.database_cpus[0])
+    await _capture(
+        _command("docker"),
+        "update",
+        "--cpuset-cpus",
+        cpu,
+        "--cpus",
+        "1",
+        options.database_container,
+    )
+    limits = msgspec.json.decode(
+        await _capture(
+            _command("docker"),
+            "inspect",
+            "--format",
+            "{{json .HostConfig}}",
+            options.database_container,
+        ),
+        type=ContainerLimits,
+    )
+    if limits.cpuset_cpus != cpu or limits.nano_cpus != 1_000_000_000:
+        raise RuntimeError("PostgreSQL must be pinned to exactly one CPU with a one-CPU quota")
+    report.database_image = await _capture(
+        _command("docker"),
+        "inspect",
+        "--format",
+        "{{.Image}}",
+        options.database_container,
+    )
+    await seed_database(Settings.from_environment())
+
+
+async def _workloads(options: Options, report: Report) -> None:
+    # Reserve the upstream port before starting it, as with the measured apps.
+    with socket.socket() as port:
+        port.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        port.bind(("127.0.0.1", 8001))
+    with (options.output / "upstream-server.log").open("wb") as log:
+        process = await asyncio.create_subprocess_exec(
+            *_affinity(report.upstream_cpus),
+            sys.executable,
+            "-m",
+            "granian",
+            "--interface",
+            "asgi",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8001",
+            "--workers",
+            "1",
+            "--loop",
+            "asyncio",
+            "--log-level",
+            "warning",
+            "benchmarks.ci.upstream_app:app",
+            stdout=log,
+            stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            await _ready(process, port=8001, path="/health")
+            await _verify_affinity(process, report.upstream_cpus)
+            for token in (None, "invalid"):
+                if _request("GET", "/data", token=token, port=8001).status != 401:
+                    raise RuntimeError("The upstream accepted an invalid API key")
+            for framework in ("jero", "fastapi"):
+                await _framework(options, report, framework)
+        finally:
+            await _stop(process)
+
+
 def _markdown(report: Report) -> str:
     lines = [
         "# jero HTTP benchmarks",
@@ -346,6 +491,8 @@ def _markdown(report: Report) -> str:
             f"{report.warmup_seconds}s warmup per workload · granian / asyncio / one worker."
         ),
         "",
+        "Each app, k6, the upstream, and PostgreSQL is pinned to one distinct logical CPU.",
+        "",
         (
             "Rows use the median-throughput attempt; latency comes from that same attempt. "
             "Every measured response must pass its status and payload checks."
@@ -357,11 +504,16 @@ def _markdown(report: Report) -> str:
         ),
         "",
     ]
-    for workload, label in (("info", "GET /info"), ("movies", "JWT POST /movies")):
+    for workload, label in (
+        ("info", "GET /info"),
+        ("movies", "JWT POST /movies"),
+        ("catalog", "GET /catalog (HTTP upstream)"),
+        ("profile", "JWT GET /users/me (PostgreSQL)"),
+    ):
         lines += [
             f"## {label}",
             "",
-            "| Framework | req/s | Mean (ms) | p99 (ms) | Load CPU | Attempt |",
+            "| Framework | req/s | Mean (ms) | p99 (ms) | k6 CPU (1 core) | Attempt |",
             "| :--- | ---: | ---: | ---: | ---: | ---: |",
         ]
         for framework in ("jero", "fastapi"):
@@ -387,8 +539,11 @@ def _markdown(report: Report) -> str:
         "",
         f"- CPU: {report.cpu}",
         f"- OS: {report.platform}",
-        f"- Server CPUs: {report.server_cpus or 'unrestricted (non-Linux local run)'}",
-        f"- Load CPUs: {report.load_cpus or 'unrestricted (non-Linux local run)'}",
+        f"- Server CPUs: {report.server_cpus}",
+        f"- Load CPUs: {report.load_cpus}",
+        f"- Upstream CPUs: {report.upstream_cpus}",
+        f"- PostgreSQL CPUs: {report.database_cpus} (also capped at one CPU)",
+        f"- PostgreSQL image: {report.database_image}",
         f"- k6: {report.k6}",
     ]
     lines += (f"- {name}: {value}" for name, value in report.versions.items())
@@ -397,8 +552,8 @@ def _markdown(report: Report) -> str:
     lines += [
         "",
         (
-            "Load CPU is the generator's average CPU usage (100% = one core). "
-            "Use it alongside the allocated load CPUs to investigate generator saturation."
+            "k6 CPU is the generator's average CPU usage (100% = its one allocated core). "
+            "Values near 100% can indicate generator-limited throughput."
         ),
         "",
         (
@@ -417,6 +572,7 @@ async def main(
     vus: int = 32,
     warmup: int = 2,
     output: Path = Path("benchmark-results"),
+    database_container: str = "",
 ) -> None:
     """Run both frameworks sequentially, preserving reports and logs even on failure.
 
@@ -426,6 +582,7 @@ async def main(
         vus: Concurrent virtual users (1-128).
         warmup: Unmeasured seconds before each workload (1-10).
         output: A new directory for the report, raw results, and logs.
+        database_container: Running PostgreSQL Docker container to pin and cap to one CPU.
     """
     for name, value, limit in (
         ("duration", duration, 60),
@@ -435,12 +592,21 @@ async def main(
     ):
         if not 1 <= value <= limit:
             raise ValueError(f"{name} must be from 1 through {limit}")
-    options = Options(duration=duration, runs=runs, vus=vus, warmup=warmup, output=output)
+    options = Options(
+        duration=duration,
+        runs=runs,
+        vus=vus,
+        warmup=warmup,
+        output=output,
+        database_container=database_container,
+    )
     options.output.mkdir(parents=True, exist_ok=False)
     report = await _metadata(options)
     try:
-        for framework in ("jero", "fastapi"):
-            await _framework(options, report, framework)
+        if sys.platform == "linux":
+            os.sched_setaffinity(0, report.server_cpus)
+        await _database(options, report)
+        await _workloads(options, report)
         report.complete = True
     finally:
         (options.output / "results.json").write_bytes(

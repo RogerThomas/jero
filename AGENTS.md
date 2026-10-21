@@ -410,14 +410,20 @@ Always follow the following style guide:
   record. A fix isn't done until it has a regression test. **Never delete a bug note
   that already exists** — when its bug is fixed, flip its row to `Done` in the manifest
   and update the Open/Done counts rather than removing it.
-- `benchmarks/ci/` is the small GitHub Actions HTTP suite: jero vs FastAPI, initially
-  `GET /info` and ryjwt-authenticated `POST /movies`. Its manual `benchmarks.yml`
+- `benchmarks/ci/` is the small GitHub Actions HTTP suite: jero vs FastAPI,
+  `GET /info`, ryjwt-authenticated `POST /movies`, `GET /catalog` against a local
+  pyreqwest HTTP upstream, and authenticated `GET /users/me` against PostgreSQL
+  through psycopg. Each app, k6, the upstream, and PostgreSQL is pinned to one
+  distinct logical CPU; Linux with four available CPUs is required. PostgreSQL
+  also has a one-CPU Docker quota. Its manual `benchmarks.yml`
   workflow runs both sequentially under granian on the same runner, publishes a
   Markdown job summary, and uploads all attempts/logs as artifacts. Dependencies
   are in the `benchmark` group (also included by `dev` so the apps stay checked).
-  Its CLI is a typed async yeetr entry point: `uv run yeet ./benchmarks/ci/run.py`.
-  The database and HTTP-upstream workloads are planned additions. See its README
-  for local runs. The full competitor/EC2 harness remains in a **separate repo**;
+  Its CLI is a typed async yeetr entry point:
+  `uv run yeet ./benchmarks/ci/run.py --database-container NAME`.
+  Both apps own equivalent startup/shutdown-managed connection pools, and the
+  harness seeds the database and checks auth, payloads, and missing users before
+  measuring. See its README for local runs. The full competitor/EC2 harness remains in a **separate repo**;
   keep its results separate from the shared-runner CI numbers.
 
 ## Status & sharp edges

@@ -40,6 +40,8 @@ benchmark = [
     "fastapi>=0.115",
     "granian>=2.8.3",
     "pydantic>=2.0",
+    "psycopg[binary,pool]>=3.3.0",
+    "pyreqwest>=0.15.0",
     "ryjwt[msgspec]>=0.2.2",
     "yeetr>=2026.7.1.post1",
 ]
@@ -50,7 +52,6 @@ dev = [
     "prek>=0.2.0",
     "pylint>=4.0.4",
     "pyright>=1.1.410",
-    "pyreqwest>=0.15.0",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.0.0",
     "pytest-cov>=7.0.0",

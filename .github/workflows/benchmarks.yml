@@ -27,6 +27,21 @@ jobs:
   benchmark:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: benchmark
+          POSTGRES_PASSWORD: benchmark
+          POSTGRES_DB: benchmark
+        ports:
+          - 5432:5432
+        options: >-
+          --cpus 1
+          --health-cmd "pg_isready -U benchmark -d benchmark"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7
 
@@ -48,11 +63,21 @@ jobs:
           BENCHMARK_DURATION: ${{ inputs.duration }}
           BENCHMARK_RUNS: ${{ inputs.runs }}
           BENCHMARK_VUS: ${{ inputs.vus }}
+          BENCHMARK_DATABASE_CONTAINER: ${{ job.services.postgres.id }}
         run: |
           uv run --no-sync yeet ./benchmarks/ci/run.py \
             --duration "$BENCHMARK_DURATION" \
             --runs "$BENCHMARK_RUNS" \
-            --vus "$BENCHMARK_VUS"
+            --vus "$BENCHMARK_VUS" \
+            --database-container "$BENCHMARK_DATABASE_CONTAINER"
+
+      - name: Save PostgreSQL logs
+        if: always()
+        env:
+          BENCHMARK_DATABASE_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          mkdir -p benchmark-results
+          docker logs "$BENCHMARK_DATABASE_CONTAINER" > benchmark-results/postgres.log 2>&1
 
       - name: Publish report in the workflow summary
         if: always()

@@ -14,6 +14,18 @@ export const options = {
 
 const baseURL = "http://127.0.0.1:8000";
 const movie = JSON.parse(__ENV.MOVIE);
+const product = JSON.parse(__ENV.PRODUCT);
+const profile = JSON.parse(__ENV.PROFILE);
+
+function sameJSON(actual, expected) {
+  if (expected !== null && typeof expected === "object") {
+    return actual !== null && typeof actual === "object"
+      && Array.isArray(actual) === Array.isArray(expected)
+      && Object.keys(actual).length === Object.keys(expected).length
+      && Object.keys(expected).every((key) => sameJSON(actual[key], expected[key]));
+  }
+  return actual === expected;
+}
 
 export default function () {
   if (__ENV.WORKLOAD === "info") {
@@ -23,7 +35,7 @@ export default function () {
       "has response id": (r) => Boolean(r.headers["X-Response-Id"]),
       "has expected payload": (r) => r.json("id") === "info-1" && r.json("nested.level") === 2,
     });
-  } else {
+  } else if (__ENV.WORKLOAD === "movies") {
     const response = http.post(`${baseURL}/movies`, __ENV.MOVIE, {
       headers: {
         "Content-Type": "application/json",
@@ -36,6 +48,17 @@ export default function () {
       "has authenticated user": (r) => r.json("user.id") === "user-1",
       "echoes input": (r) => Object.keys(movie).every((key) => r.json(key) === movie[key]),
     });
+  } else if (__ENV.WORKLOAD === "catalog" || __ENV.WORKLOAD === "profile") {
+    const isProfile = __ENV.WORKLOAD === "profile";
+    const response = http.get(`${baseURL}${isProfile ? "/users/me" : "/catalog"}`, {
+      headers: isProfile ? { Authorization: `Bearer ${__ENV.TOKEN}` } : {},
+    });
+    check(response, {
+      "status is 200": (r) => r.status === 200,
+      "has complete expected payload": (r) => sameJSON(r.json(), isProfile ? profile : product),
+    });
+  } else {
+    throw new Error(`Unknown workload: ${__ENV.WORKLOAD}`);
   }
 }
 
