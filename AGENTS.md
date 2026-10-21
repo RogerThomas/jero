@@ -435,6 +435,15 @@ Always follow the following style guide:
   generator-limited throughput as framework capacity. See its README for local
   runs. The full competitor/EC2 harness remains in a **separate repo**;
   keep its results separate from the shared-runner CI numbers.
+- `benchmarks/codspeed/` is the CodSpeed suite (pytest + `pytest-codspeed`, in the
+  `benchmark` group): in-process ASGI request benchmarks (one per hot-path shape, plus
+  the CI suite's two CPU workloads) and startup/wiring benchmarks, driven on a
+  benchmark-owned event loop by `harness.py`. `codspeed.yml` runs it in CPU simulation
+  on every push to `main` and every PR. Its `CIApp` reuses the HTTP suite's handlers
+  and authenticator without starting PostgreSQL or upstream connection pools.
+  Run locally with
+  `uv run pytest benchmarks/codspeed --codspeed --timeout=0` (or plain, without
+  `--codspeed`, as a quick smoke test).
 
 ## Status & sharp edges
 
