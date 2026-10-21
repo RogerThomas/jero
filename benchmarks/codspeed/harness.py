@@ -79,8 +79,8 @@ class _Lifespan:
     """Drive an app's ASGI lifespan protocol from the outside."""
 
     _app: BaseApp[Any]
-    _to_app: asyncio.Queue[dict[str, Any]] = field(default_factory=asyncio.Queue)
-    _from_app: asyncio.Queue[dict[str, Any]] = field(default_factory=asyncio.Queue)
+    _to_app: asyncio.Queue[dict[str, Any]] = field(default_factory=asyncio.Queue[dict[str, Any]])
+    _from_app: asyncio.Queue[dict[str, Any]] = field(default_factory=asyncio.Queue[dict[str, Any]])
     _task: asyncio.Task[None] | None = None
 
     async def _receive(self) -> dict[str, Any]:

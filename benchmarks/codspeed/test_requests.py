@@ -11,8 +11,7 @@ import pytest
 from pytest_codspeed import BenchmarkFixture
 
 from benchmarks.ci.common import Workload
-from benchmarks.ci.jero_app import App as CIApp
-from benchmarks.codspeed.app import BENCH_BEARER, BenchApp
+from benchmarks.codspeed.app import BENCH_BEARER, BenchApp, CIApp
 from benchmarks.codspeed.harness import Harness, Request
 
 BATCH = 50

@@ -9,8 +9,7 @@ from collections.abc import Generator
 import pytest
 from pytest_codspeed import BenchmarkFixture
 
-from benchmarks.ci.jero_app import App as CIApp
-from benchmarks.codspeed.app import BenchApp
+from benchmarks.codspeed.app import BenchApp, CIApp
 from benchmarks.codspeed.harness import start_and_stop
 
 
@@ -27,5 +26,5 @@ def test_startup_bench_app(benchmark: BenchmarkFixture, loop: asyncio.AbstractEv
 
 
 def test_startup_ci_app(benchmark: BenchmarkFixture, loop: asyncio.AbstractEventLoop) -> None:
-    """Wire the CI HTTP suite's app (no OpenAPI)."""
+    """Wire the HTTP suite's two CPU workloads without its I/O services or OpenAPI."""
     benchmark(lambda: loop.run_until_complete(start_and_stop(CIApp())))

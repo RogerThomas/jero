@@ -1,108 +1,59 @@
 #!yeet
-"""Run the HTTP benchmarks and write a portable Markdown report plus raw results."""
+"""Run one Compose overlay per framework, verify CPU limits, and combine reports."""
 
 import asyncio
 import os
-import platform
-import resource
-import shutil
 import signal
-import socket
 import sys
 from contextlib import suppress
-from datetime import UTC, datetime
-from http.client import HTTPConnection
-from importlib.metadata import version
 from pathlib import Path
-from time import perf_counter
-from typing import Literal
-from uuid import UUID
 
 import msgspec
 from msgspec import Struct
 
-from benchmarks.ci.common import Claims, Info, Movie, Nested, User, Workload
-
-type Framework = Literal["jero", "fastapi"]
-type WorkloadName = Literal["info", "movies"]
+from benchmarks.ci.reporting import Framework, Report, write
 
 
 class Options(Struct):
-    """The validated run configuration passed to the benchmark harness."""
+    """Validated controls shared with each benchmark container."""
 
     duration: int
     runs: int
     vus: int
     warmup: int
     output: Path
+    load_cpus: int
 
 
-class Metrics(Struct):
-    """The normalized fields emitted alongside the complete raw k6 summary."""
+class Allocation(Struct):
+    """Keep the app and generator separate from supporting-service CPUs."""
 
-    requests_per_second: float
-    requests: int
-    mean_ms: float
-    p99_ms: float
-    failed_rate: float
-    checks_rate: float
-    generator_cpu_percent: float = 0.0
+    app: int
+    load: list[int]
+    database: list[int]
+    upstream: list[int]
 
 
-class Attempt(Struct):
-    """One measured framework/workload attempt, excluding warmups."""
+class Limits(Struct, rename={"cpuset": "CpusetCpus", "nano_cpus": "NanoCpus"}):
+    """Docker's actual CPU configuration, inspected before startup."""
 
-    framework: Framework
-    workload: WorkloadName
-    attempt: int
-    metrics: Metrics
+    cpuset: str
+    nano_cpus: int
 
 
-class Report(Struct):
-    """The reproducibility metadata and every completed measured attempt."""
+class Container(Struct, rename={"limits": "HostConfig", "image": "Image"}):
+    """Only the relevant fields from docker inspect."""
 
-    created_at: str
-    commit: str
-    run_url: str | None
-    python: str
-    platform: str
-    cpu: str
-    server_cpus: list[int]
-    load_cpus: list[int]
-    versions: dict[str, str]
-    k6: str
-    duration_seconds: int
-    vus: int
-    runs: int
-    warmup_seconds: int
-    attempts: list[Attempt] = msgspec.field(default_factory=list[Attempt])
-    complete: bool = False
+    limits: Limits
+    image: str
 
 
-class Response(Struct):
-    """One local HTTP response used by the correctness checks."""
-
-    status: int
-    headers: dict[str, str]
-    body: bytes
-
-
-def _command(name: str) -> str:
-    command = shutil.which(name)
-    if command is None:
-        raise RuntimeError(f"Install {name} before running the benchmarks")
-    return command
-
-
-def _affinity(cpus: list[int]) -> list[str]:
-    if not cpus:
-        return []
-    return [_command("taskset"), "--cpu-list", ",".join(map(str, cpus))]
-
-
-async def _capture(*command: str) -> str:
+async def _command(*command: str, environment: dict[str, str] | None = None) -> str:
     process = await asyncio.create_subprocess_exec(
-        *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+        *command,
+        env=environment,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
     )
     output, _ = await process.communicate()
     if process.returncode != 0:
@@ -110,304 +61,142 @@ async def _capture(*command: str) -> str:
     return output.decode().strip()
 
 
-async def _metadata(options: Options) -> Report:
-    server_cpus: list[int] = []
-    load_cpus: list[int] = []
+async def _allocation(count: int, backend_count: int) -> Allocation:
     if sys.platform == "linux":
         cpus = sorted(os.sched_getaffinity(0))
-        if len(cpus) < 2:
-            raise RuntimeError("The Linux benchmark needs at least two CPUs")
-        server_cpus, load_cpus = cpus[:1], cpus[1:]
-    cpu = platform.processor() or platform.machine()
-    cpuinfo = Path("/proc/cpuinfo")
-    if cpuinfo.is_file():
-        cpu = next(
-            (
-                line.partition(":")[2].strip()
-                for line in cpuinfo.read_text(encoding="utf-8").splitlines()
-                if line.startswith("model name")
-            ),
-            cpu,
-        )
-    run_url: str | None = None
-    if "GITHUB_RUN_ID" in os.environ:
-        run_url = (
-            f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}"
-            f"/actions/runs/{os.environ['GITHUB_RUN_ID']}"
-        )
-    return Report(
-        created_at=datetime.now(UTC).isoformat(),
-        commit=await _capture(_command("git"), "rev-parse", "HEAD"),
-        run_url=run_url,
-        python=platform.python_version(),
-        platform=platform.platform(),
-        cpu=cpu,
-        server_cpus=server_cpus,
-        load_cpus=load_cpus,
-        versions={
-            name: version(name)
-            for name in ("jero", "fastapi", "granian", "msgspec", "pydantic", "ryjwt")
-        },
-        k6=await _capture(_command("k6"), "version"),
-        duration_seconds=options.duration,
-        vus=options.vus,
-        runs=options.runs,
-        warmup_seconds=options.warmup,
+    else:
+        cpus = list(range(int(await _command("docker", "info", "--format", "{{.NCPU}}"))))
+    if len(cpus) < 4 or not 1 <= count <= len(cpus) - 2:
+        raise ValueError("Need at least four CPUs, reserving one for the app and one for services")
+    remaining = cpus[1 + count :]
+    if backend_count < 1:
+        raise ValueError("backend_cpus must be positive")
+    if len(cpus) == 4 and len(remaining) == 1 and backend_count == 1:
+        return Allocation(cpus[0], cpus[1 : 1 + count], remaining, remaining)
+    if len(remaining) < 2 * backend_count:
+        raise ValueError("Not enough CPUs for separate database and upstream allocations")
+    return Allocation(
+        cpus[0], cpus[1 : 1 + count], remaining[:backend_count], remaining[-backend_count:]
     )
 
 
-def _request(
-    method: str, path: str, body: bytes | None = None, token: str | None = None
-) -> Response:
-    connection = HTTPConnection("127.0.0.1", 8000, timeout=1)
-    headers = {"Content-Type": "application/json"}
-    if token is not None:
-        headers["Authorization"] = f"Bearer {token}"
-    try:
-        connection.request(method, path, body=body, headers=headers)
-        response = connection.getresponse()
-        return Response(response.status, dict(response.headers.items()), response.read())
-    finally:
-        connection.close()
-
-
-def _smoke(token: str) -> None:
-    response = _request("GET", "/info")
-    if response.status != 200:
-        raise RuntimeError(f"GET /info returned {response.status}")
-    UUID(response.headers["x-response-id"])
-    expected = Info(
-        id="info-1",
-        name="Benchmark Info",
-        count=42,
-        ratio=3.14159,
-        active=True,
-        tags=["alpha", "beta", "gamma"],
-        created_at="2026-01-01T00:00:00Z",
-        nested=Nested(level=2, label="nested"),
-    )
-    if msgspec.json.decode(response.body, type=Info) != expected:
-        raise RuntimeError("GET /info returned an unexpected payload")
-    body = msgspec.json.encode(Workload.movie())
-    response = _request("POST", "/movies", body, token)
-    if response.status != 201:
-        raise RuntimeError(f"POST /movies returned {response.status}")
-    movie = msgspec.json.decode(response.body, type=Movie)
-    if movie != Movie(
-        id=movie.id,
-        user=User(id="user-1", name="name"),
-        title="title",
-        year=2026,
-        director="director",
-        genre="genre",
-        rating=8.0,
+async def _verify(
+    compose: list[str],
+    environment: dict[str, str],
+    allocation: Allocation,
+) -> dict[str, str]:
+    images: dict[str, str] = {}
+    for service, cpus in (
+        ("app", [allocation.app]),
+        ("benchmark", allocation.load),
+        ("postgres", allocation.database),
+        ("upstream", allocation.upstream),
     ):
-        raise RuntimeError("POST /movies returned an unexpected payload")
-    expired = Workload.signing_key().encode(Claims(sub="user-1", name="name", exp=1))
-    for invalid in (None, "invalid", expired, token + "invalid"):
-        if _request("POST", "/movies", body, invalid).status != 401:
-            raise RuntimeError("POST /movies accepted invalid credentials")
-    invalid_body = body.replace(b"2026", b'"invalid"')
-    if _request("POST", "/movies", invalid_body, token).status != 422:
-        raise RuntimeError("POST /movies accepted an invalid body")
+        identifier = await _command(
+            *compose, "ps", "--all", "--quiet", service, environment=environment
+        )
+        container = msgspec.json.decode(
+            await _command("docker", "inspect", "--format", "{{json .}}", identifier),
+            type=Container,
+        )
+        if (
+            container.limits.cpuset != ",".join(map(str, cpus))
+            or container.limits.nano_cpus != len(cpus) * 1_000_000_000
+        ):
+            raise RuntimeError(f"{service} does not have its required CPU affinity and quota")
+        images[service] = container.image
+    return images
 
 
-async def _ready(process: asyncio.subprocess.Process) -> None:
-    for _ in range(300):
-        if process.returncode is not None:
-            raise RuntimeError("Server exited before becoming ready; see the server log")
-        try:
-            if _request("GET", "/info").status == 200:
-                return
-        except OSError:
-            pass
-        await asyncio.sleep(0.1)
-    raise TimeoutError("Server did not become ready in 30 seconds")
-
-
-async def _stop(process: asyncio.subprocess.Process) -> None:
-    if process.returncode is None:
-        with suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGTERM)
-        try:
-            await asyncio.wait_for(process.wait(), timeout=5)
-        except TimeoutError:
-            with suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-            await process.wait()
-
-
-async def _load(
-    options: Options, report: Report, workload: WorkloadName, name: str, token: str, duration: int
-) -> Metrics:
-    result_file = options.output.resolve() / f"{name}.json"
-    environment = {
-        **os.environ,
-        "WORKLOAD": workload,
-        "DURATION": str(duration),
-        "VUS": str(options.vus),
-        "TOKEN": token,
-        "MOVIE": msgspec.json.encode(Workload.movie()).decode(),
-        "RESULT_FILE": str(result_file),
-    }
-    cpu_before = resource.getrusage(resource.RUSAGE_CHILDREN)
-    started = perf_counter()
-    with (options.output / f"{name}.log").open("wb") as log:
+async def _up(compose: list[str], environment: dict[str, str], log: Path, timeout: int) -> None:
+    with log.open("wb") as stream:
         process = await asyncio.create_subprocess_exec(
-            *_affinity(report.load_cpus),
-            _command("k6"),
-            "run",
-            "--quiet",
-            "--no-usage-report",
-            str(Path(__file__).with_name("load.js")),
+            *compose,
+            "up",
+            "--no-build",
+            "--exit-code-from",
+            "benchmark",
             env=environment,
-            stdout=log,
+            stdout=stream,
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
         )
         try:
-            code = await asyncio.wait_for(process.wait(), timeout=duration + 30)
+            code = await asyncio.wait_for(process.wait(), timeout=timeout)
         finally:
-            await _stop(process)
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=10)
+                except TimeoutError:
+                    with suppress(ProcessLookupError):
+                        os.killpg(process.pid, signal.SIGKILL)
+                    await process.wait()
     if code != 0:
-        raise RuntimeError(f"k6 failed for {name}; see {name}.log and {name}.json")
-    metrics = msgspec.json.decode(result_file.read_bytes(), type=Metrics)
-    if metrics.requests < 1 or metrics.failed_rate != 0 or metrics.checks_rate != 1:
-        raise RuntimeError(f"{name} returned failed requests or response checks")
-    cpu_after = resource.getrusage(resource.RUSAGE_CHILDREN)
-    cpu_seconds = (cpu_after.ru_utime + cpu_after.ru_stime) - (
-        cpu_before.ru_utime + cpu_before.ru_stime
-    )
-    metrics.generator_cpu_percent = 100 * cpu_seconds / (perf_counter() - started)
-    return metrics
+        raise RuntimeError(f"Compose benchmark failed; see {log}")
 
 
-async def _framework(options: Options, report: Report, framework: Framework) -> None:
-    # Fail before starting a process rather than accidentally benchmarking an existing app.
-    with socket.socket() as port:
-        port.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        port.bind(("127.0.0.1", 8000))
-    with (options.output / f"{framework}-server.log").open("wb") as log:
-        process = await asyncio.create_subprocess_exec(
-            *_affinity(report.server_cpus),
-            sys.executable,
-            "-m",
-            "granian",
-            "--interface",
-            "asgi",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            "8000",
-            "--workers",
-            "1",
-            "--loop",
-            "asyncio",
-            "--log-level",
-            "warning",
-            f"benchmarks.ci.{framework}_app:app",
-            stdout=log,
-            stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,
+async def _framework(
+    framework: Framework,
+    options: Options,
+    environment: dict[str, str],
+    allocation: Allocation,
+) -> dict[str, str]:
+    directory = Path(__file__).resolve().parent
+    compose = [
+        "docker",
+        "compose",
+        "--project-name",
+        f"jero-bench-{os.getpid()}-{framework}",
+        "-f",
+        str(directory / "compose.yml"),
+        "-f",
+        str(directory / f"compose.{framework}.yml"),
+    ]
+    try:
+        await _command(*compose, "create", environment=environment)
+        images = await _verify(compose, environment, allocation)
+        await _up(
+            compose,
+            environment,
+            options.output / f"{framework}-compose.log",
+            timeout=4 * (options.warmup + options.runs * options.duration) + 180,
         )
+        return images
+    finally:
         try:
-            await _ready(process)
-            token = Workload.token()
-            _smoke(token)
-            workloads: tuple[WorkloadName, ...] = ("info", "movies")
-            for workload in workloads:
-                await _load(
-                    options,
-                    report,
-                    workload,
-                    f"{framework}-{workload}-warmup",
-                    token,
-                    options.warmup,
-                )
-                for attempt in range(1, options.runs + 1):
-                    name = f"{framework}-{workload}-{attempt}"
-                    metrics = await _load(options, report, workload, name, token, options.duration)
-                    report.attempts.append(Attempt(framework, workload, attempt, metrics))
-                    print(f"{name}: {metrics.requests_per_second:,.0f} req/s", flush=True)
+            logs = await _command(*compose, "logs", "--no-color", environment=environment)
+            (options.output / f"{framework}-services.log").write_text(logs, encoding="utf-8")
         finally:
-            await _stop(process)
-
-
-def _markdown(report: Report) -> str:
-    lines = [
-        "# jero HTTP benchmarks",
-        "",
-        "Status: **complete**" if report.complete else "Status: **incomplete; see the run logs**",
-        "",
-        f"Commit: `{report.commit}` · Python {report.python} · {report.created_at}",
-        "",
-        (
-            f"{report.vus} VUs · {report.duration_seconds}s per attempt · {report.runs} attempts · "
-            f"{report.warmup_seconds}s warmup per workload · granian / asyncio / one worker."
-        ),
-        "",
-        (
-            "Rows use the median-throughput attempt; latency comes from that same attempt. "
-            "Every measured response must pass its status and payload checks."
-        ),
-        "",
-        (
-            "GitHub-hosted runners vary between runs. Compare frameworks within this run; "
-            "these figures are not directly comparable to the dedicated EC2 benchmarks."
-        ),
-        "",
-    ]
-    for workload, label in (("info", "GET /info"), ("movies", "JWT POST /movies")):
-        lines += [
-            f"## {label}",
-            "",
-            "| Framework | req/s | Mean (ms) | p99 (ms) | Load CPU | Attempt |",
-            "| :--- | ---: | ---: | ---: | ---: | ---: |",
-        ]
-        for framework in ("jero", "fastapi"):
-            attempts = sorted(
-                (
-                    item
-                    for item in report.attempts
-                    if item.framework == framework and item.workload == workload
-                ),
-                key=lambda item: item.metrics.requests_per_second,
+            await _command(
+                *compose, "down", "--volumes", "--remove-orphans", environment=environment
             )
-            if attempts:
-                selected = attempts[len(attempts) // 2]
-                metric = selected.metrics
-                lines.append(
-                    f"| {framework} | {metric.requests_per_second:,.0f} | "
-                    f"{metric.mean_ms:.3f} | {metric.p99_ms:.3f} | "
-                    f"{metric.generator_cpu_percent:.0f}% | {selected.attempt} |"
-                )
-        lines.append("")
-    lines += [
-        "## Environment",
-        "",
-        f"- CPU: {report.cpu}",
-        f"- OS: {report.platform}",
-        f"- Server CPUs: {report.server_cpus or 'unrestricted (non-Linux local run)'}",
-        f"- Load CPUs: {report.load_cpus or 'unrestricted (non-Linux local run)'}",
-        f"- k6: {report.k6}",
-    ]
-    lines += (f"- {name}: {value}" for name, value in report.versions.items())
-    if report.run_url is not None:
-        lines.append(f"- [Workflow run]({report.run_url})")
-    lines += [
-        "",
-        (
-            "Load CPU is the generator's average CPU usage (100% = one core). "
-            "Use it alongside the allocated load CPUs to investigate generator saturation."
-        ),
-        "",
-        (
-            "The artifact includes `results.json`, every k6 summary, warmup results, "
-            "and server/load-generator logs."
-        ),
-        "",
-    ]
-    return "\n".join(lines)
+
+
+def _combine(output: Path, images: dict[str, str], *, complete: bool) -> None:
+    combined: Report | None = None
+    reports = 0
+    for framework in ("jero", "fastapi"):
+        result = output / framework / "results.json"
+        if result.is_file():
+            report = msgspec.json.decode(result.read_bytes(), type=Report)
+            reports += 1
+            if combined is None:
+                combined = report
+            else:
+                combined.attempts.extend(report.attempts)
+                combined.complete = combined.complete and report.complete
+    if combined is None:
+        (output / "report.md").write_text(
+            "# jero HTTP benchmarks\n\nStatus: **incomplete; see Compose logs**\n",
+            encoding="utf-8",
+        )
+    else:
+        combined.complete = combined.complete and reports == 2 and complete
+        combined.images = images
+        combined.database_image = images.get("postgres", "")
+        write(combined, output)
 
 
 async def main(
@@ -417,15 +206,19 @@ async def main(
     vus: int = 32,
     warmup: int = 2,
     output: Path = Path("benchmark-results"),
+    load_cpus: int = 2,
+    backend_cpus: int = 1,
 ) -> None:
-    """Run both frameworks sequentially, preserving reports and logs even on failure.
+    """Run the Bake-built Compose stacks sequentially and retain logs on failure.
 
     Args:
         duration: Seconds per measured attempt (1-60).
         runs: Attempts per framework and workload (1-5).
         vus: Concurrent virtual users (1-128).
         warmup: Unmeasured seconds before each workload (1-10).
-        output: A new directory for the report, raw results, and logs.
+        output: A new directory for all artifacts.
+        load_cpus: Generator CPUs; the app always has one CPU.
+        backend_cpus: CPUs per supporting service; larger allocations must not overlap.
     """
     for name, value, limit in (
         ("duration", duration, 60),
@@ -435,15 +228,37 @@ async def main(
     ):
         if not 1 <= value <= limit:
             raise ValueError(f"{name} must be from 1 through {limit}")
-    options = Options(duration=duration, runs=runs, vus=vus, warmup=warmup, output=output)
+    allocation = await _allocation(load_cpus, backend_cpus)
+    options = Options(duration, runs, vus, warmup, output.resolve(), load_cpus)
     options.output.mkdir(parents=True, exist_ok=False)
-    report = await _metadata(options)
+    environment = {
+        **os.environ,
+        "BENCHMARK_DURATION": str(duration),
+        "BENCHMARK_RUNS": str(runs),
+        "BENCHMARK_VUS": str(vus),
+        "BENCHMARK_WARMUP": str(warmup),
+        "BENCHMARK_OUTPUT": str(options.output),
+        "BENCHMARK_APP_CPU": str(allocation.app),
+        "BENCHMARK_LOAD_CPUS": ",".join(map(str, allocation.load)),
+        "BENCHMARK_LOAD_CPU_COUNT": str(load_cpus),
+        "BENCHMARK_DATABASE_CPUS": ",".join(map(str, allocation.database)),
+        "BENCHMARK_UPSTREAM_CPUS": ",".join(map(str, allocation.upstream)),
+        "BENCHMARK_BACKEND_CPU_COUNT": str(backend_cpus),
+        "BENCHMARK_COMMIT": await _command("git", "rev-parse", "HEAD"),
+    }
+    if "GITHUB_RUN_ID" in os.environ:
+        environment["BENCHMARK_RUN_URL"] = (
+            f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}"
+            f"/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+        )
+    images: dict[str, str] = {}
+    complete = False
     try:
         for framework in ("jero", "fastapi"):
-            await _framework(options, report, framework)
-        report.complete = True
+            current = await _framework(framework, options, environment, allocation)
+            if images and current != images:
+                raise RuntimeError("The frameworks ran different images")
+            images = current
+        complete = True
     finally:
-        (options.output / "results.json").write_bytes(
-            msgspec.json.format(msgspec.json.encode(report))
-        )
-        (options.output / "report.md").write_text(_markdown(report), encoding="utf-8")
+        _combine(options.output, images, complete=complete)

@@ -60,6 +60,45 @@ class Claims(Struct):
     exp: int
 
 
+class CPUCounter(Struct):
+    """Worker-wide CPU and monotonic clocks sampled outside measured requests."""
+
+    pid: int
+    cpu_seconds: float
+    wall_seconds: float
+
+
+class Vendor(Struct):
+    """The nested vendor in the upstream product."""
+
+    id: str
+    name: str
+
+
+class Product(Struct, rename="camel"):
+    """The complete upstream response decoded and serialized by each framework."""
+
+    id: str
+    title: str
+    price: float
+    in_stock: bool
+    tags: list[str]
+    rating: float
+    description: str
+    vendor: Vendor
+
+
+class Profile(Struct):
+    """The six database columns returned for the authenticated user."""
+
+    id: str
+    name: str
+    email: str
+    address: str
+    city: str
+    country: str
+
+
 class Workload:
     """Fixed, public test data; the key is only for these local benchmark services."""
 
@@ -77,3 +116,34 @@ class Workload:
     def movie() -> MovieIn:
         """The five-field JSON body shared by both frameworks."""
         return MovieIn(title="title", year=2026, director="director", genre="genre", rating=8.0)
+
+    @staticmethod
+    def upstream_token() -> str:
+        """A public benchmark credential checked by the local upstream."""
+        return "benchmark-upstream-key"
+
+    @staticmethod
+    def product() -> Product:
+        """The upstream's fixed, nested catalog response."""
+        return Product(
+            id="prod-1",
+            title="Mechanical Keyboard",
+            price=129.99,
+            in_stock=True,
+            tags=["electronics", "peripherals", "keyboard"],
+            rating=4.7,
+            description="A tactile mechanical keyboard with hot-swappable switches.",
+            vendor=Vendor(id="vendor-9", name="KeyCo"),
+        )
+
+    @staticmethod
+    def profile() -> Profile:
+        """The row seeded before either framework starts."""
+        return Profile(
+            id="user-1",
+            name="name",
+            email="user-1@example.com",
+            address="1 Benchmark Street",
+            city="Dublin",
+            country="Ireland",
+        )

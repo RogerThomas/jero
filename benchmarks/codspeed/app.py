@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 from msgspec import Struct
 
+from benchmarks.ci.common import Workload
+from benchmarks.ci.jero_app import InfoEndpoint, JWTAuth, MoviesResource
 from jero import (
     CORS,
     AuthenticationRequiredError,
@@ -142,3 +144,12 @@ class BenchApp(BaseApp):
         self._include_resource(ItemsResource(), cors=CORS(allow_origins=("https://example.com",)))
         self._include_endpoint(MeEndpoint(), auth=TokenAuth(BENCH_BEARER))
         self._include_openapi(title="Bench API", version="0.1.0")
+
+
+class CIApp(BaseApp):
+    """Reuse the HTTP suite's CPU workloads without opening its I/O services."""
+
+    async def wire(self) -> None:
+        """Mount the shared handlers and authenticator without database or HTTP pools."""
+        self._include_endpoint(InfoEndpoint())
+        self._include_resource(MoviesResource(), auth=JWTAuth(Workload.signing_key()))

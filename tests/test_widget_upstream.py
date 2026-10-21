@@ -4,6 +4,7 @@ from collections import deque
 from collections.abc import Callable, Generator
 from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from socketserver import TCPServer
 from threading import Thread
 from typing import cast
 
@@ -66,6 +67,12 @@ class UpstreamServer(ThreadingHTTPServer):
         super().__init__(("127.0.0.1", 0), UpstreamHandler)
         self.requests: list[UpstreamRequest] = []
         self.responses: deque[tuple[int, bytes]] = deque()
+
+    def server_bind(self) -> None:
+        """Bind the local fixture without HTTPServer's external reverse-DNS lookup."""
+        TCPServer.server_bind(self)
+        self.server_name = "localhost"
+        self.server_port = int(self.socket.getsockname()[1])
 
     @property
     def url(self) -> str:

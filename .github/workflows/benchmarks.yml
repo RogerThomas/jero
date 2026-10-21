@@ -3,6 +3,21 @@ name: HTTP benchmarks
 on:
   workflow_dispatch:
     inputs:
+      runner:
+        description: GitHub-hosted runner (both are free for public repositories)
+        type: choice
+        options:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+        default: ubuntu-24.04
+      load_cpus:
+        description: CPUs for k6 (must leave capacity for app and backends)
+        type: number
+        default: 2
+      backend_cpus:
+        description: CPUs per backend (1 on standard four-CPU runners)
+        type: number
+        default: 1
       duration:
         description: Seconds per measured attempt (1-60)
         type: number
@@ -25,8 +40,8 @@ concurrency:
 
 jobs:
   benchmark:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
@@ -36,9 +51,21 @@ jobs:
           python-version: '3.14'
           enable-cache: true
 
-      - uses: grafana/setup-k6-action@v1
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build shared app and load-generator images
+        uses: docker/bake-action@v7
         with:
-          k6-version: '2.3.0'
+          source: .
+          files: benchmarks/ci/docker-bake.hcl
+          load: true
+          set: |
+            app.cache-from=type=gha,scope=jero-benchmark-app-${{ runner.arch }}
+            app.cache-to=type=gha,mode=max,scope=jero-benchmark-app-${{ runner.arch }}
+            runner.cache-from=type=gha,scope=jero-benchmark-runner-${{ runner.arch }}
+            runner.cache-to=type=gha,mode=max,scope=jero-benchmark-runner-${{ runner.arch }}
+            upstream.cache-from=type=gha,scope=jero-benchmark-upstream-${{ runner.arch }}
+            upstream.cache-to=type=gha,mode=max,scope=jero-benchmark-upstream-${{ runner.arch }}
 
       - name: Install benchmark dependencies and the checked-out jero
         run: uv sync --frozen --no-dev --group benchmark
@@ -48,11 +75,15 @@ jobs:
           BENCHMARK_DURATION: ${{ inputs.duration }}
           BENCHMARK_RUNS: ${{ inputs.runs }}
           BENCHMARK_VUS: ${{ inputs.vus }}
+          BENCHMARK_LOAD_CPU_COUNT: ${{ inputs.load_cpus }}
+          BENCHMARK_BACKEND_CPU_COUNT: ${{ inputs.backend_cpus }}
         run: |
           uv run --no-sync yeet ./benchmarks/ci/run.py \
             --duration "$BENCHMARK_DURATION" \
             --runs "$BENCHMARK_RUNS" \
-            --vus "$BENCHMARK_VUS"
+            --vus "$BENCHMARK_VUS" \
+            --load-cpus "$BENCHMARK_LOAD_CPU_COUNT" \
+            --backend-cpus "$BENCHMARK_BACKEND_CPU_COUNT"
 
       - name: Publish report in the workflow summary
         if: always()
