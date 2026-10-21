@@ -36,13 +36,23 @@ Documentation = "https://RogerThomas.github.io/jero/"
 matches = "tests"
 
 [dependency-groups]
+benchmark = [
+    "fastapi>=0.115",
+    "granian>=2.8.3",
+    "pydantic>=2.0",
+    "psycopg[binary,pool]>=3.3.0",
+    "pyreqwest>=0.15.0",
+    "ryjwt[msgspec]>=0.2.2",
+    "uvloop>=0.22.0",
+    "yeetr>=2026.7.1.post1",
+]
 dev = [
+    { include-group = "benchmark" },
     "deptry>=0.24.0",
     "mkdocstrings-python>=1.0.3",
     "prek>=0.2.0",
     "pylint>=4.0.4",
     "pyright>=1.1.410",
-    "niquests>=3.19.1",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.0.0",
     "pytest-cov>=7.0.0",
@@ -185,14 +195,16 @@ unused-type-ignore-comment = "ignore"
 
 [tool.deptry]
 # The demo app is dev/docs-only example code (not shipped) and uses dev dependencies
-# like niquests, so it isn't scanned for the package's dependency contract; error.py is
-# the throwaway error-design playground (rich, self-imports jero). micro_bench.py is a
+# like pyreqwest, so it isn't scanned for the package's dependency contract. The CI
+# benchmark apps are likewise unshipped consumers with benchmark-only dependencies.
+# error.py is the throwaway error-design playground (rich, self-imports jero). micro_bench.py is a
 # self-contained PEP 723 script: its deps (fastapi, litestar, blacksheep, …) are declared
 # inline for `uv run`, not in the package contract.
 extend_exclude = [
     'scratch_pad\.py',
     'tmp\.py',
     'demo_app/',
+    'benchmarks/ci/',
     'error\.py',
     'benchmarks/micro_bench\.py',
 ]

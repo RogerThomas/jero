@@ -8,8 +8,8 @@ through ``BaseApp``'s ``factory=`` seam to mock the I/O service.
 
 from functools import cached_property
 
-import niquests
 from openai import AsyncOpenAI
+from pyreqwest.client import ClientBuilder
 
 from demo_app.config import Settings, get_settings
 from demo_app.errors import UpstreamResponseErrorHandler
@@ -29,7 +29,7 @@ class Factory(BaseFactory):
 
     async def create_widget_service(self) -> WidgetService:
         """Build a WidgetService with a client opened on the app's stack."""
-        client = await self._aenter(niquests.AsyncSession())
+        client = await self._aenter(ClientBuilder().build())
         return WidgetService(client, self._settings.widget_base_url, self._settings.widget_api_key)
 
     def create_upstream_response_error_handler(self) -> UpstreamResponseErrorHandler:

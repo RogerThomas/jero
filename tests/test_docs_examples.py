@@ -3,7 +3,8 @@
 Every ```python fence that imports jero is enforced by default — the docs rule is that
 such examples are full, runnable apps. A fence that is deliberately a partial
 illustration (not meant to run on its own) opts out explicitly with a
-``# doc-example: fragment`` marker as its first line, so the escape is a decision
+``# doc-example: fragment`` marker as its first line (after an optional yeetr shebang),
+so the escape is a decision
 someone made and can grep for, not a silent side effect of how a class or variable
 happened to be named. This test enforces the rule mechanically: a broken, fragment-
 drifted, or wrongly-escaped example fails here, not in a reader's terminal.
@@ -38,7 +39,9 @@ def _example_params() -> list[object]:
         # required to be absent, so such a fence is still enforced rather than
         # silently dropped from collection.
         for index, block in enumerate(re.findall(r"```python[^\n]*\n(.*?)```", text, re.DOTALL)):
-            if "from jero" not in block or block.startswith(_FRAGMENT_MARKER):
+            if "from jero" not in block or block.removeprefix("#!yeet\n").startswith(
+                _FRAGMENT_MARKER
+            ):
                 continue
             params.append(pytest.param(block, id=f"{page.relative_to(repo_root)}[{index}]"))
     return params
