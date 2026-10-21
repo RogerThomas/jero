@@ -7,6 +7,7 @@ COPY --from=uv /uv /uvx /usr/local/bin/
 WORKDIR /app
 ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 PYTHONUNBUFFERED=1
 ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH=/app
 COPY pyproject.toml uv.lock README.md LICENSE ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --group benchmark --no-install-project
