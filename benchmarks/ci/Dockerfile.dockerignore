@@ -1,0 +1,10 @@
+**
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!jero/
+!jero/**
+!benchmarks/
+!benchmarks/ci/
+!benchmarks/ci/**

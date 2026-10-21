@@ -1,13 +1,38 @@
-"""jero's idiomatic implementation of the two initial HTTP workloads."""
+"""jero's idiomatic implementation of the four HTTP workloads."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from os import getpid
+from time import monotonic, process_time
 from uuid import UUID, uuid4
 
+import msgspec
 import ryjwt
 from msgspec import Struct
+from psycopg import AsyncConnection
+from psycopg_pool import AsyncConnectionPool
+from pyreqwest.client import Client
 
-from benchmarks.ci.common import Claims, Info, Movie, MovieIn, Nested, User, Workload
-from jero import AuthenticationRequiredError, BaseApp, Endpoint, JSONResponse, Resource
+from benchmarks.ci.backends import Settings, seed_database
+from benchmarks.ci.common import (
+    Claims,
+    CPUCounter,
+    Info,
+    Movie,
+    MovieIn,
+    Nested,
+    Product,
+    Profile,
+    User,
+    Workload,
+)
+from jero import (
+    AuthenticationRequiredError,
+    BaseApp,
+    Endpoint,
+    JSONResponse,
+    NotFoundError,
+    Resource,
+)
 
 
 class InfoHeaders(Struct):
@@ -75,13 +100,64 @@ class MoviesResource(Resource, path="/movies"):
         )
 
 
+@dataclass
+class CatalogEndpoint(Endpoint, path="/catalog"):
+    """Fetch real HTTP bytes, validate the product, and serialize it again."""
+
+    _client: Client
+    _decoder: msgspec.json.Decoder[Product] = field(
+        default_factory=lambda: msgspec.json.Decoder(Product)
+    )
+
+    async def get(self) -> Product:
+        """Use the app-owned HTTP pool and the upstream's bearer credential."""
+        response = await self._client.get("/data").build().send()
+        return self._decoder.decode(await response.bytes())
+
+
+@dataclass
+class ProfileEndpoint(Endpoint, path="/users/me"):
+    """Read a profile from PostgreSQL using the verified JWT subject."""
+
+    _pool: AsyncConnectionPool[AsyncConnection[Profile]]
+
+    async def get(self, user: User) -> Profile:
+        """Execute a parameterized query for every request, without a response cache."""
+        async with self._pool.connection() as connection:
+            cursor = await connection.execute(
+                "SELECT id, name, email, address, city, country FROM benchmark_users WHERE id = %s",
+                (user.id,),
+            )
+            profile = await cursor.fetchone()
+        if profile is None:
+            raise NotFoundError()
+        return profile
+
+
 class App(BaseApp):
     """Wire only the services needed by these workloads."""
 
     async def wire(self) -> None:
-        """Mount the public info endpoint and authenticated movie resource."""
+        """Own both connection pools and mount the four workloads."""
+        settings = Settings.from_environment()
+        await seed_database(settings)
+        client = await self._aenter(settings.client())
+        pool = await self._aenter(settings.pool(Profile))
+        await pool.wait(timeout=15)
+        auth = JWTAuth(Workload.signing_key())
         self._include_endpoint(InfoEndpoint())
-        self._include_resource(MoviesResource(), auth=JWTAuth(Workload.signing_key()))
+        self._include_resource(MoviesResource(), auth=auth)
+        self._include_endpoint(CatalogEndpoint(client))
+        self._include_endpoint(ProfileEndpoint(pool), auth=auth)
+        self._include_endpoint(CPUEndpoint())
+
+
+class CPUEndpoint(Endpoint, path="/_benchmark/cpu"):
+    """Measure the sole server worker without sampling during load."""
+
+    async def get(self) -> CPUCounter:
+        """Include CPU time from every thread in the worker process."""
+        return CPUCounter(pid=getpid(), cpu_seconds=process_time(), wall_seconds=monotonic())
 
 
 app = App()
