@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4](https://github.com/RogerThomas/jero/compare/0.1.3...0.1.4) (2026-10-22)
+
+
+### Features
+
+* support Python 3.15 ([#65](https://github.com/RogerThomas/jero/issues/65)) ([0b32355](https://github.com/RogerThomas/jero/commit/0b3235577f489a5a9f385bfe80acfe73c4c3c5be))
+
 ## [0.1.3](https://github.com/RogerThomas/jero/compare/0.1.2...0.1.3) (2026-09-28)
 
 
