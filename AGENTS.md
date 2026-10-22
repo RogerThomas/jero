@@ -49,6 +49,11 @@ Always follow the following style guide:
 
 - pyright **strict** and ruff must stay clean; tests must pass. `task pyright`,
   `task ruff`, `task test` — or run everything at once with `task check`.
+- **Supported Python versions:** 3.13, 3.14, and 3.15. The main CI matrix runs
+  the full test suite and pyrefly on each. Keep the minimum version at 3.13 and
+  type checkers targeting it; the shared CI setup uses uv 0.13.4 to install
+  supported interpreters. Quality, docs, public-interface typing, and benchmarks
+  keep their existing interpreter defaults.
 - **Pytest profiles:** the test tasks accept `PYTEST_PROFILE=agent|dev` to select a
   collection of pytest flags. **Always use `PYTEST_PROFILE=agent` by default** — it
   produces concise output suited for agent consumption (`task test PYTEST_PROFILE=agent`).

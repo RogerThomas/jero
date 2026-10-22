@@ -23,6 +23,9 @@ jero requires **Python 3.13 or newer**. Its generics use type-parameter defaults
 an earlier version, get in touch on
 [GitHub Discussions](https://github.com/RogerThomas/jero/discussions).
 
+Python **3.13, 3.14, and 3.15** are tested in CI against the full test suite and
+the project's type checks.
+
 ## Your first app
 
 A jero app is a `BaseApp` subclass that wires up *resources* (REST collections) and
