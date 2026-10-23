@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6](https://github.com/RogerThomas/jero/compare/0.1.5...0.1.6) (2026-10-23)
+
+
+### Documentation
+
+* update benchmarks to the wrk/peregrine runs of 2026-10-23 ([#70](https://github.com/RogerThomas/jero/issues/70)) ([a140796](https://github.com/RogerThomas/jero/commit/a140796b06762c8d0a0de6e64e076d2c51e63378))
+
 ## [0.1.5](https://github.com/RogerThomas/jero/compare/0.1.4...0.1.5) (2026-10-23)
 
 
