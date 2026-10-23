@@ -38,15 +38,8 @@ matches = "tests"
 
 [dependency-groups]
 benchmark = [
-    "fastapi>=0.115",
-    "granian>=2.8.3",
-    "pydantic>=2.0",
-    "psycopg[binary,pool]>=3.3.0",
-    "pyreqwest>=0.15.0",
     "pytest-codspeed>=5.0.3",
     "ryjwt[msgspec]>=0.2.2",
-    "uvloop>=0.22.0",
-    "yeetr>=2026.7.1.post1",
 ]
 dev = [
     { include-group = "benchmark" },
@@ -69,6 +62,7 @@ dev = [
     "openai>=2.43.0",
     "pydantic-settings>=2.14.2",
     "openapi-spec-validator>=0.7.1",
+    "pyreqwest>=0.15.0",
     "yeetr>=2026.7.1.post1",
 ]
 
@@ -197,9 +191,8 @@ unused-type-ignore-comment = "ignore"
 
 [tool.deptry]
 # The demo app is dev/docs-only example code (not shipped) and uses dev dependencies
-# like pyreqwest, so it isn't scanned for the package's dependency contract. The CI
-# benchmark apps and the CodSpeed benchmarks are likewise unshipped consumers with
-# benchmark-only dependencies.
+# like pyreqwest, so it isn't scanned for the package's dependency contract. The CodSpeed
+# benchmarks are likewise an unshipped consumer with benchmark-only dependencies.
 # error.py is the throwaway error-design playground (rich, self-imports jero). micro_bench.py is a
 # self-contained PEP 723 script: its deps (fastapi, litestar, blacksheep, …) are declared
 # inline for `uv run`, not in the package contract.
@@ -207,7 +200,6 @@ extend_exclude = [
     'scratch_pad\.py',
     'tmp\.py',
     'demo_app/',
-    'benchmarks/ci/',
     'benchmarks/codspeed/',
     'error\.py',
     'benchmarks/micro_bench\.py',

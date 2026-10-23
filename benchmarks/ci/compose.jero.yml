@@ -1,6 +1,0 @@
-services:
-  app:
-    command: ["--port", "8000", "benchmarks.ci.jero_app:app"]
-  benchmark:
-    environment:
-      BENCHMARK_FRAMEWORK: jero

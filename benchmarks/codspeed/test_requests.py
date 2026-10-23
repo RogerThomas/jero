@@ -10,9 +10,9 @@ import msgspec
 import pytest
 from pytest_codspeed import BenchmarkFixture
 
-from benchmarks.ci.common import Workload
 from benchmarks.codspeed.app import BENCH_BEARER, BenchApp, CIApp
 from benchmarks.codspeed.harness import Harness, Request
+from benchmarks.codspeed.workloads import Workload
 
 BATCH = 50
 JSON_HEADERS = ((b"content-type", b"application/json"),)
@@ -83,12 +83,12 @@ def test_request(
 
 
 def test_ci_info(benchmark: BenchmarkFixture, ci_app: Harness) -> None:
-    """The CI HTTP suite's ``GET /info`` workload: medium JSON plus a typed header."""
+    """The ``GET /info`` workload: medium JSON plus a typed header."""
     benchmark(ci_app.send, Request("GET", "/info"), repeat=BATCH)
 
 
 def test_ci_create_movie(benchmark: BenchmarkFixture, ci_app: Harness) -> None:
-    """The CI HTTP suite's JWT-authenticated ``POST /movies`` workload."""
+    """The JWT-authenticated ``POST /movies`` workload."""
     request = Request(
         "POST",
         "/movies",
