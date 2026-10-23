@@ -12,8 +12,8 @@ four, and ties Django Bolt (within 0.1%) on the fourth.** It is the fastest Pyth
 framework on all four, by 1.4× to 4.5× over Blacksheep, Litestar, and FastAPI. jero
 also out-runs Go's Gin on three of the four, and on the database path it is the
 fastest framework of any language in the field. Bun's Elysia tops the pure framework
-and proxy tests; Spring Boot lands mid-field at roughly ten times everyone's resident
-memory (a JVM-defaults figure; see the caveats).
+and proxy tests; Spring Boot lands mid-field at 6–17× the Python field's resident memory
+(a JVM-defaults figure; see the caveats).
 
 !!! warning "Read the caveats"
 

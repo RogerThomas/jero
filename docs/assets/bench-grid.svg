@@ -71,7 +71,7 @@
 <path d="M510,343.0 L557.7,343.0 Q561.7,343.0 561.7,347.0 L561.7,353.0 Q561.7,357.0 557.7,357.0 L510,357.0 Z" fill="#a8adb3"/>
 <text x="567.7" y="353.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">18.5k</text>
 <text x="24" y="411.0" font-size="12.5" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="600">Proxy — GET /catalog</text>
-<text x="379" y="411.0" font-size="10.5" fill="#898781" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">same HTTP client under each</text>
+<text x="379" y="411.0" font-size="10.5" fill="#898781" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">same HTTP client across Python</text>
 <text x="114" y="440.6" font-size="11" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">elysia</text>
 <path d="M122,430.0 L350.0,430.0 Q354.0,430.0 354.0,434.0 L354.0,440.0 Q354.0,444.0 350.0,444.0 L122,444.0 Z" fill="#a8adb3"/>
 <text x="360.0" y="440.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">56.7k</text>
@@ -103,7 +103,7 @@
 <path d="M122,664.0 L164.0,664.0 Q168.0,664.0 168.0,668.0 L168.0,674.0 Q168.0,678.0 164.0,678.0 L122,678.0 Z" fill="#a8adb3"/>
 <text x="174.0" y="674.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">11.2k</text>
 <text x="412" y="411.0" font-size="12.5" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="600">Database — GET /users/me</text>
-<text x="767" y="411.0" font-size="10.5" fill="#898781" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">bound by the DB driver</text>
+<text x="767" y="411.0" font-size="10.5" fill="#898781" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">JWT + one Postgres row</text>
 <text x="502" y="440.6" font-size="11" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="700" text-anchor="end">jero</text>
 <path d="M510,430.0 L738.0,430.0 Q742.0,430.0 742.0,434.0 L742.0,440.0 Q742.0,444.0 738.0,444.0 L510,444.0 Z" fill="#2a78d6"/>
 <text x="748.0" y="440.6" font-size="10.5" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="700" style="font-variant-numeric:tabular-nums">46.9k</text>
