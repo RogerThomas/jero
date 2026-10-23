@@ -5,12 +5,20 @@ The data source is an api-benchmarks run folder
 (https://github.com/RogerThomas/api-benchmarks, reports/<run_id>/), whose
 results.json carries the run configuration and every attempt:
 
-    uv run yeet scripts/gen_bench_grid.py /path/to/reports/<run_id>
+    uv run yeet ./scripts/gen_bench_grid.py /path/to/reports/<run_id>
+
+When the latest run reran only part of the fleet, pass the run that last
+measured the cross-language frameworks (gin, elysia, spring-boot) as a second
+folder; only those frameworks' rows the latest run lacks are taken from it, its
+settings must match the latest run's, and the footer names it:
+
+    uv run yeet ./scripts/gen_bench_grid.py \
+        /path/to/reports/<run_id> /path/to/reports/<context_run_id>
 
 The throughput rows (best attempt per framework and test) and the footer's run
 configuration all come from results.json, so nothing is transcribed by hand.
-After regenerating, update docs/performance.md's tables to the same run's
-report — the grid and the tables must never cite different runs.
+After regenerating, update docs/performance.md's tables to the same run(s) —
+the grid and the tables must never cite different runs.
 """
 
 from dataclasses import dataclass
@@ -25,11 +33,13 @@ from jero import Struct
 class RunConfig(Struct):
     """The slice of results.json's `run` object the grid's footer needs."""
 
-    vus: int
+    run_id: str
+    vus: int  # the load generator's concurrent connections (the field kept its k6-era name)
     duration: str
     best_of: int
-    python_server: str
     ec2_instance_type: str
+    python_server: str | None = None  # null on newer runs, where peregrine is implied
+    loadgen: str = "k6"  # absent on runs from before the wrk migration
 
 
 class Attempt(Struct):
@@ -56,14 +66,23 @@ class Panel(Struct):
     rows: list[tuple[str, float]]
 
 
-def _panels(report: Report) -> list[Panel]:
+def _panels(report: Report, context: Report | None, cross_language: dict[str, str]) -> list[Panel]:
     meta = [
         ("test1", "JSON — GET /info", "the pure framework path"),
         ("test2", "JWT — POST /movies", "authed write path"),
-        ("test3", "Proxy — GET /catalog", "same Rust client under each"),
-        ("test4", "Database — GET /users/me", "bound by the DB driver"),
+        ("test3", "Proxy — GET /catalog", "same HTTP client across Python"),
+        ("test4", "Database — GET /users/me", "JWT + one Postgres row"),
     ]
     best = [attempt for attempt in report.results if attempt.is_best]
+    if context is not None:
+        measured = {attempt.framework for attempt in best}
+        best += [
+            attempt
+            for attempt in context.results
+            if attempt.is_best
+            and attempt.framework in cross_language
+            and attempt.framework not in measured
+        ]
     panels: list[Panel] = []
     for test, title, hint in meta:
         rows = sorted(
@@ -81,11 +100,25 @@ def _panels(report: Report) -> list[Panel]:
     return panels
 
 
-def _footer(run: RunConfig) -> str:
-    return (
-        f"req/s, higher is better · {run.vus} VUs · {run.duration} · best-of-{run.best_of} · "
-        f"1 dedicated core · EC2 {run.ec2_instance_type} · Python 3.13 ({run.python_server}+uvloop)"
-    )
+def _footer(run: RunConfig, context: RunConfig | None, cross_language: dict[str, str]) -> list[str]:
+    concurrency = "VUs" if run.loadgen == "k6" else "connections"
+    # results.json doesn't record the interpreter, so its version is kept here by hand.
+    lines = [
+        (
+            f"req/s, higher is better · {run.loadgen}, {run.vus} {concurrency} · {run.duration} · "
+            f"best-of-{run.best_of} · 1 dedicated core · EC2 {run.ec2_instance_type} · "
+            f"Python 3.14 ({run.python_server or 'peregrine'}+uvloop)"
+        ),
+        f"run {run.run_id}",
+    ]
+    if context is not None:
+        if msgspec.structs.replace(context, run_id=run.run_id) != run:
+            raise ValueError(
+                f"context run {context.run_id} used different settings from {run.run_id}"
+            )
+        names = ", ".join(cross_language)
+        lines[1] += f" · {names} from run {context.run_id} (same harness and settings)"
+    return lines
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,13 +126,10 @@ class GridRenderer:
     """Emits the four-panel benchmark grid as a self-contained SVG document."""
 
     _panels: list[Panel]
-    _footer: str
+    _subtitle: str
+    _footer: list[str]
 
     _grid_title: ClassVar[str] = "jero — the fastest Python ASGI framework"
-    _subtitle: ClassVar[str] = (
-        "Throughput (req/s) · each panel scaled to its own fastest · "
-        "gin (Go), elysia (Bun), spring-boot (Java) for context"
-    )
 
     _font: ClassVar[str] = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
     _ink: ClassVar[str] = "#0b0b0b"
@@ -201,7 +231,8 @@ class GridRenderer:
         title_y_top = 90.0
         title_y_bottom = title_y_top + panel_height + 42
         footer_y = title_y_bottom + panel_height + 28
-        height = int(footer_y + 24)
+        footer_pitch = 15
+        height = int(footer_y + (len(self._footer) - 1) * footer_pitch + 24)
         width = self._width
 
         parts = [
@@ -228,15 +259,31 @@ class GridRenderer:
         ]
         for panel, (panel_x, title_y) in zip(self._panels, positions, strict=True):
             parts += self._panel(panel, panel_x, title_y)
-        parts += [self._text(24, footer_y, self._footer, 10.5, self._ink_muted), "</svg>"]
+        parts += [
+            self._text(24, footer_y + index * footer_pitch, line, 10.5, self._ink_muted)
+            for index, line in enumerate(self._footer)
+        ]
+        parts += ["</svg>"]
         return "\n".join(parts) + "\n"
 
 
-def main(run_folder: str) -> None:
+def _load(run_folder: str) -> Report:
+    return msgspec.json.decode((Path(run_folder) / "results.json").read_bytes(), type=Report)
+
+
+def main(run_folder: str, context_run_folder: str | None = None) -> None:
     """Regenerate the benchmark grid SVG in docs/assets from a run folder's results.json."""
-    report = msgspec.json.decode((Path(run_folder) / "results.json").read_bytes(), type=Report)
+    report = _load(run_folder)
+    context = None if context_run_folder is None else _load(context_run_folder)
     destination = Path(__file__).resolve().parents[1] / "docs" / "assets" / "bench-grid.svg"
+    cross_language = {"gin": "Go", "elysia": "Bun", "spring-boot": "Java"}
+    subtitle = "Throughput (req/s) · each panel scaled to its own fastest · " + (
+        ", ".join(f"{name} ({language})" for name, language in cross_language.items())
+        + " for context"
+    )
+    footer = _footer(report.run, None if context is None else context.run, cross_language)
     destination.write_text(
-        GridRenderer(_panels(report), _footer(report.run)).render(), encoding="utf-8"
+        GridRenderer(_panels(report, context, cross_language), subtitle, footer).render(),
+        encoding="utf-8",
     )
     print(f"wrote {destination}")

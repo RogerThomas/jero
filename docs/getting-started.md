@@ -15,6 +15,9 @@ is a good default, and the `granian` extra installs both in one step:
 uv add "jero[granian]"
 ```
 
+For production on Linux, [Deployment](guide/deployment.md#running-the-app) recommends
+peregrine, the server the benchmarks run.
+
 ## Python version
 
 jero requires **Python 3.13 or newer**. Its generics use type-parameter defaults

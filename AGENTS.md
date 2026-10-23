@@ -14,7 +14,7 @@ being aggressively opinionated rather than flexible.
 
 1. **Speed.** All introspection happens once, at wiring time; the per-request
    path is just dict lookup → msgspec decode → call → encode, nothing else.
-   Benchmarks co-lead blacksheep and well outpace FastAPI. Never add per-request
+   Benchmarks lead the Python ASGI field and well outpace FastAPI. Never add per-request
    work — resolve it at startup.
 
 2. **Opinionated, scaffolded DX.** There is *one blessed way* to do each thing,
@@ -297,7 +297,7 @@ Always follow the following style guide:
   async); `observe(request, status, duration)` (post-response, exceptions swallowed).
   `Request[H]`'s `headers` binds via a compiled scanner for just the fields `H` names
   (`H` defaults to `NoHeaders`). The capability boundary is deliberate: middleware can
-  answer, add headers, and watch — never rewrite a body/status (that's granian/proxy
+  answer, add headers, and watch — never rewrite a body/status (that's server/proxy
   territory) and never pass state to handlers (bind the header, or carry it on `user`).
   Uncovered routes are untouched (covered ones get a `_CoveredRoute` wrapper swapped
   into the routing tables at `__finalize`); middleware may not emit
@@ -484,12 +484,16 @@ Always follow the following style guide:
   item-type checks they fire under `_include_openapi`. Dispatch is an `isinstance` chain
   built at wiring, most-derived-first; a result matching no member goes through the
   exception handlers as a logged 500.
-- **Performance (validated, 2026-07-16 run)**: fastest Python framework on all four
-  scenarios (VUS=128, 1 dedicated core, granian+uvloop); Python order is jero →
-  blacksheep → litestar → fastapi → flask everywhere. Authed write path
-  (`POST /movies`): jero 31.5k req/s ≈ 1.5× blacksheep, ~2.4× litestar, ~3.4× FastAPI.
-  Proxy path (all Python frameworks on pyreqwest): within ~10% of Go/gin at equal p99.
-  (The benchmark harness lives in a separate repo.)
+- **Performance (validated, run `20261023T113907`; Gin/Elysia/Spring Boot from
+  `20261023T091453`)**: wrk, 128 connections, 1 dedicated core, peregrine+uvloop,
+  Python 3.14, one EC2 spot instance per framework. Fastest Python ASGI framework on all
+  four scenarios; fastest Python framework outright on `/info`, `/catalog` (proxy), and
+  `/users/me` (DB), and tied with Django Bolt (0.1% apart) on the authed `POST /movies`
+  (83k req/s ≈ 2.5× blacksheep, ~2.8× litestar, ~4.5× FastAPI). Beats Gin on three of
+  four (trails it by 6% on the proxy); fastest of any language on the DB scenario.
+  Python apps share lothc (HTTP), fastpg (DB), and ryjwt (JWT). Docs grid:
+  `scripts/gen_bench_grid.py <run> [<context run>]`. (The benchmark harness lives in a
+  separate repo.)
 - **Unbuilt**: absolute (vs relative) reverse-routed URLs are a deliberate follow-up.
   Minor polish: the factory's `es`/`aes` stack injection matches by name with no startup
   check — a `WiringError` on an unrecognized param would close that.
