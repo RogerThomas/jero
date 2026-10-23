@@ -5,16 +5,15 @@ and a clear account of how they were produced. This page is that account, and th
 entire benchmark (every app's source, the harness, and the full methodology) is public
 at [api-benchmarks](https://github.com/RogerThomas/api-benchmarks).
 
-**TL;DR:** across four workloads benchmarked side by side against ten other frameworks
-(Python: Django Bolt, Blacksheep, Robyn, Litestar, FastAPI, Flask, Django Ninja; Go:
-Gin; Bun: Elysia; Java: Spring Boot), **jero is the fastest Python ASGI framework in
-every scenario**, and the fastest Python framework outright on the proxy and database
-paths. On the pure framework path the top four (Elysia, Gin, Django Bolt, jero) finish
-within 3% of each other: jero runs at Go speed there. Django Bolt, whose built-in Rust
-server handles routing and serialization outside Python, edges that test by ~1% and
-takes the authed write outright; jero leads it everywhere the request goes past the
-framework. Go and Bun top the raw table; Spring Boot lands mid-field at five to ten
-times everyone's resident memory (a JVM-defaults figure; see the caveats).
+**TL;DR:** across four workloads benchmarked side by side against nine other frameworks
+(Python: Django Bolt, Blacksheep, Litestar, Robyn, FastAPI, Flask; Go: Gin; Bun:
+Elysia; Java: Spring Boot), **jero is the fastest Python framework on three of the
+four, and ties Django Bolt (within 0.1%) on the fourth.** It is the fastest Python ASGI
+framework on all four, by 1.4× to 4.5× over Blacksheep, Litestar, and FastAPI. jero
+also out-runs Go's Gin on three of the four, and on the database path it is the
+fastest framework of any language in the field. Bun's Elysia tops the pure framework
+and proxy tests; Spring Boot lands mid-field at roughly ten times everyone's resident
+memory (a JVM-defaults figure; see the caveats).
 
 !!! warning "Read the caveats"
 
@@ -25,9 +24,8 @@ times everyone's resident memory (a JVM-defaults figure; see the caveats).
 
 The whole field on all four workloads. Each panel is scaled to its own fastest
 framework, so the bars show the ranking within that test; the labels keep the absolute
-throughput. **jero is the fastest Python ASGI framework in every one.** Django Bolt
-and Robyn ship their own Rust servers, and gin (Go), elysia (Bun), and spring-boot
-(Java) are shown for cross-language context.
+throughput. Django Bolt and Robyn ship their own Rust servers, and gin (Go), elysia
+(Bun), and spring-boot (Java) are shown for cross-language context.
 
 <p align="center">
   <img src="assets/bench-grid.svg" alt="Benchmark results: jero is the fastest Python ASGI framework across all four workloads" width="820">
@@ -35,64 +33,83 @@ and Robyn ship their own Rust servers, and gin (Go), elysia (Bun), and spring-bo
 
 ## How the numbers were produced
 
-The full account (every framework's app code, the compose files, the k6 scenarios, and
-the methodology) lives in the
+The full account (every framework's app code, the compose files, the load-test
+scenarios, and the methodology) lives in the
 [api-benchmarks](https://github.com/RogerThomas/api-benchmarks) repo, and every run
 writes a complete report (including per-container CPU and memory accounting) to its
-`reports/` directory. The suite is written by jero's author; the code is public
-precisely so you don't have to take fairness on trust. If a framework looks
-shortchanged, open an issue there. The load-bearing points:
+`reports/` directory. The suite is written by jero's author, as are three of the
+libraries every Python framework shares in it ([lothc](https://pypi.org/project/lothc/),
+[fastpg](https://pypi.org/project/fastpg/), [ryjwt](https://pypi.org/project/ryjwt/));
+the code is public precisely so you don't have to take fairness on trust. If a
+framework looks shortchanged, open an issue there. The load-bearing points:
 
-- **One framework alive at a time.** Each framework runs in its own compose stack
-  alongside freshly started dependencies (Postgres, the Rust upstream, the k6 runner),
-  torn down before the next framework starts. Nothing else competes for the machine, so
-  each number reflects that framework alone.
-- **Best-of-3.** [k6](https://k6.io/) drives a fixed virtual-user count for a fixed
-  duration; every `(framework, scenario)` pair runs three times and the attempt with
-  the highest throughput is kept. Repeating and keeping the best beats down run-to-run
-  noise so the comparison reflects each framework's ceiling, not a noisy sample.
+- **One framework per machine.** Each framework gets its own EC2 spot instance (all
+  the same instance type, under one run id), where it runs in its own compose stack
+  alongside freshly started dependencies: Postgres, the Rust upstream, and the load
+  generator. Nothing else competes for the machine, so each number reflects that
+  framework alone. Repeat runs on different instances agree within ~1–2%.
+- **Correctness first, then best-of-3.** Before any load, 100 sequential requests are
+  checked for status *and* key body fields; one wrong response reports the whole test
+  as 0% success, so a fast-but-wrong answer can never score. Then
+  [wrk](https://github.com/wg/wrk) holds 128 connections open in a closed loop: an
+  untimed 3s warm-up, then three 60s attempts, keeping the one with the highest
+  throughput. Repeating and keeping the best beats down run-to-run noise so the
+  comparison reflects each framework's ceiling, not a noisy sample.
 - **One worker, one core.** Every service runs one worker (Gin at `GOMAXPROCS=1`,
   Django Bolt at `--processes 1`), pinned to a single dedicated CPU core via `cpuset`
   affinity rather than a CFS quota, because a quota throttles a saturated container
   every scheduler period and pollutes the tail. The pin confines *all* of a framework's
-  threads, including GIL-releasing extensions like msgspec and the DB drivers. This is
-  a like-for-like, single-core comparison, not a test of how well each scales across
-  cores.
+  threads, including GIL-releasing extensions like msgspec and the DB driver. Postgres,
+  the upstream, and wrk each get their own cores, so the framework, not the load
+  generator, is what saturates. This is a like-for-like, single-core comparison, not a
+  test of how well each scales across cores.
 - **Equal budgets, equal work.** The DB pool and outbound-HTTP pool are capped at 64
   connections for every framework in every language. Every framework runs the same
-  scenarios against the same scoring; every JWT endpoint hand-decodes the same bearer
-  token with PyJWT; every Python framework makes its upstream call through the same
-  Rust-based HTTP client, [pyreqwest](https://pypi.org/project/pyreqwest/); and the
-  whole async Python fleet (the two Django frameworks deliberately included, bypassing
-  Django's ORM) reads Postgres through the same Rust-based driver, psqlpy, so the
-  database test measures the framework rather than a data layer. Beyond that, each
-  framework uses its own idiomatic, recommended tools, and the real differences that
-  creates (FastAPI's response re-validation, typed vs passthrough upstream parsing,
-  serializer choices) are documented in the repo as *known, intended differences*
-  rather than normalised away.
+  scenarios against the same scoring; every Python JWT endpoint hand-decodes the same
+  bearer token with ryjwt into a typed claims model; every Python framework makes its
+  upstream call through the same HTTP client, lothc (a typed client over the Rust-based
+  [pyreqwest](https://pypi.org/project/pyreqwest/)), with one shared configuration; and
+  the whole async Python fleet (Django Bolt deliberately included, bypassing Django's
+  ORM) reads Postgres through the same Rust-based driver, fastpg, so the database test
+  measures the framework rather than a data layer. Beyond that, each framework uses
+  its own idiomatic, recommended tools, and the real differences that creates
+  (FastAPI's and Django Bolt's response re-validation, typed vs passthrough upstream
+  parsing, serializer choices) are documented in the repo as *known, intended
+  differences* rather than normalised away.
 
 ### Run configuration
 
 | Setting         | Value                                                             |
 | :-------------- | :---------------------------------------------------------------- |
-| Machine         | Amazon EC2 `c9g.2xlarge`, eu-central-1                            |
+| Machine         | Amazon EC2 `c9g.2xlarge` spot, eu-central-1, one per framework    |
 | Machine specs   | AWS Graviton5 (arm64), 8 vCPUs (physical cores, no SMT), 16 GiB   |
-| Concurrency     | 128 VUs                                                           |
-| Duration        | 60s per attempt                                                   |
+| Load generator  | wrk 4.2.0, 2 threads on 2 dedicated cores                         |
+| Concurrency     | 128 connections, closed loop                                      |
+| Duration        | 60s per attempt, after an untimed 3s warm-up                      |
 | Best-of-N       | 3 attempts, highest throughput kept                               |
 | CPU             | 1 dedicated core per framework (cpuset affinity)                  |
 | Workers         | 1 (Gin at `GOMAXPROCS=1`, Django Bolt at `--processes 1`)         |
-| Python          | 3.13 (pinned image, every Python framework)                       |
-| Python server   | granian + uvloop (Flask via granian WSGI; Robyn and Django Bolt ship their own Rust servers) |
-| Outbound client | pyreqwest (Rust) for every Python framework                       |
+| Python          | 3.14.9 (uv's standalone CPython, every Python framework)          |
+| Python server   | [peregrine](https://pypi.org/project/peregrine-server/) 1.2.0 + uvloop (Flask via peregrine WSGI; Robyn and Django Bolt ship their own Rust servers) |
+| Outbound client | lothc 0.2.0 (over pyreqwest) for every Python framework           |
+| Database driver | fastpg for the async Python fleet; psycopg for sync Flask         |
 | Pools           | 64 connections per framework, database and outbound HTTP alike    |
+| Runs            | Python frameworks: `20261023T113907`; Gin, Elysia, Spring Boot: `20261023T091453` |
+
+The Python field was rerun on its own (in `20261023T113907`) to pick up lothc 0.2.0;
+the three cross-language rows, marked †, come from the full-fleet run earlier the same
+day, on the same harness and settings, with their code unchanged in between.
 
 ## Results
 
 `req/s` is throughput (higher is better); `mean` and `p99` are request latency (lower is
 better). `vs jero` is throughput relative to jero. Every framework returned 100%
 successful responses in every run, so that column is omitted. Frameworks are ordered
-fastest → slowest within each scenario.
+fastest → slowest within each scenario. † marks a row from run `20261023T091453`.
+
+Read the latency columns as latency *at saturation*: 128 connections in a closed loop
+drive every framework to its single-core ceiling, which is what throughput measures,
+but it is not a model of realistic load, and closed-loop tails run optimistic.
 
 ### 1. `GET /info`: the pure framework path
 
@@ -100,149 +117,136 @@ Route → build a typed JSON response with a custom response header → encode. 
 This isolates routing and serialization, and is the closest thing to a measure of the
 framework's own per-request overhead.
 
-| Framework           | req/s     | mean       | p99         | vs jero   |
-| :------------------ | :-------- | :--------- | :---------- | :-------- |
-| elysia *(Bun)*      | 50.3k     | 2.42ms     | 10.88ms     | 1.03×     |
-| gin *(Go)*          | 50.1k     | 2.43ms     | 10.90ms     | 1.02×     |
-| django-bolt         | 49.6k     | 2.46ms     | 11.47ms     | 1.01×     |
-| **jero**            | **49.0k** | **2.56ms** | **10.99ms** | **1.00×** |
-| blacksheep          | 41.5k     | 3.03ms     | 12.05ms     | 0.85×     |
-| robyn               | 36.4k     | 3.43ms     | 12.86ms     | 0.74×     |
-| spring-boot *(Java)*| 32.6k     | 3.85ms     | 12.84ms     | 0.66×     |
-| litestar            | 32.2k     | 3.94ms     | 12.86ms     | 0.66×     |
-| fastapi             | 24.5k     | 5.19ms     | 14.27ms     | 0.50×     |
-| flask               | 19.4k     | 6.57ms     | 16.82ms     | 0.40×     |
-| django-ninja        | 2.4k      | 52.70ms    | 96.01ms     | 0.05×     |
+| Framework              | req/s      | mean       | p99        | vs jero   |
+| :--------------------- | :--------- | :--------- | :--------- | :-------- |
+| elysia *(Bun)* †       | 161.3k     | 0.79ms     | 1.43ms     | 1.61×     |
+| **jero**               | **100.4k** | **1.27ms** | **1.31ms** | **1.00×** |
+| django-bolt            | 95.7k      | 1.33ms     | 1.36ms     | 0.95×     |
+| gin *(Go)* †           | 87.6k      | 1.47ms     | 3.33ms     | 0.87×     |
+| blacksheep             | 73.6k      | 1.73ms     | 1.78ms     | 0.73×     |
+| litestar               | 48.9k      | 2.60ms     | 2.66ms     | 0.49×     |
+| robyn                  | 43.4k      | 2.95ms     | 3.08ms     | 0.43×     |
+| spring-boot *(Java)* † | 41.3k      | 3.09ms     | 4.88ms     | 0.41×     |
+| fastapi                | 30.6k      | 4.17ms     | 4.22ms     | 0.30×     |
+| flask                  | 27.3k      | 4.69ms     | 4.80ms     | 0.27×     |
 
-The top four (Bun, Go, Rust-served Django, and jero) sit within 3% of each other, and
-jero is the only one of them doing the whole request in a Python-visible framework on a
-Python ASGI server. Within the ASGI field jero leads by 1.2× Blacksheep, 1.5× Litestar,
-2× FastAPI. One honest asterisk on the cluster above: jero ran at ~90% CPU, close to
-its genuine single-core ceiling, while Elysia (41%), Gin (65%), and Bolt (78%) finished
-with headroom, so read their numbers as *at least* what the table shows.
+jero is the fastest Python framework here, ahead of Django Bolt's Rust server by 5%
+and of Gin by 15%. Within the ASGI field it leads by 1.4× Blacksheep, 2× Litestar,
+3.3× FastAPI. Only Elysia, whose Bun runtime does this in native code, is faster.
+Every framework in the table ran its core at ~100% CPU, so these are genuine
+single-core ceilings rather than load-generator limits.
 
 ### 2. `POST /movies`: the authed write path (JWT)
 
 Bearer/JWT auth → decode and validate a five-field request body → handler → encode →
 `201`. The realistic write path for a typed JSON API.
 
-| Framework           | req/s     | mean       | p99         | vs jero   |
-| :------------------ | :-------- | :--------- | :---------- | :-------- |
-| gin *(Go)*          | 40.7k     | 2.91ms     | 13.04ms     | 1.70×     |
-| elysia *(Bun)*      | 38.4k     | 3.20ms     | 13.56ms     | 1.60×     |
-| django-bolt         | 37.3k     | 3.28ms     | 13.84ms     | 1.55×     |
-| **jero**            | **24.0k** | **5.27ms** | **16.50ms** | **1.00×** |
-| spring-boot *(Java)*| 21.7k     | 5.80ms     | 16.94ms     | 0.90×     |
-| robyn               | 20.3k     | 6.24ms     | 16.48ms     | 0.85×     |
-| blacksheep          | 16.7k     | 7.63ms     | 18.47ms     | 0.69×     |
-| litestar            | 13.1k     | 9.71ms     | 21.09ms     | 0.55×     |
-| flask               | 10.9k     | 11.70ms    | 21.06ms     | 0.45×     |
-| fastapi             | 9.2k      | 13.80ms    | 28.49ms     | 0.39×     |
-| django-ninja        | 2.3k      | 56.42ms    | 104.20ms    | 0.09×     |
+| Framework              | req/s      | mean       | p99        | vs jero   |
+| :--------------------- | :--------- | :--------- | :--------- | :-------- |
+| django-bolt            | 83.1k      | 1.54ms     | 1.57ms     | 1.00×     |
+| **jero**               | **83.0k**  | **1.53ms** | **1.59ms** | **1.00×** |
+| elysia *(Bun)* †       | 54.6k      | 2.34ms     | 4.19ms     | 0.66×     |
+| gin *(Go)* †           | 53.6k      | 2.39ms     | 5.10ms     | 0.65×     |
+| blacksheep             | 33.1k      | 3.85ms     | 3.91ms     | 0.40×     |
+| litestar               | 29.9k      | 4.27ms     | 4.34ms     | 0.36×     |
+| spring-boot *(Java)* † | 26.6k      | 4.82ms     | 7.35ms     | 0.32×     |
+| robyn                  | 26.4k      | 4.83ms     | 4.93ms     | 0.32×     |
+| flask                  | 20.2k      | 6.34ms     | 6.48ms     | 0.24×     |
+| fastapi                | 18.5k      | 6.89ms     | 6.96ms     | 0.22×     |
 
-jero leads the ASGI field by its widest margin of the four: 1.4× Blacksheep, 1.8×
-Litestar, and 2.6× FastAPI, which drops below even sync Flask here under the weight of
-re-validating its own response against the `response_model`. Django Bolt's Rust core
-takes the Python crown, and Spring Boot lands within 10% of jero, at ~628M resident to
-jero's ~81M (a JVM-defaults figure; see "How to read this").
+jero and Django Bolt tie, 0.1% apart, and both run ~1.5× faster than Elysia and Gin.
+jero leads the ASGI field by its widest margin of the four: 2.5× Blacksheep, 2.8×
+Litestar, and 4.5× FastAPI, which drops below even sync Flask here under the weight of
+re-validating its own response against the `response_model`.
 
 ### 3. `GET /catalog`: the outbound hop
 
 The service makes an outbound HTTP call to the Rust upstream (authenticated with a
-bearer API key) and returns the payload. Every Python framework issues that call
-through the same Rust-based HTTP client
-([pyreqwest](https://pypi.org/project/pyreqwest/)), so this scenario measures the
-framework around the client, not the client itself.
+bearer API key), decodes the payload into a typed model, and returns it. Every Python
+framework issues that call through the same HTTP client (lothc, over the Rust-based
+pyreqwest) with the same configuration, so this scenario measures the framework around
+the client, not the client itself.
 
-| Framework           | req/s     | mean       | p99         | vs jero   |
-| :------------------ | :-------- | :--------- | :---------- | :-------- |
-| elysia *(Bun)*      | 40.9k     | 3.02ms     | 12.85ms     | 1.64×     |
-| gin *(Go)*          | 29.4k     | 4.24ms     | 13.91ms     | 1.17×     |
-| **jero**            | **25.0k** | **5.06ms** | **15.12ms** | **1.00×** |
-| blacksheep          | 20.6k     | 6.17ms     | 16.47ms     | 0.82×     |
-| django-bolt         | 20.3k     | 6.27ms     | 16.21ms     | 0.81×     |
-| robyn               | 17.9k     | 7.10ms     | 16.57ms     | 0.72×     |
-| litestar            | 17.1k     | 7.44ms     | 18.23ms     | 0.68×     |
-| spring-boot *(Java)*| 16.0k     | 7.93ms     | 15.65ms     | 0.64×     |
-| fastapi             | 12.8k     | 9.94ms     | 22.88ms     | 0.51×     |
-| flask               | 10.1k     | 12.60ms    | 20.78ms     | 0.40×     |
-| django-ninja        | 2.9k      | 44.52ms    | 85.68ms     | 0.11×     |
+| Framework              | req/s      | mean       | p99        | vs jero   |
+| :--------------------- | :--------- | :--------- | :--------- | :-------- |
+| elysia *(Bun)* †       | 56.7k      | 2.25ms     | 3.71ms     | 1.87×     |
+| gin *(Go)* †           | 32.0k      | 3.99ms     | 7.30ms     | 1.06×     |
+| **jero**               | **30.3k**  | **4.23ms** | **7.19ms** | **1.00×** |
+| django-bolt            | 23.4k      | 5.52ms     | 13.09ms    | 0.77×     |
+| blacksheep             | 20.7k      | 6.20ms     | 11.61ms    | 0.68×     |
+| spring-boot *(Java)* † | 20.4k      | 6.25ms     | 9.64ms     | 0.68×     |
+| litestar               | 18.2k      | 7.06ms     | 17.32ms    | 0.60×     |
+| robyn                  | 17.9k      | 7.15ms     | 10.89ms    | 0.59×     |
+| fastapi                | 12.2k      | 10.45ms    | 20.04ms    | 0.40×     |
+| flask                  | 11.2k      | 11.35ms    | 12.05ms    | 0.37×     |
 
-jero is the fastest Python framework outright on the outbound hop, within ~15% of the
-Go service, and it gets there while decoding the upstream payload into a typed model,
-where Django Bolt, Blacksheep, and Elysia relay the raw bytes straight through. With
-the client held constant across the Python field, what separates these rows is the
-framework. Elysia is the fastest proxy overall.
+jero is the fastest Python framework outright on the outbound hop, 1.3× Django Bolt,
+and within 6% of the Go service at a slightly lower p99. With the client held constant
+across the Python field, what separates these rows is the framework. Elysia, which
+returns the upstream payload parsed but unvalidated, is the fastest proxy overall.
 
-### 4. `GET /users/me`: bound by the database driver
+### 4. `GET /users/me`: the database read
 
-Bearer/JWT auth, then a row read from Postgres. Every request pays the database
-driver's cost, which compresses the field and plays to Go's cheap native driver. The
-whole async Python fleet (the Django pair included, by the suite's documented exception
-to per-framework idiom) reads through the same Rust-based driver (psqlpy), so these
-rows compare frameworks, not data layers.
+Bearer/JWT auth, then a row read from Postgres by the token's subject. Every request
+pays the database driver's cost. The whole async Python fleet (Django Bolt included,
+by the suite's documented exception to per-framework idiom) reads through the same
+Rust-based driver (fastpg), so these rows compare frameworks, not data layers.
 
-| Framework           | req/s     | mean        | p99         | vs jero   |
-| :------------------ | :-------- | :---------- | :---------- | :-------- |
-| gin *(Go)*          | 32.3k     | 3.82ms      | 14.22ms     | 2.89×     |
-| elysia *(Bun)*      | 26.0k     | 4.84ms      | 14.85ms     | 2.33×     |
-| spring-boot *(Java)*| 16.6k     | 7.65ms      | 17.06ms     | 1.49×     |
-| **jero**            | **11.2k** | **11.43ms** | **21.47ms** | **1.00×** |
-| blacksheep          | 9.8k      | 13.06ms     | 24.53ms     | 0.88×     |
-| django-bolt         | 9.6k      | 13.30ms     | 27.95ms     | 0.86×     |
-| robyn               | 9.3k      | 13.71ms     | 24.86ms     | 0.83×     |
-| litestar            | 8.2k      | 15.63ms     | 28.31ms     | 0.73×     |
-| fastapi             | 6.6k      | 19.46ms     | 36.21ms     | 0.59×     |
-| flask               | 6.0k      | 21.16ms     | 39.50ms     | 0.54×     |
-| django-ninja        | 1.9k      | 68.85ms     | 131.21ms    | 0.17×     |
+| Framework              | req/s      | mean       | p99        | vs jero   |
+| :--------------------- | :--------- | :--------- | :--------- | :-------- |
+| **jero**               | **46.9k**  | **2.72ms** | **3.26ms** | **1.00×** |
+| elysia *(Bun)* †       | 37.2k      | 3.44ms     | 6.60ms     | 0.79×     |
+| gin *(Go)* †           | 37.0k      | 3.48ms     | 7.79ms     | 0.79×     |
+| django-bolt            | 36.4k      | 3.51ms     | 4.18ms     | 0.78×     |
+| blacksheep             | 28.7k      | 4.47ms     | 6.71ms     | 0.61×     |
+| robyn                  | 22.4k      | 5.71ms     | 8.62ms     | 0.48×     |
+| litestar               | 21.9k      | 5.87ms     | 10.37ms    | 0.47×     |
+| spring-boot *(Java)* † | 20.8k      | 6.15ms     | 9.72ms     | 0.44×     |
+| fastapi                | 14.0k      | 9.11ms     | 18.28ms    | 0.30×     |
+| flask                  | 8.8k       | 14.53ms    | 16.05ms    | 0.19×     |
 
-jero is the fastest Python framework, at a narrowed margin (1.1× Blacksheep), because
-when the driver dominates the request, the framework matters less. Notably, Django
-Bolt's Rust-server advantage disappears here: once every request spends its time
-waiting on Postgres, Bolt lands mid-pack with the other Python frameworks. The compiled
-languages pull clear on their native drivers; that is the honest ceiling on what any
-Python framework can do for a database-bound service.
+jero is the fastest framework in the field here, 1.26× Elysia and Gin on their native
+drivers and 1.6× Blacksheep. A fast driver doesn't make the framework irrelevant: with
+fastpg under the whole async Python fleet, the spread from jero to FastAPI is still
+3.3×.
 
 ## How to read this
 
-- **jero is the fastest Python ASGI framework in all four scenarios, and the fastest
-  Python framework outright on the proxy and database paths.** That is the durable
-  claim. Against the frameworks that share its architecture (Blacksheep, Litestar, and
-  FastAPI on the same granian server), jero leads every test, by 1.1× to 2.6×.
-- **On the pure framework path, jero runs at compiled-language speed.** Elysia, Gin,
-  Django Bolt, and jero finish within 3% of each other on `GET /info`, though the
-  others had CPU headroom left and jero was near its ceiling, so read the cluster as
-  parity under these conditions, not jero beating Go.
-- **Django Bolt is the closest Python rival, and the comparison is instructive.** Its
-  built-in Rust server does routing and serialization outside Python, which wins it the
-  authed write and a ~1% edge on JSON. On the proxy and database paths, where the
-  request's time is spent beyond the framework, that advantage evaporates and jero
-  leads it. A Rust core accelerates exactly the slice of the request it covers.
-- **Django Ninja's numbers are about Django's request machinery, not Ninja's binding.**
-  It sits an order of magnitude below the field on every test, with the same driver,
-  client, and hand-rolled auth as everyone else, because every request runs the full
-  Django request cycle on a single core. Bolt, which bypasses that machinery entirely,
-  is the controlled experiment proving where the cost lives.
-- **Go, Bun, and Java are context, not competition.** Gin and Elysia split the four
-  outright wins between them; Spring Boot runs mid-field (beating jero on the database
-  test, trailing it elsewhere) while holding ~615–670M of resident memory against the
-  Python field's ~50–140M and Gin's ~12–34M. Read the JVM number with care: under
-  default heap sizing the JVM commits memory up front and rarely returns it, so much of
-  that footprint is reserved heap rather than working set, and a tuned `-Xmx` would
-  show far less. It is the honest cost of idiomatic defaults, not Spring Boot's floor.
-  Python is not faster than Go, and this page doesn't claim it is.
-- **The proxy result is the framework, not the client.** With the same Rust-based HTTP
-  client under every Python framework, jero relays a *typed, validated* upstream
-  payload within ~15% of the Go service. Pick a pure-Python client instead and the
-  client's ceiling swallows the whole Python field: the client library matters more
-  than the framework on that path.
-- **On the database path, the driver decides it.** Go's native driver is well ahead;
-  jero stays ahead of every Python framework, which is the most it can do there.
+- **jero is the fastest Python framework on three of four workloads and ties Django
+  Bolt on the fourth.** That is the durable claim. Against the frameworks that share
+  its architecture (Blacksheep, Litestar, and FastAPI on the same peregrine server),
+  jero leads every test, by 1.4× to 4.5×.
+- **jero out-runs Go here, under these conditions.** It beats Gin on three of the four
+  tests and trails it by 6% on the proxy. Read that as "a compiled single-core
+  baseline is no longer the ceiling for a Python framework on this workload shape",
+  not as "Python is faster than Go": Gin at `GOMAXPROCS=1` is deliberately held to one
+  core, and real Go services scale across cores in ways a single-worker Python process
+  does not.
+- **Django Bolt is the closest Python rival.** Its built-in Rust server does routing
+  and serialization outside Python, which ties it with jero on the authed write and
+  keeps it within 5% on JSON. On the proxy and database paths, where the request's time
+  is spent beyond the framework, jero leads it by ~1.3×. A Rust core accelerates
+  exactly the slice of the request it covers.
+- **Bun and Java are context, not competition.** Elysia takes the pure framework and
+  proxy tests outright. Spring Boot runs mid-field while holding ~615–685M of resident
+  memory against the Python field's ~40–107M and Gin's ~10–29M. Read the JVM number
+  with care: under default heap sizing the JVM commits memory up front and rarely
+  returns it, so much of that footprint is reserved heap rather than working set, and
+  a tuned `-Xmx` would show far less. It is the honest cost of idiomatic defaults, not
+  Spring Boot's floor.
+- **The proxy result is the framework, not the client.** With the same HTTP client
+  under every Python framework, jero relays a *typed, validated* upstream payload
+  within 6% of the Go service. Pick a pure-Python client instead and the client's
+  ceiling swallows the whole Python field: the client library matters more than the
+  framework on that path.
+- **Two runs, one harness.** The Python rows and the cross-language rows (†) come from
+  two runs on the same day with the same settings. Repeat runs agree within ~1–2%, so
+  the comparison holds, but the † rows were not measured alongside the rest.
 - **A benchmark is not your app.** Single worker, one core, fixed payloads, best-of-N
-  on an idle EC2 host. Real workloads have more moving parts. Treat these as
-  directional evidence that jero's per-request overhead is low, not as a promise about
-  your production numbers. For a workload that matters to you, the only number worth
-  trusting is the one you measure yourself.
+  on an idle EC2 host, latency measured at saturation. Real workloads have more moving
+  parts. Treat these as directional evidence that jero's per-request overhead is low,
+  not as a promise about your production numbers. For a workload that matters to you,
+  the only number worth trusting is the one you measure yourself.
 
 Where jero's design earns these numbers: all type introspection happens **once, at
 startup**. The request path is dict lookup → msgspec decode → handler call → encode, and
@@ -285,7 +289,7 @@ ceiling** the frameworks are measured against.
 !!! warning "This is a different test from the four scenarios above"
 
     The tables above measure **throughput you'd actually get**: a real server, real
-    sockets, 128 concurrent clients. This script measures **how close each framework gets
+    sockets, 128 concurrent connections. This script measures **how close each framework gets
     to the theoretical maximum** for the work itself. The hand-rolled `raw` row *is* that
     maximum (identical routing, decode, and encode with no framework at all), so read each
     framework's distance from `raw` as the price of what it adds for you.

@@ -6,22 +6,36 @@ page covers each.
 
 ## Running the app
 
-Any ASGI server works. [granian](https://github.com/emmett-framework/granian) is the
-recommended default (it's what the [benchmarks](../performance.md) run), and the
-`granian` extra installs both in one step:
+Any ASGI server works. For production on Linux,
+[peregrine](https://pypi.org/project/peregrine-server/) is the recommended server:
+it's what the [benchmarks](../performance.md) run, and it ships wheels for Linux
+(x86_64 and aarch64) and Windows:
+
+```bash
+uv add peregrine-server
+peregrine --host 0.0.0.0 --workers 1 myapp:app
+```
+
+peregrine publishes no macOS wheels (installing it there compiles it from source,
+which needs a Swift toolchain), so for local development on a Mac, or anywhere you'd
+rather not depend on it, [granian](https://github.com/emmett-framework/granian) is the
+default, and the `granian` extra installs both in one step:
 
 ```bash
 uv add "jero[granian]"
-granian --interface asgi --workers 4 myapp:app
+granian --interface asgi --workers 1 myapp:app
 ```
 
-Each worker is a separate process: `wire` runs in every one, so every worker builds
-its own services, connection pools, and [background-task](background-tasks.md) queue.
-Anything that must be shared across workers (a cache, a queue) belongs in an external
+jero targets **one worker per pod**: run a single worker in each container and scale
+out by adding pods, not by raising `--workers`. That is the shape jero is optimised and
+[benchmarked](../performance.md) for (one worker on one core), and it keeps each pod's
+resource limits, connection pools, and [background-task](background-tasks.md) queue
+sized for exactly one process. Each pod runs `wire` and builds its own services, so
+anything that must be shared across pods (a cache, a queue) belongs in an external
 service, not in process memory.
 
 Host, port, worker count, and request timeouts are all server configuration — see
-granian's docs. jero adds nothing to configure on the request path.
+your server's docs. jero adds nothing to configure on the request path.
 
 ## Behind a reverse proxy
 
@@ -66,7 +80,7 @@ here.) Operation, ref, and `from_path(...)` links are rewritten against the base
 Per-request response-body transformation — compression, caching, ETags computed on
 the fly — is server/proxy work. jero's [middleware](middleware.md) can answer
 requests, add headers, and observe; it never rewrites bodies, because that costs the
-buffering jero refuses to pay. Configure gzip/brotli, caching, and TLS at granian or
+buffering jero refuses to pay. Configure gzip/brotli, caching, and TLS at the server or
 your reverse proxy.
 
 The one exception is [`_include_assets`](assets.md): compression and `ETag`s there
@@ -97,5 +111,4 @@ logging.basicConfig(level=logging.INFO)   # or your dictConfig
 What arrives there: the docs-URL line at startup (`INFO`), errors raised inside a
 [stream](streaming.md#disconnect-handling) after the response started (with traceback),
 failed or unhandled [background items](background-tasks.md#enqueuing), and dropped
-queued work at shutdown. Request access logs are the server's job — granian has its
-own.
+queued work at shutdown. Request access logs are the server's job, not jero's.

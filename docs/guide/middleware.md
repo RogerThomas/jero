@@ -101,7 +101,7 @@ a dynamic hook covers.
 **The capability boundary:** middleware can *answer* a request
 (`intercept`), *add response headers* (`response_headers`), and *watch* (`observe`). It
 can never rewrite a handler's body or status: that requires buffering or wrapping every
-response — the onion price — and belongs in granian or your reverse proxy (compression,
+response — the onion price — and belongs in the server or your reverse proxy (compression,
 caching, ETags). jero refuses it rather than covering it slowly. Passing
 state from middleware to handlers (`request.state.tenant`) is also not offered: the
 idiom is jero's existing typed sources — bind the header in the handler, or carry it on
