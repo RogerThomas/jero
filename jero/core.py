@@ -4627,8 +4627,10 @@ class BaseApp[FactoryT = None](ABC):
             self.__log_openapi_docs(self.__openapi)
 
     async def __close_resources(self) -> None:
-        await self.__astack.aclose()
-        self.__stack.close()
+        try:
+            await self.__astack.aclose()
+        finally:
+            self.__stack.close()  # even if an async resource failed to close
 
     async def __handle_lifespan(self, receive: Receive, send: Send) -> None:
         await receive()  # lifespan.startup
@@ -4636,13 +4638,15 @@ class BaseApp[FactoryT = None](ABC):
             await self.wire()
             self.__finalize()  # builds the OpenAPI doc; can raise WiringError (e.g. tag conflict)
         except BaseException as exc:
-            await self.__close_resources()  # release anything entered before the failure
-            await send(
-                {
-                    "type": "lifespan.startup.failed",
-                    "message": f"{type(exc).__name__}: {exc}",
-                },
-            )
+            try:
+                await self.__close_resources()  # release anything entered before the failure
+            finally:
+                await send(
+                    {
+                        "type": "lifespan.startup.failed",
+                        "message": f"{type(exc).__name__}: {exc}",
+                    },
+                )
             raise
         await send({"type": "lifespan.startup.complete"})
 

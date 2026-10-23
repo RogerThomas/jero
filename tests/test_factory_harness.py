@@ -98,6 +98,53 @@ def test_factory_entered_resources_close_at_app_shutdown() -> None:
     assert (app.async_probe.closed, app.sync_probe.closed) == (True, True)
 
 
+class FailingAsyncProbe:
+    """An async context manager whose close raises."""
+
+    async def __aenter__(self) -> Self:
+        """Enter the context, returning self."""
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        """Exit the context by failing."""
+        raise RuntimeError("close-failed")
+
+
+class FailingCloseApp(BaseApp):
+    """App that opens a sync probe and an async resource whose close fails."""
+
+    sync_probe: SyncProbe
+
+    async def wire(self) -> None:
+        self.sync_probe = self._enter(SyncProbe())
+        await self._aenter(FailingAsyncProbe())
+
+
+class FailingCloseThenWireFailsApp(FailingCloseApp):
+    """FailingCloseApp whose wire then fails, so the close runs on the startup path."""
+
+    async def wire(self) -> None:
+        await super().wire()
+        raise RuntimeError("wire-failed")
+
+
+def test_sync_resources_close_when_an_async_close_fails_at_shutdown() -> None:
+    """An async resource failing to close at shutdown still lets the sync stack close."""
+    app = FailingCloseApp()
+    with pytest.raises(RuntimeError, match="close-failed"), TestClient(app):
+        pass
+    assert app.sync_probe.closed is True
+
+
+def test_startup_failure_is_reported_when_an_async_close_fails() -> None:
+    """When wire fails and an async resource then fails to close, the server is still
+    told startup failed (with the wire error), and the sync stack still closes."""
+    app = FailingCloseThenWireFailsApp()
+    with pytest.raises(RuntimeError, match="lifespan startup failed: RuntimeError: wire-failed"):
+        TestClient(app)
+    assert app.sync_probe.closed is True
+
+
 def test_harness_runs_async_create_and_closes_on_exit() -> None:
     """An async create_* is awaited via run; its resource is closed on exit."""
     with FactoryHarness(ProbeFactory) as harness:
