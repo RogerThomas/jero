@@ -47,6 +47,13 @@ class App(BaseApp):
 `_aenter(cm)` enters an async context manager; `_enter(cm)` a sync one. Both return the
 opened resource and register it for teardown.
 
+> **This is your ASGI lifespan.** `wire` runs on `lifespan.startup` and the exit stacks
+> close on `lifespan.shutdown`, so there is no separate startup or shutdown hook: teardown
+> code goes in a context manager you enter here. It also means your server must send
+> lifespan events. Granian and uvicorn do by default, but with lifespan disabled (e.g.
+> `uvicorn --lifespan off`) `wire` never runs, no routes are registered, and every
+> request gets a 404.
+
 ## Factories
 
 For anything real, group construction in a `BaseFactory`. Parameterize the app with it

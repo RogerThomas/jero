@@ -1,6 +1,0 @@
-services:
-  app:
-    command: ["--port", "8000", "benchmarks.ci.fastapi_app:app"]
-  benchmark:
-    environment:
-      BENCHMARK_FRAMEWORK: fastapi

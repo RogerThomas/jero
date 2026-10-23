@@ -26,5 +26,5 @@ def test_startup_bench_app(benchmark: BenchmarkFixture, loop: asyncio.AbstractEv
 
 
 def test_startup_ci_app(benchmark: BenchmarkFixture, loop: asyncio.AbstractEventLoop) -> None:
-    """Wire the HTTP suite's two CPU workloads without its I/O services or OpenAPI."""
+    """Wire the info and JWT movie workloads, without OpenAPI."""
     benchmark(lambda: loop.run_until_complete(start_and_stop(CIApp())))

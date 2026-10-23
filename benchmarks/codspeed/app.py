@@ -4,8 +4,7 @@ from dataclasses import dataclass
 
 from msgspec import Struct
 
-from benchmarks.ci.common import Workload
-from benchmarks.ci.jero_app import InfoEndpoint, JWTAuth, MoviesResource
+from benchmarks.codspeed.workloads import InfoEndpoint, JWTAuth, MoviesResource, Workload
 from jero import (
     CORS,
     AuthenticationRequiredError,
@@ -147,9 +146,9 @@ class BenchApp(BaseApp):
 
 
 class CIApp(BaseApp):
-    """Reuse the HTTP suite's CPU workloads without opening its I/O services."""
+    """The info and JWT movie workloads, without OpenAPI."""
 
     async def wire(self) -> None:
-        """Mount the shared handlers and authenticator without database or HTTP pools."""
+        """Mount the two workload handlers and the JWT authenticator."""
         self._include_endpoint(InfoEndpoint())
         self._include_resource(MoviesResource(), auth=JWTAuth(Workload.signing_key()))

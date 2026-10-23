@@ -415,45 +415,17 @@ Always follow the following style guide:
   record. A fix isn't done until it has a regression test. **Never delete a bug note
   that already exists** — when its bug is fixed, flip its row to `Done` in the manifest
   and update the Open/Done counts rather than removing it.
-- `benchmarks/ci/` is the small GitHub Actions HTTP suite: jero vs FastAPI,
-  `GET /info`, ryjwt-authenticated `POST /movies`, `GET /catalog` against a local
-  pyreqwest HTTP upstream, and authenticated `GET /users/me` against PostgreSQL
-  through psycopg. Bake builds shared app, k6 runner, and static Rust upstream
-  images; `compose.yml` plus `compose.<framework>.yml` defines each stack. The app
-  has one CPU, k6 defaults to two, and PostgreSQL/upstream each have one CPU
-  (sharing the remaining CPU on four-CPU hosts). Affinity and quotas are verified
-  before startup. `--load-cpus` and `--backend-cpus` permit larger allocations
-  on larger hosts while keeping the app on one CPU. The shared **Benchmarks**
-  workflow (`codspeed.yml`) runs its HTTP job only for manual `suite=http|all`, and
-  offers free GitHub-hosted x86/ARM runners and both CPU counts as inputs, with
-  architecture-specific build caches. CodSpeed requires an organization-owned
-  repository; this personal repo cannot use its macro runners yet. The
-  HTTP job runs both sequentially under granian/uvloop on the same runner, publishes a
-  Markdown job summary, and uploads all attempts/logs as artifacts. Dependencies
-  are in the `benchmark` group (also included by `dev` so the apps stay checked).
-  Its CLI is a typed async yeetr entry point:
-  `uv run yeet ./benchmarks/ci/run.py`, after
-  `docker buildx bake -f benchmarks/ci/docker-bake.hcl --load`.
-  Both apps own equivalent startup/shutdown-managed connection pools, and the
-  harness seeds the database and checks auth, payloads, and missing users before
-  measuring. k6 uses the AWS suite's lightweight checks during load. Reports show
-  app CPU separately from k6 CPU and flag generator saturation; never describe
-  generator-limited throughput as framework capacity. `benchmarks/README.md` is
-  the suite entry point; its HTTP README has allocation and fairness details for local
-  runs. The full competitor/EC2 harness remains in a **separate repo**;
-  keep its results separate from the shared-runner CI numbers.
 - `benchmarks/codspeed/` is the CodSpeed suite (pytest + `pytest-codspeed`, in the
-  `benchmark` group): in-process ASGI request benchmarks (one per hot-path shape, plus
-  the CI suite's two CPU workloads) and startup/wiring benchmarks, driven on a
-  benchmark-owned event loop by `harness.py`. The shared `codspeed.yml` runs it in
-  CPU simulation on every push to `main` and every PR; manual runs select
-  `suite=cpu|http|all` (default CPU). CPU results go to CodSpeed; HTTP results stay
-  in GitHub summaries/artifacts. Each job has its own concurrency policy so new
-  CPU runs do not cancel HTTP measurements. Its `CIApp` reuses the HTTP suite's handlers
-  and authenticator without starting PostgreSQL or upstream connection pools.
-  Run locally with
+  `benchmark` group, which `dev` includes): in-process ASGI request benchmarks (one per
+  hot-path shape, plus the info and JWT movie workloads in `workloads.py`) and
+  startup/wiring benchmarks, driven on a benchmark-owned event loop by `harness.py`.
+  The **Benchmarks** workflow (`codspeed.yml`) runs it in CPU simulation on every push
+  to `main` and every PR (and on manual dispatch); results go to CodSpeed. CodSpeed's
+  macro runners need an organization-owned repository, which this personal repo isn't
+  yet. Run locally with
   `uv run pytest benchmarks/codspeed --codspeed --timeout=0` (or plain, without
-  `--codspeed`, as a quick smoke test).
+  `--codspeed`, as a quick smoke test). Published HTTP throughput numbers come only from
+  the competitor/EC2 harness in a **separate repo**; there is no HTTP load suite here.
 
 ## Status & sharp edges
 
