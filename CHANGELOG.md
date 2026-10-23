@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/RogerThomas/jero/compare/0.1.4...0.1.5) (2026-10-23)
+
+
+### Bug Fixes
+
+* close sync resources and report startup failure when an async close fails ([#68](https://github.com/RogerThomas/jero/issues/68)) ([38a848d](https://github.com/RogerThomas/jero/commit/38a848d9772bfa75db79e454a0548118c7d8a1c7))
+
 ## [0.1.4](https://github.com/RogerThomas/jero/compare/0.1.3...0.1.4) (2026-10-22)
 
 
