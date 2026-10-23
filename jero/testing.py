@@ -1042,8 +1042,10 @@ class TestClient:
 
     def close(self) -> None:
         """Run the app's lifespan shutdown and stop the background loop."""
-        self._submit(self._stop_lifespan())
-        self._loop_thread.close()
+        try:
+            self._submit(self._stop_lifespan())
+        finally:
+            self._loop_thread.close()
 
     def __enter__(self) -> Self:
         return self
