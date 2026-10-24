@@ -206,9 +206,9 @@ In a side-by-side benchmark against nine other frameworks — Python (Django Bol
 Blacksheep, Litestar, Robyn, FastAPI, Flask), Go (Gin), Bun (Elysia), and Java (Spring
 Boot) — **jero is the fastest Python framework on three of the four scenarios, and ties
 Django Bolt (within 0.1%) on the fourth.** It is the fastest Python ASGI framework in
-every scenario, out-runs Go's Gin on three of the four, and is the fastest framework of
-any language on the database scenario. Each panel below is scaled to its own fastest
-framework; the labels keep the absolute throughput:
+every scenario and, per core, out-runs Go's Gin on three of the four and is the fastest
+of all ten on the database scenario. Each panel below is scaled to its own
+fastest framework; the labels keep the absolute throughput:
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/RogerThomas/jero/main/docs/assets/bench-grid.svg" alt="Benchmark results: jero is the fastest Python ASGI framework across all four workloads" width="820">
@@ -234,9 +234,8 @@ write; on the proxy and database paths, where the request's time is spent beyond
 framework, jero leads it by ~1.3×. Against the frameworks on the same ASGI server
 (Blacksheep, Litestar, FastAPI) jero leads every scenario, by 1.4× to 4.5×. Only Bun's
 Elysia is faster on this path, and on the upstream-proxy scenario Go's Gin edges jero
-by 6% while jero returns a typed, validated payload. That jero beats a single-core Gin
-on three of four scenarios is a statement about these conditions, not a claim that
-Python is faster than Go. (The Python rows are from run `20261023T113907`; the Gin,
+by 6%. That jero beats a single-core Gin on three of four scenarios is a statement
+about these conditions, not a claim that Python is faster than Go. (The Python rows are from run `20261023T113907`; the Gin,
 Elysia, and Spring Boot rows are from that day's full-fleet run, `20261023T091453`.)
 
 These are favourable, constrained conditions — single worker, one dedicated core,
