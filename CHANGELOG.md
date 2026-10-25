@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.9](https://github.com/RogerThomas/jero/compare/0.1.8...0.1.9) (2026-10-25)
+
+
+### Documentation
+
+* correct the FastAPI benchmark rows and describe POST /movies as JWT + validation ([#76](https://github.com/RogerThomas/jero/issues/76)) ([55a3402](https://github.com/RogerThomas/jero/commit/55a3402f11adfc9c6ceee78d42b12fe199abddfd))
+
 ## [0.1.8](https://github.com/RogerThomas/jero/compare/0.1.7...0.1.8) (2026-10-25)
 
 
