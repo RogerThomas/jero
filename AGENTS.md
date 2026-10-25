@@ -484,14 +484,12 @@ Always follow the following style guide:
   item-type checks they fire under `_include_openapi`. Dispatch is an `isinstance` chain
   built at wiring, most-derived-first; a result matching no member goes through the
   exception handlers as a logged 500.
-- **Performance (validated, run `20261023T113907`; Gin/Elysia/Spring Boot from
-  `20261023T091453`)**: wrk, 128 connections, 1 dedicated core, peregrine+uvloop,
-  Python 3.14, one EC2 spot instance per framework. Fastest Python ASGI framework on all
-  four scenarios; fastest Python framework outright on `/info`, `/catalog` (proxy), and
-  `/users/me` (DB), and tied with Django Bolt (0.1% apart) on the authed `POST /movies`
-  (83k req/s ≈ 2.5× blacksheep, ~2.8× litestar, ~4.5× FastAPI). Per core, beats Gin on
-  three of four (trails it by 6% on the proxy) and is the fastest of all ten on the DB
-  scenario.
+- **Performance (validated, run `20261025T073117`, all ten frameworks)**: wrk, 128
+  connections, 1 dedicated core, peregrine+uvloop, Python 3.14, EC2 spot, one framework
+  at a time. Fastest Python framework on all four scenarios: 1.03–1.34× Django Bolt
+  (closest on the authed `POST /movies`, 83k req/s) and 1.4–5.0× blacksheep, litestar,
+  and FastAPI. Per core, beats Gin on three of four (trails it by 9% on the proxy) and
+  is the fastest of all ten on the DB scenario.
   Python apps share lothc (HTTP), fastpg (DB), and ryjwt (JWT). Docs grid:
   `scripts/gen_bench_grid.py <run> [<context run>]`. (The benchmark harness lives in a
   separate repo.)

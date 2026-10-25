@@ -4,13 +4,13 @@ Four workloads, ten frameworks, one worker on one dedicated core each. Every app
 harness, and the full methodology are public at
 [api-benchmarks](https://github.com/RogerThomas/api-benchmarks).
 
-**TL;DR:** jero is the fastest Python ASGI framework on all four workloads, by 1.4× to
-4.5× over Blacksheep, Litestar, and FastAPI. It is the fastest Python framework on three
-of the four and ties Django Bolt (within 0.1%) on the fourth. Per core, it beats Go's
-Gin on three of the four and is the fastest of all ten on the database path.
+**TL;DR:** jero is the fastest Python framework on all four workloads, by 1.03× to
+1.34× over Django Bolt and 1.4× to 5.0× over Blacksheep, Litestar, and FastAPI. Per
+core, it beats Go's Gin on three of the four and is the fastest of all ten on the
+database path.
 
 <p align="center">
-  <img src="assets/bench-grid.svg" alt="Benchmark results: jero is the fastest Python ASGI framework across all four workloads" width="820">
+  <img src="assets/bench-grid.svg" alt="Benchmark results: jero is the fastest Python framework across all four workloads" width="820">
 </p>
 
 Each panel is scaled to its own fastest framework; the labels show absolute throughput.
@@ -19,7 +19,7 @@ Each panel is scaled to its own fastest framework; the labels show absolute thro
 
 | Setting         | Value                                                             |
 | :-------------- | :---------------------------------------------------------------- |
-| Machine         | Amazon EC2 `c9g.2xlarge` spot, eu-central-1, one per framework    |
+| Machine         | Amazon EC2 `c9g.2xlarge` spot, eu-central-1, one framework at a time |
 | Machine specs   | AWS Graviton5 (arm64), 8 vCPUs (physical cores, no SMT), 16 GiB   |
 | CPU             | 1 dedicated core per framework (cpuset affinity)                  |
 | Workers         | 1 (Gin at `GOMAXPROCS=1`, Go's own default on one core; Django Bolt at `--processes 1`) |
@@ -30,10 +30,11 @@ Each panel is scaled to its own fastest framework; the labels show absolute thro
 | Best-of-N       | 3 attempts, highest throughput kept                               |
 | Python          | 3.14.9 (uv's standalone CPython, every Python framework)          |
 | Python server   | [peregrine](https://pypi.org/project/peregrine-server/) 1.2.0 + uvloop (Flask via peregrine WSGI; Robyn and Django Bolt ship their own Rust servers) |
-| Outbound client | lothc 0.2.0 (over pyreqwest) for every Python framework           |
+| Outbound client | lothc 0.2.1 (over pyreqwest) for every Python framework           |
 | Database driver | fastpg for the async Python fleet; psycopg for sync Flask         |
 | Pools           | 64 connections per framework, database and outbound HTTP alike    |
-| Runs            | Gin, Elysia, Spring Boot (†): `20261023T091453`; Python frameworks rerun in `20261023T113907` to pick up lothc 0.2.0, same harness and settings |
+| Versions        | jero 0.1.7, Django Bolt 0.13.0, FastAPI 0.162.0                   |
+| Run             | `20261025T073117`, all ten frameworks, api-benchmarks commit `469c5ac` |
 
 - **Correctness first.** Every framework passed a 100-request body check before load
   and returned 100% expected statuses under it.
@@ -49,59 +50,58 @@ Each panel is scaled to its own fastest framework; the labels show absolute thro
 
 ## Results
 
-`req/s` higher is better; `mean` and `p99` lower is better. † marks a row from run
-`20261023T091453`.
+`req/s` higher is better; `mean` and `p99` lower is better.
 
 ### 1. `GET /info`: the pure framework path
 
 Route, build a typed JSON response with a custom header, encode. No I/O.
 
-| Framework              | req/s      | mean       | p99        | vs jero   |
-| :--------------------- | :--------- | :--------- | :--------- | :-------- |
-| elysia *(Bun)* †       | 161.3k     | 0.79ms     | 1.43ms     | 1.61×     |
-| **jero**               | **100.4k** | **1.27ms** | **1.31ms** | **1.00×** |
-| django-bolt            | 95.7k      | 1.33ms     | 1.36ms     | 0.95×     |
-| gin *(Go)* †           | 87.6k      | 1.47ms     | 3.33ms     | 0.87×     |
-| blacksheep             | 73.6k      | 1.73ms     | 1.78ms     | 0.73×     |
-| litestar               | 48.9k      | 2.60ms     | 2.66ms     | 0.49×     |
-| robyn                  | 43.4k      | 2.95ms     | 3.08ms     | 0.43×     |
-| spring-boot *(Java)* † | 41.3k      | 3.09ms     | 4.88ms     | 0.41×     |
-| fastapi                | 30.6k      | 4.17ms     | 4.22ms     | 0.30×     |
-| flask                  | 27.3k      | 4.69ms     | 4.80ms     | 0.27×     |
+| Framework            | req/s      | mean       | p99        | vs jero   |
+| :------------------- | :--------- | :--------- | :--------- | :-------- |
+| elysia *(Bun)*       | 156.8k     | 0.82ms     | 1.46ms     | 1.55×     |
+| **jero**             | **101.2k** | **1.26ms** | **1.30ms** | **1.00×** |
+| django-bolt          | 90.5k      | 1.41ms     | 1.45ms     | 0.89×     |
+| gin *(Go)*           | 89.3k      | 1.44ms     | 3.25ms     | 0.88×     |
+| blacksheep           | 73.4k      | 1.73ms     | 1.78ms     | 0.73×     |
+| litestar             | 49.6k      | 2.56ms     | 2.62ms     | 0.49×     |
+| robyn                | 43.8k      | 2.92ms     | 3.02ms     | 0.43×     |
+| spring-boot *(Java)* | 42.4k      | 3.01ms     | 4.81ms     | 0.42×     |
+| fastapi              | 27.3k      | 4.66ms     | 4.73ms     | 0.27×     |
+| flask                | 27.3k      | 4.68ms     | 4.79ms     | 0.27×     |
 
 ### 2. `POST /movies`: the authed write path (JWT)
 
 JWT auth, decode and validate a five-field body, encode, `201`.
 
-| Framework              | req/s      | mean       | p99        | vs jero   |
-| :--------------------- | :--------- | :--------- | :--------- | :-------- |
-| django-bolt            | 83.1k      | 1.54ms     | 1.57ms     | 1.00×     |
-| **jero**               | **83.0k**  | **1.53ms** | **1.59ms** | **1.00×** |
-| elysia *(Bun)* †       | 54.6k      | 2.34ms     | 4.19ms     | 0.66×     |
-| gin *(Go)* †           | 53.6k      | 2.39ms     | 5.10ms     | 0.65×     |
-| blacksheep             | 33.1k      | 3.85ms     | 3.91ms     | 0.40×     |
-| litestar               | 29.9k      | 4.27ms     | 4.34ms     | 0.36×     |
-| spring-boot *(Java)* † | 26.6k      | 4.82ms     | 7.35ms     | 0.32×     |
-| robyn                  | 26.4k      | 4.83ms     | 4.93ms     | 0.32×     |
-| flask                  | 20.2k      | 6.34ms     | 6.48ms     | 0.24×     |
-| fastapi                | 18.5k      | 6.89ms     | 6.96ms     | 0.22×     |
+| Framework            | req/s      | mean       | p99        | vs jero   |
+| :------------------- | :--------- | :--------- | :--------- | :-------- |
+| **jero**             | **82.9k**  | **1.53ms** | **1.58ms** | **1.00×** |
+| django-bolt          | 80.6k      | 1.59ms     | 1.62ms     | 0.97×     |
+| gin *(Go)*           | 54.6k      | 2.35ms     | 5.01ms     | 0.66×     |
+| elysia *(Bun)*       | 53.7k      | 2.38ms     | 4.26ms     | 0.65×     |
+| blacksheep           | 32.9k      | 3.88ms     | 3.95ms     | 0.40×     |
+| litestar             | 30.0k      | 4.25ms     | 4.32ms     | 0.36×     |
+| spring-boot *(Java)* | 27.2k      | 4.70ms     | 7.24ms     | 0.33×     |
+| robyn                | 26.3k      | 4.86ms     | 4.93ms     | 0.32×     |
+| flask                | 20.1k      | 6.35ms     | 6.48ms     | 0.24×     |
+| fastapi              | 16.7k      | 7.65ms     | 7.75ms     | 0.20×     |
 
 ### 3. `GET /catalog`: the outbound hop
 
 An authenticated call to a Rust upstream, decoded into a typed model and returned.
 
-| Framework              | req/s      | mean       | p99        | vs jero   |
-| :--------------------- | :--------- | :--------- | :--------- | :-------- |
-| elysia *(Bun)* †       | 56.7k      | 2.25ms     | 3.71ms     | 1.87×     |
-| gin *(Go)* †           | 32.0k      | 3.99ms     | 7.30ms     | 1.06×     |
-| **jero**               | **30.3k**  | **4.23ms** | **7.19ms** | **1.00×** |
-| django-bolt            | 23.4k      | 5.52ms     | 13.09ms    | 0.77×     |
-| blacksheep             | 20.7k      | 6.20ms     | 11.61ms    | 0.68×     |
-| spring-boot *(Java)* † | 20.4k      | 6.25ms     | 9.64ms     | 0.68×     |
-| litestar               | 18.2k      | 7.06ms     | 17.32ms    | 0.60×     |
-| robyn                  | 17.9k      | 7.15ms     | 10.89ms    | 0.59×     |
-| fastapi                | 12.2k      | 10.45ms    | 20.04ms    | 0.40×     |
-| flask                  | 11.2k      | 11.35ms    | 12.05ms    | 0.37×     |
+| Framework            | req/s      | mean       | p99        | vs jero   |
+| :------------------- | :--------- | :--------- | :--------- | :-------- |
+| elysia *(Bun)*       | 55.4k      | 2.31ms     | 3.79ms     | 1.82×     |
+| gin *(Go)*           | 33.1k      | 3.87ms     | 7.05ms     | 1.09×     |
+| **jero**             | **30.4k**  | **4.21ms** | **7.13ms** | **1.00×** |
+| django-bolt          | 22.7k      | 5.66ms     | 11.98ms    | 0.75×     |
+| blacksheep           | 20.6k      | 6.20ms     | 11.55ms    | 0.68×     |
+| spring-boot *(Java)* | 20.3k      | 6.29ms     | 9.33ms     | 0.67×     |
+| litestar             | 18.6k      | 6.89ms     | 14.05ms    | 0.61×     |
+| robyn                | 18.0k      | 7.12ms     | 10.82ms    | 0.59×     |
+| flask                | 11.4k      | 11.24ms    | 11.88ms    | 0.37×     |
+| fastapi              | 10.7k      | 11.95ms    | 22.85ms    | 0.35×     |
 
 Elysia relays the upstream JSON without decoding it into a typed model.
 
@@ -110,25 +110,25 @@ Elysia relays the upstream JSON without decoding it into a typed model.
 JWT auth, then one Postgres row by the token's subject. Gin, Elysia, and Spring Boot use
 their native drivers.
 
-| Framework              | req/s      | mean       | p99        | vs jero   |
-| :--------------------- | :--------- | :--------- | :--------- | :-------- |
-| **jero**               | **46.9k**  | **2.72ms** | **3.26ms** | **1.00×** |
-| elysia *(Bun)* †       | 37.2k      | 3.44ms     | 6.60ms     | 0.79×     |
-| gin *(Go)* †           | 37.0k      | 3.48ms     | 7.79ms     | 0.79×     |
-| django-bolt            | 36.4k      | 3.51ms     | 4.18ms     | 0.78×     |
-| blacksheep             | 28.7k      | 4.47ms     | 6.71ms     | 0.61×     |
-| robyn                  | 22.4k      | 5.71ms     | 8.62ms     | 0.48×     |
-| litestar               | 21.9k      | 5.87ms     | 10.37ms    | 0.47×     |
-| spring-boot *(Java)* † | 20.8k      | 6.15ms     | 9.72ms     | 0.44×     |
-| fastapi                | 14.0k      | 9.11ms     | 18.28ms    | 0.30×     |
-| flask                  | 8.8k       | 14.53ms    | 16.05ms    | 0.19×     |
+| Framework            | req/s      | mean       | p99        | vs jero   |
+| :------------------- | :--------- | :--------- | :--------- | :-------- |
+| **jero**             | **46.7k**  | **2.73ms** | **3.28ms** | **1.00×** |
+| gin *(Go)*           | 38.9k      | 3.29ms     | 6.87ms     | 0.83×     |
+| elysia *(Bun)*       | 36.3k      | 3.52ms     | 6.78ms     | 0.78×     |
+| django-bolt          | 35.9k      | 3.55ms     | 4.36ms     | 0.77×     |
+| blacksheep           | 28.2k      | 4.54ms     | 5.80ms     | 0.60×     |
+| robyn                | 22.5k      | 5.70ms     | 8.53ms     | 0.48×     |
+| litestar             | 22.0k      | 5.81ms     | 7.63ms     | 0.47×     |
+| spring-boot *(Java)* | 21.0k      | 6.08ms     | 9.49ms     | 0.45×     |
+| fastapi              | 11.8k      | 10.83ms    | 21.43ms    | 0.25×     |
+| flask                | 8.9k       | 14.37ms    | 15.87ms    | 0.19×     |
 
 ## Caveats
 
 - **Only one core was measured.** Go and the JVM scale across cores inside one
-  process; Python and Bun add processes, each with its own memory (~40–107M per Python
-  worker here, against Gin's ~10–29M).
-- **Spring Boot ran on JVM defaults** at ~615–684M resident; a tuned footprint was not
+  process; Python and Bun add processes, each with its own memory (~39–93M per Python
+  worker here, against Gin's ~10–28M).
+- **Spring Boot ran on JVM defaults** at ~612–676M resident; a tuned footprint was not
   measured.
 - **A benchmark is not your app.** Fixed payloads on an idle host. Measure the workload
   you care about.
