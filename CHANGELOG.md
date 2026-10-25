@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.7](https://github.com/RogerThomas/jero/compare/0.1.6...0.1.7) (2026-10-25)
+
+
+### Documentation
+
+* tighten the benchmark page and scope cross-language claims to one core ([#72](https://github.com/RogerThomas/jero/issues/72)) ([861c408](https://github.com/RogerThomas/jero/commit/861c408590c59687d7381a6ec9de9740803a06bf))
+
 ## [0.1.6](https://github.com/RogerThomas/jero/compare/0.1.5...0.1.6) (2026-10-23)
 
 
