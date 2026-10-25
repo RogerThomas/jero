@@ -489,8 +489,9 @@ Always follow the following style guide:
   Python 3.14, one EC2 spot instance per framework. Fastest Python ASGI framework on all
   four scenarios; fastest Python framework outright on `/info`, `/catalog` (proxy), and
   `/users/me` (DB), and tied with Django Bolt (0.1% apart) on the authed `POST /movies`
-  (83k req/s ≈ 2.5× blacksheep, ~2.8× litestar, ~4.5× FastAPI). Beats Gin on three of
-  four (trails it by 6% on the proxy); fastest of any language on the DB scenario.
+  (83k req/s ≈ 2.5× blacksheep, ~2.8× litestar, ~4.5× FastAPI). Per core, beats Gin on
+  three of four (trails it by 6% on the proxy) and is the fastest of all ten on the DB
+  scenario.
   Python apps share lothc (HTTP), fastpg (DB), and ryjwt (JWT). Docs grid:
   `scripts/gen_bench_grid.py <run> [<context run>]`. (The benchmark harness lives in a
   separate repo.)
