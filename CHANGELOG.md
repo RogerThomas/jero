@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.8](https://github.com/RogerThomas/jero/compare/0.1.7...0.1.8) (2026-10-25)
+
+
+### Documentation
+
+* update benchmarks to the single full-fleet run of 2026-10-25 ([#74](https://github.com/RogerThomas/jero/issues/74)) ([7d5d2d6](https://github.com/RogerThomas/jero/commit/7d5d2d6149ffc7478589352183c9bfa241324168))
+
 ## [0.1.7](https://github.com/RogerThomas/jero/compare/0.1.6...0.1.7) (2026-10-25)
 
 
