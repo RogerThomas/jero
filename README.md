@@ -202,46 +202,34 @@ app = App()
 
 ## Performance / Benchmarks
 
-In a side-by-side benchmark against nine other frameworks — Python (Django Bolt,
-Blacksheep, Litestar, Robyn, FastAPI, Flask), Go (Gin), Bun (Elysia), and Java (Spring
-Boot) — **jero is the fastest Python framework on three of the four scenarios, and ties
-Django Bolt (within 0.1%) on the fourth.** It is the fastest Python ASGI framework in
-every scenario and, per core, out-runs Go's Gin on three of the four and is the fastest
-of all ten on the database scenario. Each panel below is scaled to its own
-fastest framework; the labels keep the absolute throughput:
+Four workloads, ten frameworks, one worker on one dedicated core each: Python (Django
+Bolt, Blacksheep, Litestar, Robyn, FastAPI, Flask), Go (Gin), Bun (Elysia), and Java
+(Spring Boot). **jero is the fastest Python framework on all four**, by 1.03× to 1.34×
+over Django Bolt and 1.4× to 5.0× over Blacksheep, Litestar, and FastAPI. Per core, it
+beats Gin on three of the four and is the fastest of all ten on the database workload.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/RogerThomas/jero/main/docs/assets/bench-grid.svg" alt="Benchmark results: jero is the fastest Python ASGI framework across all four workloads" width="820">
+  <img src="https://raw.githubusercontent.com/RogerThomas/jero/main/docs/assets/bench-grid.svg" alt="Benchmark results: jero is the fastest Python framework across all four workloads" width="820">
 </p>
 
-On the pure framework hot path (a typed JSON `GET`):
+On the pure framework path (a typed JSON `GET`):
 
-| Framework            | `GET /info` req/s | Relative to jero |
-| :------------------- | :---------------- | :--------------- |
-| elysia *(Bun)*       | 161.3k            | 1.61×            |
-| **jero**             | **100.4k**        | **1.00×**        |
-| django-bolt          | 95.7k             | 0.95×            |
-| gin *(Go)*           | 87.6k             | 0.87×            |
-| blacksheep           | 73.6k             | 0.73×            |
-| litestar             | 48.9k             | 0.49×            |
-| robyn                | 43.4k             | 0.43×            |
-| spring-boot *(Java)* | 41.3k             | 0.41×            |
-| fastapi              | 30.6k             | 0.30×            |
-| flask                | 27.3k             | 0.27×            |
+| Framework            | `GET /info` req/s | vs jero   |
+| :------------------- | :---------------- | :-------- |
+| elysia *(Bun)*       | 156.8k            | 1.55×     |
+| **jero**             | **101.2k**        | **1.00×** |
+| django-bolt          | 90.5k             | 0.89×     |
+| gin *(Go)*           | 89.3k             | 0.88×     |
+| blacksheep           | 73.4k             | 0.73×     |
+| litestar             | 49.6k             | 0.49×     |
+| robyn                | 43.8k             | 0.43×     |
+| spring-boot *(Java)* | 42.4k             | 0.42×     |
+| fastapi              | 27.3k             | 0.27×     |
+| flask                | 27.3k             | 0.27×     |
 
-jero leads Django Bolt's built-in Rust server by 5% here and ties it on the authed
-write; on the proxy and database paths, where the request's time is spent beyond the
-framework, jero leads it by ~1.3×. Against the frameworks on the same ASGI server
-(Blacksheep, Litestar, FastAPI) jero leads every scenario, by 1.4× to 4.5×. Only Bun's
-Elysia is faster on this path, and on the upstream-proxy scenario Go's Gin edges jero
-by 6%. That jero beats a single-core Gin on three of four scenarios is a statement
-about these conditions, not a claim that Python is faster than Go. (The Python rows are from run `20261023T113907`; the Gin,
-Elysia, and Spring Boot rows are from that day's full-fleet run, `20261023T091453`.)
-
-These are favourable, constrained conditions — single worker, one dedicated core,
-best-of-N — and a microbenchmark is not your application. See all four scenarios in the
-**[Performance / Benchmarks docs](https://RogerThomas.github.io/jero/performance/)**,
-and the full harness — every framework's source and the complete methodology — at
+All four workloads, the setup, and the caveats are in the
+**[Performance / Benchmarks docs](https://RogerThomas.github.io/jero/performance/)**;
+every app and the harness are at
 **[api-benchmarks](https://github.com/RogerThomas/api-benchmarks)**.
 
 ## Development

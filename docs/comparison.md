@@ -104,7 +104,7 @@ shape.
 Choose FastAPI when you want the ecosystem, the broadest familiarity, rich OpenAPI
 support today, and flexible dependency ergonomics. Choose jero when you want a stricter
 msgspec-first design with class resources, explicit wiring, aggressive startup
-validation, and 2.5× to 4.5× FastAPI's throughput on the same workloads (see
+validation, and 2.8× to 5.0× FastAPI's throughput on the same workloads (see
 [Performance / Benchmarks](performance.md)).
 
 ## Compared with BlackSheep

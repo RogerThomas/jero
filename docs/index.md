@@ -75,9 +75,8 @@ New here? Start with [Getting Started](getting-started.md).
 
 jero was written for speed and performance: in our four-scenario benchmark against nine
 frameworks across Python, Go, Bun, and Java (one worker on one core each), jero is the
-**fastest Python ASGI framework in every one**, the fastest Python framework outright
-on three of the four (tying Django Bolt on the fourth), and the fastest of all ten on
-the database path, methodology included. [→ Performance / Benchmarks](performance.md)
+**fastest Python framework in every one** and, per core, the fastest of all ten on the
+database path, methodology included. [→ Performance / Benchmarks](performance.md)
 
 ## Core principles
 
