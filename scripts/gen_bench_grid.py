@@ -69,7 +69,7 @@ class Panel(Struct):
 def _panels(report: Report, context: Report | None, cross_language: dict[str, str]) -> list[Panel]:
     meta = [
         ("test1", "JSON — GET /info", "the pure framework path"),
-        ("test2", "JWT — POST /movies", "authed write path"),
+        ("test2", "JWT — POST /movies", "JWT + body validation, no I/O"),
         ("test3", "Proxy — GET /catalog", "same HTTP client across Python"),
         ("test4", "Database — GET /users/me", "JWT + one Postgres row"),
     ]

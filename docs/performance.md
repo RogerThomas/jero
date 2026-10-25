@@ -69,9 +69,9 @@ Route, build a typed JSON response with a custom header, encode. No I/O.
 | fastapi              | 27.3k      | 4.66ms     | 4.73ms     | 0.27×     |
 | flask                | 27.3k      | 4.68ms     | 4.79ms     | 0.27×     |
 
-### 2. `POST /movies`: the authed write path (JWT)
+### 2. `POST /movies`: JWT auth and body validation
 
-JWT auth, decode and validate a five-field body, encode, `201`.
+JWT auth, decode and validate a five-field body, return it with a new id, `201`. No I/O.
 
 | Framework            | req/s      | mean       | p99        | vs jero   |
 | :------------------- | :--------- | :--------- | :--------- | :-------- |

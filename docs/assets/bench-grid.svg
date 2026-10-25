@@ -39,7 +39,7 @@
 <path d="M122,343.0 L158.3,343.0 Q162.3,343.0 162.3,347.0 L162.3,353.0 Q162.3,357.0 158.3,357.0 L122,357.0 Z" fill="#a8adb3"/>
 <text x="168.3" y="353.6" font-size="10.5" fill="#52514e" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" style="font-variant-numeric:tabular-nums">27.3k</text>
 <text x="412" y="90.0" font-size="12.5" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="600">JWT — POST /movies</text>
-<text x="767" y="90.0" font-size="10.5" fill="#898781" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">authed write path</text>
+<text x="767" y="90.0" font-size="10.5" fill="#898781" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="end">JWT + body validation, no I/O</text>
 <text x="502" y="119.6" font-size="11" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="700" text-anchor="end">jero</text>
 <path d="M510,109.0 L738.0,109.0 Q742.0,109.0 742.0,113.0 L742.0,119.0 Q742.0,123.0 738.0,123.0 L510,123.0 Z" fill="#2a78d6"/>
 <text x="748.0" y="119.6" font-size="10.5" fill="#0b0b0b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="700" style="font-variant-numeric:tabular-nums">82.9k</text>
