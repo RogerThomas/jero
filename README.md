@@ -205,7 +205,7 @@ app = App()
 Four workloads, ten frameworks, one worker on one dedicated core each: Python (Django
 Bolt, Blacksheep, Litestar, Robyn, FastAPI, Flask), Go (Gin), Bun (Elysia), and Java
 (Spring Boot). **jero is the fastest Python framework on all four**, by 1.03× to 1.34×
-over Django Bolt and 1.4× to 5.0× over Blacksheep, Litestar, and FastAPI. Per core, it
+over Django Bolt and 1.4× to 4.5× over Blacksheep, Litestar, and FastAPI. Per core, it
 beats Gin on three of the four and is the fastest of all ten on the database workload.
 
 <p align="center">
@@ -224,7 +224,7 @@ On the pure framework path (a typed JSON `GET`):
 | litestar             | 49.6k             | 0.49×     |
 | robyn                | 43.8k             | 0.43×     |
 | spring-boot *(Java)* | 42.4k             | 0.42×     |
-| fastapi              | 27.3k             | 0.27×     |
+| fastapi              | 30.5k             | 0.30×     |
 | flask                | 27.3k             | 0.27×     |
 
 All four workloads, the setup, and the caveats are in the

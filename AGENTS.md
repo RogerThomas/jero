@@ -487,8 +487,8 @@ Always follow the following style guide:
 - **Performance (validated, run `20261025T073117`, all ten frameworks)**: wrk, 128
   connections, 1 dedicated core, peregrine+uvloop, Python 3.14, EC2 spot, one framework
   at a time. Fastest Python framework on all four scenarios: 1.03–1.34× Django Bolt
-  (closest on the authed `POST /movies`, 83k req/s) and 1.4–5.0× blacksheep, litestar,
-  and FastAPI. Per core, beats Gin on three of four (trails it by 9% on the proxy) and
+  (closest on `POST /movies`, JWT + body validation with no I/O, 83k req/s) and
+  1.4–4.5× blacksheep, litestar, and FastAPI. Per core, beats Gin on three of four (trails it by 9% on the proxy) and
   is the fastest of all ten on the DB scenario.
   Python apps share lothc (HTTP), fastpg (DB), and ryjwt (JWT). Docs grid:
   `scripts/gen_bench_grid.py <run> [<context run>]`. (The benchmark harness lives in a

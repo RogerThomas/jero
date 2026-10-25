@@ -5,7 +5,7 @@ harness, and the full methodology are public at
 [api-benchmarks](https://github.com/RogerThomas/api-benchmarks).
 
 **TL;DR:** jero is the fastest Python framework on all four workloads, by 1.03× to
-1.34× over Django Bolt and 1.4× to 5.0× over Blacksheep, Litestar, and FastAPI. Per
+1.34× over Django Bolt and 1.4× to 4.5× over Blacksheep, Litestar, and FastAPI. Per
 core, it beats Go's Gin on three of the four and is the fastest of all ten on the
 database path.
 
@@ -66,12 +66,12 @@ Route, build a typed JSON response with a custom header, encode. No I/O.
 | litestar             | 49.6k      | 2.56ms     | 2.62ms     | 0.49×     |
 | robyn                | 43.8k      | 2.92ms     | 3.02ms     | 0.43×     |
 | spring-boot *(Java)* | 42.4k      | 3.01ms     | 4.81ms     | 0.42×     |
-| fastapi              | 27.3k      | 4.66ms     | 4.73ms     | 0.27×     |
+| fastapi              | 30.5k      | 4.18ms     | 4.24ms     | 0.30×     |
 | flask                | 27.3k      | 4.68ms     | 4.79ms     | 0.27×     |
 
-### 2. `POST /movies`: the authed write path (JWT)
+### 2. `POST /movies`: JWT auth and body validation
 
-JWT auth, decode and validate a five-field body, encode, `201`.
+JWT auth, decode and validate a five-field body, return it with a new id, `201`. No I/O.
 
 | Framework            | req/s      | mean       | p99        | vs jero   |
 | :------------------- | :--------- | :--------- | :--------- | :-------- |
@@ -84,7 +84,7 @@ JWT auth, decode and validate a five-field body, encode, `201`.
 | spring-boot *(Java)* | 27.2k      | 4.70ms     | 7.24ms     | 0.33×     |
 | robyn                | 26.3k      | 4.86ms     | 4.93ms     | 0.32×     |
 | flask                | 20.1k      | 6.35ms     | 6.48ms     | 0.24×     |
-| fastapi              | 16.7k      | 7.65ms     | 7.75ms     | 0.20×     |
+| fastapi              | 18.5k      | 6.91ms     | 6.98ms     | 0.22×     |
 
 ### 3. `GET /catalog`: the outbound hop
 
@@ -100,8 +100,8 @@ An authenticated call to a Rust upstream, decoded into a typed model and returne
 | spring-boot *(Java)* | 20.3k      | 6.29ms     | 9.33ms     | 0.67×     |
 | litestar             | 18.6k      | 6.89ms     | 14.05ms    | 0.61×     |
 | robyn                | 18.0k      | 7.12ms     | 10.82ms    | 0.59×     |
+| fastapi              | 12.3k      | 10.42ms    | 20.05ms    | 0.40×     |
 | flask                | 11.4k      | 11.24ms    | 11.88ms    | 0.37×     |
-| fastapi              | 10.7k      | 11.95ms    | 22.85ms    | 0.35×     |
 
 Elysia relays the upstream JSON without decoding it into a typed model.
 
@@ -120,7 +120,7 @@ their native drivers.
 | robyn                | 22.5k      | 5.70ms     | 8.53ms     | 0.48×     |
 | litestar             | 22.0k      | 5.81ms     | 7.63ms     | 0.47×     |
 | spring-boot *(Java)* | 21.0k      | 6.08ms     | 9.49ms     | 0.45×     |
-| fastapi              | 11.8k      | 10.83ms    | 21.43ms    | 0.25×     |
+| fastapi              | 14.0k      | 9.12ms     | 18.14ms    | 0.30×     |
 | flask                | 8.9k       | 14.37ms    | 15.87ms    | 0.19×     |
 
 ## Caveats
