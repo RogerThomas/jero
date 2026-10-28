@@ -131,9 +131,9 @@ Always follow the following style guide:
   annotation), `from_path(path)` / `from_url(url)` (a literal root-relative path composed
   with the URL base, or a verbatim full URL), or `from_ref("ref.op", path=...)` (string
   escape hatch for import cycles; weaker guarantees — checked at resolution). URLs are
-  relative unless one of two env vars is set (read once at app construction — env is
-  available before the factory, so it sidesteps the settings-only-in-the-factory ordering
-  problem): `JERO_BASE_URL` (a static public origin, no header trust) or
+  relative unless one of two env vars is set (read once at app construction; env rather
+  than a wiring call because the URL base is deployment config, not app logic):
+  `JERO_BASE_URL` (a static public origin, no header trust) or
   `JERO_TRUST_FORWARDED` (truthy → rebuild the origin per request from `X-Forwarded-*`
   proto/host/port + the stripped `X-Forwarded-Prefix`; off by default since honouring
   forwarded headers untrusted is a host-injection footgun). The two are mutually exclusive

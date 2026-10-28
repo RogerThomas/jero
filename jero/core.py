@@ -2063,8 +2063,9 @@ def _forwarded_prefix(scope: Scope) -> str:
 
 
 def _forwarded_config_from_env() -> tuple[str | None, bool]:
-    """Read the reverse-routing URL base from the environment — available before the
-    factory exists, so it sidesteps the settings-only-in-the-factory ordering problem.
+    """Read the reverse-routing URL base from the environment. It is deployment config
+    (the public origin, and whether a trusted proxy sits in front), not app logic, so it
+    lives with the deployment, like an ASGI server's own proxy settings.
 
     ``JERO_BASE_URL`` is a static public origin (absolute URLs against it, no header
     trust); ``JERO_TRUST_FORWARDED`` (truthy) rebuilds the origin per request from the
