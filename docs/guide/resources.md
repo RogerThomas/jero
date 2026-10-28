@@ -57,9 +57,10 @@ class App(BaseApp):
 app = App()
 ```
 
-The item id is the one `path` field the mount path doesn't name (`widget_id` here),
-appended as the last segment. Item routes need exactly one; `create` and `read_many`
-take none. Both are checked at startup.
+The item id is the one `path` field the mount path doesn't name, appended as the last
+segment. Its name is yours to choose, but it becomes the `{slot}` in the URL and the
+OpenAPI spec, so name it for the resource (`widget_id`, not `id`). Item routes need
+exactly one; `create` and `read_many` take none. Both are checked at startup.
 
 ## Endpoint — single routes
 
