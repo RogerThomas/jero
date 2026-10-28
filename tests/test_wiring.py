@@ -368,13 +368,13 @@ def test_path_struct_missing_template_slot() -> None:
 
 def test_read_many_cannot_extend_path() -> None:
     """A read_many declaring a trailing path field fails at startup."""
-    with pytest.raises(RuntimeError, match="collections live at the mount path"):
+    with pytest.raises(RuntimeError, match="read_many: collection routes serve the mount path"):
         TestClient(_ResourceApp(TrailingReadMany()))
 
 
 def test_create_cannot_extend_path() -> None:
     """A create declaring a trailing path field fails at startup."""
-    with pytest.raises(RuntimeError, match="this route's path is exact"):
+    with pytest.raises(RuntimeError, match="create: collection routes serve the mount path"):
         TestClient(_ResourceApp(TrailingCreate()))
 
 

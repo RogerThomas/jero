@@ -1450,10 +1450,10 @@ def _route_segments(
             f"put the others in the mount template",
         )
     if trailing and not is_item:
-        if name == "read_many":
+        if name in {"create", "read_many"}:
             raise WiringError(
-                f"{cls.__name__}.read_many: collections live at the mount path; "
-                f"trailing path fields ({', '.join(trailing)}) belong on read_one",
+                f"{cls.__name__}.{name}: collection routes serve the mount path exactly; "
+                f"trailing path fields ({', '.join(trailing)}) belong on an item route",
             )
         raise WiringError(
             f"{cls.__name__}.{name}: path {path_type.__name__} declares fields beyond the "
