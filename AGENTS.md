@@ -108,7 +108,9 @@ Always follow the following style guide:
   "drift" between method names and per-op declarations to worry about.
 - **`Resource`** — a class defining any of the six CRUD operations above →
   POST / GET(item) / GET(collection) / PUT / PATCH / DELETE, with item/collection path
-  semantics.
+  semantics: an item route's `path` Struct has exactly one field the mount template doesn't
+  name (the id, appended as the last segment), `create`/`read_many` have none (else a
+  `WiringError`).
 - **`Endpoint`** — a class defining any of the five bare verbs above, for non-resource
   routes (health, webhooks, actions). One exact path per Endpoint; a different path is a
   different `Endpoint`.

@@ -291,6 +291,45 @@ class TrailingReadMany(Resource, path="/x"):
         return P(name=path.id)
 
 
+class TrailingCreate(Resource, path="/x"):
+    """Resource whose create declares a trailing path field."""
+
+    async def create(self, path: ItemPath) -> P:
+        """Collection handler that illegally tries to extend the mount path."""
+        return P(name=path.id)
+
+
+class NoPathReadOne(Resource, path="/x"):
+    """Resource whose read_one declares no path, so names no item id."""
+
+    async def read_one(self) -> P:
+        """Item handler with no id to bind."""
+        return P(name="name")
+
+
+class SlotOnlyReadOne(Resource, path="/x/{id}"):
+    """Resource whose read_one path Struct covers only the template slot."""
+
+    async def read_one(self, path: ItemPath) -> P:
+        """Item handler with no id field beyond the template."""
+        return P(name=path.id)
+
+
+class TwoIdPath(Struct):
+    """A path Struct with two fields beyond an untemplated mount."""
+
+    a: str
+    b: str
+
+
+class TwoIdReadOne(Resource, path="/x"):
+    """Resource whose read_one path Struct names two trailing fields."""
+
+    async def read_one(self, path: TwoIdPath) -> P:
+        """Item handler that illegally extends the mount by two segments."""
+        return P(name=path.a)
+
+
 def test_invalid_path_slot_identifier() -> None:
     """A template slot that isn't a valid identifier fails at startup."""
     with pytest.raises(RuntimeError, match="is not a valid identifier"):
@@ -331,6 +370,26 @@ def test_read_many_cannot_extend_path() -> None:
     """A read_many declaring a trailing path field fails at startup."""
     with pytest.raises(RuntimeError, match="collections live at the mount path"):
         TestClient(_ResourceApp(TrailingReadMany()))
+
+
+def test_create_cannot_extend_path() -> None:
+    """A create declaring a trailing path field fails at startup."""
+    with pytest.raises(RuntimeError, match="this route's path is exact"):
+        TestClient(_ResourceApp(TrailingCreate()))
+
+
+@pytest.mark.parametrize(
+    ("resource_type", "message"),
+    [
+        (NoPathReadOne, "is an item route: declare 'path'"),
+        (SlotOnlyReadOne, "is an item route: ItemPath needs one id field"),
+        (TwoIdReadOne, r"TwoIdPath has 2 \(a, b\)"),
+    ],
+)
+def test_item_route_takes_exactly_one_id_field(resource_type: type[Resource], message: str) -> None:
+    """An item route whose path adds no id field, or more than one, fails at startup."""
+    with pytest.raises(RuntimeError, match=message):
+        TestClient(_ResourceApp(resource_type()))
 
 
 # --- Auth / user-source validations ---

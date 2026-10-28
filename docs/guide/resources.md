@@ -6,27 +6,16 @@ collection or a one-off.
 ## Resource — REST collections
 
 A `Resource` is a class. Define any of the six CRUD methods; their **names** decide
-the HTTP method and status:
+the HTTP method and status. For `path="/widgets"`:
 
-```text
-WidgetResource(path="/widgets")
-
-create          POST    /widgets
-read_many       GET     /widgets
-read_one        GET     /widgets/{widget_id}
-update_full     PUT     /widgets/{widget_id}
-update_partial  PATCH   /widgets/{widget_id}
-delete          DELETE  /widgets/{widget_id}
-```
-
-| Method            | HTTP            | Default status | Path                |
-| ----------------- | --------------- | -------------- | ------------------- |
-| `create`          | POST            | 201            | the mount path      |
-| `read_one`        | GET (item)      | 200            | mount + item id     |
-| `read_many`       | GET (collection)| 200            | the mount path      |
-| `update_full`     | PUT             | 200            | mount + item id     |
-| `update_partial`  | PATCH           | 200            | mount + item id     |
-| `delete`          | DELETE          | 200            | mount + item id     |
+| Method           | HTTP   | Path                   | Status |
+| ---------------- | ------ | ---------------------- | ------ |
+| `create`         | POST   | `/widgets`             | 201    |
+| `read_many`      | GET    | `/widgets`             | 200    |
+| `read_one`       | GET    | `/widgets/{widget_id}` | 200    |
+| `update_full`    | PUT    | `/widgets/{widget_id}` | 200    |
+| `update_partial` | PATCH  | `/widgets/{widget_id}` | 200    |
+| `delete`         | DELETE | `/widgets/{widget_id}` | 200    |
 
 ```python
 from msgspec import Struct
@@ -68,8 +57,9 @@ class App(BaseApp):
 app = App()
 ```
 
-`read_many` serves the mount path itself and **cannot** extend it with trailing
-segments — items belong to `read_one`. The framework enforces this at startup.
+The item id is the one `path` field the mount path doesn't name (`widget_id` here),
+appended as the last segment. Item routes need exactly one; `create` and `read_many`
+take none. Both are checked at startup.
 
 ## Endpoint — single routes
 
@@ -141,11 +131,9 @@ class App(BaseApp):
 app = App()
 ```
 
-The noun does more than satisfy REST taste: the result gets an id and a `GET` for
-free later, the 201/`Location` semantics fit, and the OpenAPI groups it under the
-parent resource. State-transition actions (*cancel*, *archive*) often fit even more
-simply as an `update_partial` flipping a status field. Fall back to an `Endpoint`
-only when no noun works — a webhook receiver, a health probe, a legacy path.
+The result gets an id, a later `GET`, 201/`Location` semantics, and an OpenAPI home
+under its parent. State changes (*cancel*, *archive*) are often an `update_partial` on a
+status field. Use an `Endpoint` only when no noun works.
 
 ## Path templates
 
@@ -192,9 +180,8 @@ Rules, all checked at startup with a precise `WiringError`:
 
 - Every `{slot}` in the mount path must be a field on the `path` Struct.
 - Path Struct fields **cannot have defaults** — a URL segment is always present.
-- For item routes (`read_one`, `update_full`, …) any `path` field *beyond* the template
-  slots **extends** the URL as a trailing segment (the item id). For `read_many` and
-  endpoints the path is exact — extra fields are an error.
+- Item routes have exactly one field beyond the slots (the id); every other route has
+  none.
 
 Path values that fail conversion to their field type return **404** — a malformed id
 doesn't identify a resource.
