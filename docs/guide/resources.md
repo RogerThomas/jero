@@ -248,9 +248,9 @@ class App(BaseApp):
 app = App()
 ```
 
-The three types — `EndpointMeta`, `ResourceMeta`, `OperationMeta` — carry `tags`,
-`operation_id`, `summary`, `description`, and `responses` (`operation_id` lives only on
-`OperationMeta`, so it can't cascade to every operation). They don't affect routing;
+All three types — `EndpointMeta`, `ResourceMeta`, `OperationMeta` — carry `tags`,
+`responses`, and `exceptions`; `operation_id`, `summary`, and `description` live only on
+`OperationMeta`, so they can't cascade to every operation. They don't affect routing;
 they refine the [auto-generated OpenAPI spec](openapi.md), which derives the rest from
 your types (docstrings are never published — public prose is always explicit).
 

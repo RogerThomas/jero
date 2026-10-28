@@ -84,8 +84,8 @@ typed, JSON-focused framework, msgspec is the better foundation.
 ## Struct everywhere
 
 In jero, JSON request bodies and JSON responses are `Struct`s. Query params, path
-params, typed headers, form models, auth users, and typed response headers are also
-`Struct`s.
+params, typed headers, cookies, form models, auth users, typed response headers, etc. are
+also `Struct`s.
 
 That is not ceremony for its own sake. The type is the contract.
 
@@ -145,10 +145,11 @@ Opinionated does not mean "arbitrary." It means the framework has an answer.
 
 How do I define routes? Use `Resource` or `Endpoint`.
 
-How do I bind request data? Name the handler argument `json`, `params`, `path`,
-`headers`, `form`, `content`, `raw_headers`, or `user`.
+How do I bind request data? Name the handler argument `json`, `content`,
+`content_stream`, `form`, `params`, `path`, `headers`, `cookies`, `raw_headers`, or `user`.
 
-How do I return JSON? Return a `Struct`, `list[Struct]`, or `JSONResponse[T, H]`.
+How do I return JSON? Return a `Struct`, `list[Struct]`, `JSONResponse[T, H]`,
+`Created[T, H]`, or `Accepted[T, H]`.
 
 How do I wire dependencies? Construct them in `wire` or a `BaseFactory`, then pass
 them to class constructors.

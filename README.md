@@ -27,7 +27,7 @@
 **jero** is an AI-powered ([a note on AI usage](docs/note-on-ai-usage.md)) framework
 that builds typed JSON/REST APIs from plain classes. Annotate your handlers with
 [msgspec](https://msgspec.dev/) Structs — jero does the rest: routing,
-validation, serialization, auth, streaming, and resource lifecycle.
+validation, serialization, auth, streaming, resource lifecycle, etc.
 
 ```python
 from msgspec import Struct
@@ -88,12 +88,14 @@ only lifecycle — the one thing plain Python doesn't give you.
 
 - **[Resources & Endpoints](docs/guide/resources.md)** — REST CRUD by method name, or
   bare verbs for one-off routes.
-- **[Bind by name, validated by msgspec](docs/guide/binding.md)** — `json`, `params`,
-  `path`, `headers`, `form`, `user`; malformed → 400, schema-invalid → 422, all resolved
+- **[Bind by name, validated by msgspec](docs/guide/binding.md)** — `json`, `content`,
+  `content_stream`, `form`, `params`, `path`, `headers`, `cookies`, `raw_headers`,
+  `user`; malformed → 400, schema-invalid → 422, all resolved
   once at startup.
 - **[Typed responses *and* typed headers](docs/guide/responses.md)** —
   `JSONResponse[Body, Headers]` keeps both schemas (no erasure), `status_code` overrides
-  the status, and `raw_headers` is the escape hatch for cookies and the exotic tail.
+  the status, `cookies=` takes secure-by-default `SetCookie`s, and `raw_headers` is the
+  escape hatch for the exotic tail.
 - **[Streaming, typed end to end](docs/guide/streaming.md)** — NDJSON, Server-Sent
   Events, and raw byte streams, with lifecycle teardown and client-disconnect handling
   done for you.
@@ -102,7 +104,7 @@ only lifecycle — the one thing plain Python doesn't give you.
 - **[Auth checked at startup](docs/guide/auth.md)** — the `user` type is verified
   against your authenticator before a single request is served, not at runtime.
 - **[OpenAPI 3.1, derived](docs/guide/openapi.md)** — one `_include_openapi` call serves
-  the spec and a Scalar UI, built from your types, docstrings, and `msgspec.Meta`
+  the spec and a Scalar UI, built from your types and `msgspec.Meta`
   constraints — no decorators.
 - **[Lifecycle without a DI container](docs/guide/wiring.md)** — hand-wire in `wire`,
   open resources on exit stacks, group construction in a `BaseFactory`.

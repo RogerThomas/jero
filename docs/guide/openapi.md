@@ -161,7 +161,7 @@ documents the errors an operation can *actually* produce — no false entries:
 
 | Status | Documented when the operation… |
 | ------ | ------------------------------ |
-| `400`  | binds a body, query params, or headers (malformed request) |
+| `400`  | binds a body, query params, headers, or cookies (malformed request) |
 | `401`  | is mounted behind `auth` |
 | `404`  | binds a `path` |
 | `415`  | takes a `form` (wrong media type) |

@@ -26,7 +26,7 @@ There are no route decorators and no dependency-injection container. Routes are 
 classes (`Resource` for REST collections, `Endpoint` for one-off routes), the method
 name *is* the HTTP operation, and dependencies are ordinary constructor arguments.
 Everything that crosses the wire is a msgspec `Struct`: bodies, headers, path and
-query params, forms. That single contract drives validation, serialization, startup
+query params, forms, etc. That single contract drives validation, serialization, startup
 checks, schema generation, and msgspec's compiled-codec speed.
 
 ## Quickstart
@@ -122,5 +122,5 @@ feature-by-feature contrast with other Python frameworks, read
 ## API reference
 
 The full public surface — `BaseApp`, `BaseFactory`, `Resource`, `Endpoint`, the
-response and streaming types, and the test helpers — is documented in the
+response and streaming types, the test helpers, etc. — is documented in the
 [API reference](modules.md).
