@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.10](https://github.com/RogerThomas/jero/compare/0.1.9...0.1.10) (2026-10-28)
+
+
+### Bug Fixes
+
+* item routes take exactly one id path field, plus docs accuracy fixes ([#78](https://github.com/RogerThomas/jero/issues/78)) ([501f91f](https://github.com/RogerThomas/jero/commit/501f91fbbf6992a6191a9698f25ed797f3394cb2))
+
 ## [0.1.9](https://github.com/RogerThomas/jero/compare/0.1.8...0.1.9) (2026-10-25)
 
 
