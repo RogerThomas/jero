@@ -4,12 +4,11 @@ The contract:
 
 - Resources are plain classes with any of the CRUD methods ``create`` / ``read_one`` /
   ``read_many`` / ``update_full`` / ``update_partial`` / ``delete``, mapped to POST / GET (item) /
-  GET (collection) / PUT / PATCH / DELETE on the path given to ``_include_resource``. ``read_many``
-  serves the mount path itself and cannot extend it with trailing segments — items belong to
-  ``read_one``.
+  GET (collection) / PUT / PATCH / DELETE on the class's ``path``. ``create`` and
+  ``read_many`` serve the mount path exactly; the item routes add one id segment.
 - The mount path is a template: static segments plus ``{slot}`` params (snake_case, matching the
   Struct field names). Handlers bind path values via a ``path`` Struct whose fields must cover every
-  template slot; fields beyond the slots extend the route with trailing segments (the item id).
+  template slot; an item route has exactly one field beyond the slots (the item id).
   Path Struct fields cannot have defaults.
 - Handler arguments bind by name: ``json`` (request body), ``params`` (query string), ``path``
   (URL segments), ``headers``, ``cookies``, and ``user`` (the result of auth). Each must be
@@ -242,7 +241,7 @@ class _Verb:
 
     method: HTTPMethod
     success_status: int
-    extends_path: bool  # may path fields beyond the template slots extend the URL?
+    is_item: bool  # an item route: the path Struct adds exactly one id segment
 
 
 @dataclass(kw_only=True, slots=True)
@@ -387,20 +386,21 @@ class _Routable:
 class Resource(_Routable):
     """One REST resource: subclass and define any of the CRUD methods.
 
-    ``read_one`` is the item route (its ``path`` may extend the mount with
-    the item id); ``read_many`` is the collection (its path is exact).
+    ``read_one`` / ``update_full`` / ``update_partial`` / ``delete`` are item routes (their
+    ``path`` extends the mount with exactly one id field); ``create`` and ``read_many`` are
+    the collection (their path is exact).
 
     Optional OpenAPI metadata is declared at class definition: ``meta`` applies to every
     operation, ``meta_<op>`` to one (``meta_create``, ``meta_read_one``, …).
     """
 
     METHODS: ClassVar[dict[str, _Verb]] = {
-        "create": _Verb("POST", 201, extends_path=True),
-        "read_one": _Verb("GET", 200, extends_path=True),
-        "read_many": _Verb("GET", 200, extends_path=False),
-        "update_full": _Verb("PUT", 200, extends_path=True),
-        "update_partial": _Verb("PATCH", 200, extends_path=True),
-        "delete": _Verb("DELETE", 200, extends_path=True),
+        "create": _Verb("POST", 201, is_item=False),
+        "read_one": _Verb("GET", 200, is_item=True),
+        "read_many": _Verb("GET", 200, is_item=False),
+        "update_full": _Verb("PUT", 200, is_item=True),
+        "update_partial": _Verb("PATCH", 200, is_item=True),
+        "delete": _Verb("DELETE", 200, is_item=True),
     }
 
     meta: ClassVar[ResourceMeta | None] = None
@@ -462,11 +462,11 @@ class Endpoint(_Routable):
     """
 
     METHODS: ClassVar[dict[str, _Verb]] = {
-        "get": _Verb("GET", 200, extends_path=False),
-        "post": _Verb("POST", 200, extends_path=False),
-        "put": _Verb("PUT", 200, extends_path=False),
-        "patch": _Verb("PATCH", 200, extends_path=False),
-        "delete": _Verb("DELETE", 200, extends_path=False),
+        "get": _Verb("GET", 200, is_item=False),
+        "post": _Verb("POST", 200, is_item=False),
+        "put": _Verb("PUT", 200, is_item=False),
+        "patch": _Verb("PATCH", 200, is_item=False),
+        "delete": _Verb("DELETE", 200, is_item=False),
     }
 
     meta: ClassVar[EndpointMeta | None] = None
@@ -1408,15 +1408,21 @@ def _route_segments(
     template: list[_Segment],
     path_type: type[Struct] | None,
     *,
-    extends_path: bool,
+    is_item: bool,
 ) -> list[_Segment]:
-    """Combine the mount template with a handler's path Struct."""
+    """Combine the mount template with a handler's path Struct. An item route appends
+    exactly one segment, the path field the template doesn't name (the item id)."""
     slots = [value for is_param, value in template if is_param]
     if path_type is None:
         if slots:
             raise WiringError(
                 f"{cls.__name__}.{name} must declare 'path' covering "
                 f"template slots: {', '.join(slots)}",
+            )
+        if is_item:
+            raise WiringError(
+                f"{cls.__name__}.{name} is an item route: declare 'path' with one id field "
+                f"beyond the template slots",
             )
         return list(template)
 
@@ -1432,11 +1438,22 @@ def _route_segments(
             f"template slots: {', '.join(missing)}",
         )
     trailing = [field for field in fields if field not in slots]
-    if trailing and not extends_path:
-        if name == "read_many":
+    if is_item and not trailing:
+        raise WiringError(
+            f"{cls.__name__}.{name} is an item route: {path_type.__name__} needs one id field "
+            f"beyond the template slots",
+        )
+    if is_item and len(trailing) > 1:
+        raise WiringError(
+            f"{cls.__name__}.{name}: an item route takes one id field beyond the template "
+            f"slots, but {path_type.__name__} has {len(trailing)} ({', '.join(trailing)}); "
+            f"put the others in the mount template",
+        )
+    if trailing and not is_item:
+        if name in {"create", "read_many"}:
             raise WiringError(
-                f"{cls.__name__}.read_many: collections live at the mount path; "
-                f"trailing path fields ({', '.join(trailing)}) belong on read_one",
+                f"{cls.__name__}.{name}: collection routes serve the mount path exactly; "
+                f"trailing path fields ({', '.join(trailing)}) belong on an item route",
             )
         raise WiringError(
             f"{cls.__name__}.{name}: path {path_type.__name__} declares fields beyond the "
@@ -2063,8 +2080,9 @@ def _forwarded_prefix(scope: Scope) -> str:
 
 
 def _forwarded_config_from_env() -> tuple[str | None, bool]:
-    """Read the reverse-routing URL base from the environment — available before the
-    factory exists, so it sidesteps the settings-only-in-the-factory ordering problem.
+    """Read the reverse-routing URL base from the environment. It is deployment config
+    (the public origin, and whether a trusted proxy sits in front), not app logic, so it
+    lives with the deployment, like an ASGI server's own proxy settings.
 
     ``JERO_BASE_URL`` is a static public origin (absolute URLs against it, no header
     trust); ``JERO_TRUST_FORWARDED`` (truthy) rebuilds the origin per request from the
@@ -3817,9 +3835,7 @@ class BaseApp[FactoryT = None](ABC):
                 continue
             sources = _bind_sources(cls, name, fn, verb, self.__decoder)
             self.__check_user_source(cls, name, sources, compiled_auth)
-            segments = _route_segments(
-                cls, name, template, sources.path, extends_path=verb.extends_path
-            )
+            segments = _route_segments(cls, name, template, sources.path, is_item=verb.is_item)
             # A NoContent/Created/Accepted return fixes its own status regardless of the
             # verb's default (204/201/202); a union's members carry their own already.
             status = _effective_status(sources.return_kind, verb.success_status)
@@ -4123,7 +4139,7 @@ class BaseApp[FactoryT = None](ABC):
                 )
             )
         segments = _route_segments(
-            cls, "handle", _parse_template(path), sources.path, extends_path=False
+            cls, "handle", _parse_template(path), sources.path, is_item=False
         )
         route = _WebSocketRoute(
             fn,

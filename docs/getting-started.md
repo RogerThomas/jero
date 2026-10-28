@@ -82,7 +82,7 @@ That's the whole loop: a `Struct` for the URL slots (`path`), a `Struct` for the
 response, and a method name (`read_one`) that maps to `GET`.
 
 Everything that crosses the wire is a `Struct` — bodies, params, path slots, headers,
-forms, auth users. The `Struct` is what gives jero validation, fast serialization,
+forms, auth users, etc. The `Struct` is what gives jero validation, fast serialization,
 startup checks, and the [OpenAPI spec](guide/openapi.md); a raw `dict` return is a
 startup error. [Philosophy](philosophy.md#struct-everywhere) has the full reasoning.
 
@@ -94,10 +94,11 @@ startup error. [Philosophy](philosophy.md#struct-everywhere) has the full reason
 - An **`Endpoint`** is a class with bare verb methods (`get`/`post`/…) for non-resource
   routes — health checks, webhooks, actions.
 - **Handler arguments bind by name**, each a `Struct`: `json`, `params`, `path`,
-  `headers`, `form`, `user`, plus raw `content: bytes` / `raw_headers`. See
+  `headers`, `cookies`, `form`, `user`, plus raw `content: bytes` / `content_stream` /
+  `raw_headers`. See
   [Request binding](guide/binding.md).
 - **Returns are typed**: a `Struct`, `list[Struct]`, `str`, `bytes`, or a response
-  wrapper (`JSONResponse[T]`, `BytesResponse`, a streaming response) when you need to
+  wrapper (`JSONResponse[T]`, `BytesResponse`, a streaming response, etc.) when you need to
   control headers or status. See [Responses & headers](guide/responses.md).
 - **Dependencies are hand-wired** in `wire` — no DI container. The framework adds the
   one thing plain Python doesn't: resource lifecycle. See [Wiring & lifecycle](guide/wiring.md).
@@ -127,4 +128,4 @@ def test_read_one():
 - [Complete example](guide/complete-example.md) — factory, auth, lifecycle, and typed
   responses together.
 
-Everything else — streaming, forms, auth, errors, deployment — is in the Guide.
+Everything else — streaming, forms, auth, errors, deployment, etc. — is in the Guide.

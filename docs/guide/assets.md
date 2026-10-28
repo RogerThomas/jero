@@ -40,7 +40,7 @@ is no catch-all.
   (CSS, JS, HTML, SVG, JSON, and friends) are gzipped once at startup and kept only
   when meaningfully smaller. A request with `Accept-Encoding: gzip` gets the prebaked
   variant with its own `ETag` and a `Vary: Accept-Encoding` header. Already-compressed
-  formats (PNG, WebP, WOFF2) are never re-compressed.
+  formats (PNG, WebP, WOFF2, etc.) are never re-compressed.
 - **Cache headers.** `cache_control="public, max-age=3600"` is emitted verbatim on
   both the `200` and the `304`.
 - **The usual semantics for free.** `HEAD` is served from the `GET` route with the

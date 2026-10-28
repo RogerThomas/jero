@@ -40,7 +40,7 @@ Everything in the document comes from the wiring you already did:
 | OpenAPI                  | Derived from |
 | ------------------------ | ------------ |
 | `paths` + operations     | each wired `Resource`/`Endpoint` method and its mount path |
-| `parameters`             | the `path` / `params` / `headers` source Structs, expanded field by field |
+| `parameters`             | the `path` / `params` / `headers` / `cookies` source Structs, expanded field by field |
 | `requestBody`            | the `json` body Struct (or `content` bytes, or a `form`) |
 | `responses` (success)    | the handler's return type — a `Struct`, `list[Struct]`, `str`, `bytes`, a `JSONResponse[T]` / `NoContent` / `Created[T]` / `Accepted[T]`, or a streaming response. A *union* of these yields one entry per status |
 | `responses` (errors)     | the sources an operation actually has (see below) |
@@ -161,7 +161,7 @@ documents the errors an operation can *actually* produce — no false entries:
 
 | Status | Documented when the operation… |
 | ------ | ------------------------------ |
-| `400`  | binds a body, query params, or headers (malformed request) |
+| `400`  | binds a body, query params, headers, or cookies (malformed request) |
 | `401`  | is mounted behind `auth` |
 | `404`  | binds a `path` |
 | `415`  | takes a `form` (wrong media type) |
