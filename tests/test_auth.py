@@ -3,7 +3,7 @@ callers (absent / valid / invalid credentials) via its /spotlight endpoint."""
 
 from collections.abc import Generator
 from dataclasses import dataclass
-from typing import cast
+from typing import Protocol, cast
 
 import pytest
 from msgspec import Struct
@@ -376,3 +376,67 @@ def test_authenticator_without_a_user_type_fails() -> None:
     """``-> None`` declares no user, so there is nothing to hand the handler."""
     with pytest.raises(RuntimeError, match="must declare the user type it returns"):
         TestClient(_UserTypeApp(UserIdEndpoint(), NoUserAuth()))
+
+
+@dataclass
+class CallerOrAccountGateAuth:
+    """An authenticator returning one of two user types, gating every caller."""
+
+    async def authenticate(self, headers: Creds) -> Caller | Account:
+        """A service token resolves to a Caller, any other to an Account."""
+        if headers.authorization == "service":
+            return Caller(id="caller-id")
+        return Account(id="account-id")
+
+
+class GatedCallerOrAccountEndpoint(Endpoint, path="/gated-caller-or-account"):
+    """An endpoint declaring exactly the (non-optional) union its authenticator returns."""
+
+    async def get(self, user: Caller | Account) -> Greeting:
+        """Greet whichever kind of user arrived."""
+        return Greeting(caller=user.id)
+
+
+class NoneUserEndpoint(Endpoint, path="/none-user"):
+    """An endpoint annotating 'user' as None, which names no user type."""
+
+    async def get(self, user: None) -> Greeting:
+        """Never reached — wiring fails first."""
+        _ = user
+        return Greeting(caller="anonymous")
+
+
+class HasId(Protocol):
+    """A structural user type that ``issubclass`` cannot check."""
+
+    id: str
+
+
+class HasIdEndpoint(Endpoint, path="/has-id"):
+    """An endpoint declaring a Protocol its authenticator's class happens to satisfy."""
+
+    async def get(self, user: HasId) -> Greeting:
+        """Never reached — wiring fails first."""
+        return Greeting(caller=user.id)
+
+
+def test_gating_union_user_binds() -> None:
+    """A union without ``None`` gates, and binds whichever member arrived."""
+    with TestClient(
+        _UserTypeApp(GatedCallerOrAccountEndpoint(), CallerOrAccountGateAuth())
+    ) as client:
+        resp = client.get("/gated-caller-or-account", headers={"authorization": "service"})
+        assert resp.json() == {"caller": "caller-id"}
+
+
+def test_none_user_annotation_fails() -> None:
+    """``user: None`` names no user type, so it fails at startup."""
+    with pytest.raises(RuntimeError, match="'user' must be annotated with the type"):
+        TestClient(_UserTypeApp(NoneUserEndpoint(), AdminAccountAuth()))
+
+
+def test_protocol_user_must_match_exactly() -> None:
+    """A Protocol is not a plain class ``issubclass`` can check, so it must match exactly:
+    a dataclass that satisfies it structurally still fails at startup."""
+    with pytest.raises(RuntimeError, match="'user' expects HasId but AdminAccountAuth"):
+        TestClient(_UserTypeApp(HasIdEndpoint(), AdminAccountAuth()))
