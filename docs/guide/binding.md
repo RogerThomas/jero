@@ -15,7 +15,7 @@ learns *which* sources a handler wants, and the request path just fills them in.
 | `headers`     | request headers                 | a `Struct`               |
 | `cookies`     | request cookies                 | a `Struct` (see [Cookies](cookies.md)) |
 | `raw_headers` | request headers (opaque)        | `RawHeaders`             |
-| `user`        | the auth result                 | a `Struct`, or `Struct \| None` behind [optional auth](auth.md#optional-authentication) |
+| `user`        | the auth result                 | whatever `authenticate` returns (any type), or `T \| None` behind [optional auth](auth.md#optional-authentication) |
 
 `json`, `content`, `content_stream`, and `form` are mutually exclusive (one request
 body), and are rejected on bodyless verbs (`GET`, `DELETE`). Everything else can combine freely.

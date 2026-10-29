@@ -88,6 +88,7 @@ from typing import (
     get_args,
     get_origin,
     get_type_hints,
+    is_protocol,
     overload,
 )
 from urllib.parse import parse_qsl, unquote, unquote_plus
@@ -858,36 +859,6 @@ def _strip_optional(ann: object) -> tuple[object, bool]:
     return payload, True
 
 
-def _strip_none_member(ann: object) -> tuple[object, bool]:
-    """``ann`` without its ``None`` member, and whether it had one. Unlike
-    :func:`_strip_optional` what remains may itself be a union (``A | B | None`` gives
-    ``(A | B, True)``), which a ``user`` type is free to be."""
-    origin = get_origin(ann)
-    if origin is not UnionType and origin is not Union:
-        return ann, False
-    args = get_args(ann)
-    rest = [arg for arg in args if not _is_none_type(arg)]
-    if len(rest) == len(args):
-        return ann, False
-    union = rest[0]
-    for member in rest[1:]:
-        union = cast("type", union) | cast("type", member)
-    return union, True
-
-
-def _type_name(ann: object) -> str:
-    return ann.__name__ if isinstance(ann, type) else repr(ann)
-
-
-def _user_type_satisfies(returned: object, declared: object) -> bool:
-    """Whether an authenticator returning ``returned`` satisfies a handler declaring ``user:
-    declared``: a subclass when both are plain classes, otherwise exactly the same type."""
-    if isinstance(returned, type) and isinstance(declared, type):
-        with contextlib.suppress(TypeError):  # a Protocol issubclass can't check: match exactly
-            return issubclass(returned, declared)
-    return returned == declared
-
-
 def _payload_kind(cls: type, method: str, field_name: str, ann: object) -> PayloadKind:
     bare = _strip_annotated(ann)  # classify by the underlying type; Meta stays on `ann`
     if bare is bytes:
@@ -1103,19 +1074,6 @@ def _struct_annotation(cls: type, method: str, name: str, ann: object) -> type[S
     return ann
 
 
-def _user_annotation(cls: type, method: str, ann: object) -> tuple[object, bool]:
-    """A handler's ``user`` type and whether it accepts anonymous callers. Any type the
-    authenticator returns may be declared; ``User | None`` is the one shape jero reads,
-    cross-checked against the authenticator at wiring."""
-    user_type, optional = _strip_none_member(ann)
-    if _is_none_type(user_type):
-        raise WiringError(
-            f"{cls.__name__}.{method}: 'user' must be annotated with the type the "
-            f"authenticator returns, got {ann!r}",
-        )
-    return user_type, optional
-
-
 def _wrapper_kind(cls: type) -> ReturnKind | None:
     """The return kind ``cls`` is a response wrapper for, or None if it is not one.
 
@@ -1241,6 +1199,49 @@ def _flatten_union_members(members: tuple[object, ...]) -> tuple[object, ...]:
     return tuple(flat)
 
 
+def _user_members(ann: object) -> tuple[tuple[object, ...], bool]:
+    """A ``user`` type as its union members (``type`` aliases resolved, ``None`` taken out), and
+    whether ``None`` was one of them: ``A | B | None`` gives ``((A, B), True)``. ``None`` is the
+    one member jero reads, as the anonymous-caller contract; the rest are the app's choice."""
+    members = _flatten_union_members((ann,))
+    rest = tuple(member for member in members if not _is_none_type(member))
+    return rest, len(rest) < len(members)
+
+
+def _user_annotation(cls: type, method: str, ann: object) -> tuple[tuple[object, ...], bool]:
+    """A handler's ``user`` type members and whether it accepts anonymous callers,
+    cross-checked against the authenticator at wiring."""
+    members, optional = _user_members(ann)
+    if not members:
+        raise WiringError(
+            f"{cls.__name__}.{method}: 'user' must be annotated with the type the "
+            f"authenticator returns, got {ann!r}",
+        )
+    return members, optional
+
+
+def _user_type_name(members: tuple[object, ...]) -> str:
+    return " | ".join(m.__name__ if isinstance(m, type) else repr(m) for m in members)
+
+
+def _user_member_satisfies(returned: object, declared: object) -> bool:
+    if returned == declared:
+        return True
+    if not (isinstance(returned, type) and isinstance(declared, type)):
+        return False
+    # A Protocol matches by explicit inheritance only: issubclass can't check most Protocols,
+    # and checks the runtime-checkable ones structurally, by member names alone.
+    if is_protocol(declared):
+        return declared in returned.__mro__
+    return issubclass(returned, declared)
+
+
+def _user_type_satisfies(returned: tuple[object, ...], declared: tuple[object, ...]) -> bool:
+    """Whether every type an authenticator can return is one a handler's ``user`` accepts: the
+    same type, or for a plain class a subclass of it."""
+    return all(any(_user_member_satisfies(r, d) for d in declared) for r in returned)
+
+
 def _dispatch_type(ann: object) -> type:
     """The class a union member is matched against at request time. Subscripted
     annotations dispatch on their origin (``JSONResponse[W]`` -> ``JSONResponse``,
@@ -1315,7 +1316,7 @@ def _bind_sources(  # noqa: C901
     wants_content = False
     wants_content_stream = False
     wants_raw_headers = False
-    user_type: object = None
+    user_type: tuple[object, ...] | None = None
     user_optional = False
 
     for param in inspect.signature(fn).parameters.values():
@@ -1561,7 +1562,7 @@ def _bind_websocket_sources(cls: type, fn: Callable[..., Any]) -> tuple[Sources,
 
     types: dict[str, type[Struct]] = {}
     wants_raw_headers = False
-    user_type: object = None
+    user_type: tuple[object, ...] | None = None
     user_optional = False
     allowed = frozenset({"params", "path", "headers", "cookies", "user", "raw_headers"})
     for param in params[1:]:
@@ -1653,13 +1654,13 @@ class _CompiledAuth:
         # `-> TUser | None` is the authenticator declaring that its routes accept anonymous
         # callers: returning None reports absent credentials rather than rejecting them.
         # TUser itself is the app's to choose; jero only hands it to the handler.
-        user_type, self.reports_absence = _strip_none_member(returns)
-        if _is_none_type(user_type):
+        user_members, self.reports_absence = _user_members(returns)
+        if not user_members:
             raise WiringError(
                 f"{self.owner}.authenticate must declare the user type it returns "
                 f"(or 'User | None' to accept anonymous callers), got {returns!r}",
             )
-        self.returns: object = user_type
+        self.returns: tuple[object, ...] = user_members
         self._fn: Callable[..., Any] = fn
         self._is_async = inspect.iscoroutinefunction(fn)
 
@@ -3789,7 +3790,7 @@ class BaseApp[FactoryT = None](ABC):
         user_type = sources.user
         if user_type is None:
             if auth is not None and auth.reports_absence:
-                returns = _type_name(auth.returns)
+                returns = _user_type_name(auth.returns)
                 raise WiringError(
                     f"{resource_cls.__name__}.{name} declares no 'user', but "
                     f"{auth.owner}.authenticate returns {returns} | None, so "
@@ -3802,24 +3803,25 @@ class BaseApp[FactoryT = None](ABC):
             raise WiringError(
                 f"{resource_cls.__name__}.{name} declares 'user' but no auth was given",
             )
-        declared = _type_name(user_type)
+        declared = _user_type_name(user_type)
+        returns = _user_type_name(auth.returns)
         if not _user_type_satisfies(auth.returns, user_type):
             raise WiringError(
                 f"{resource_cls.__name__}.{name}: 'user' expects {declared} "
-                f"but {auth.owner}.authenticate returns {_type_name(auth.returns)}",
+                f"but {auth.owner}.authenticate returns {returns}",
             )
         if auth.reports_absence and not sources.user_optional:
             raise WiringError(
                 f"{resource_cls.__name__}.{name}: 'user' must be annotated "
                 f"'{declared} | None' — {auth.owner}.authenticate returns "
-                f"'{declared} | None', so a caller may arrive anonymous",
+                f"'{returns} | None', so a caller may arrive anonymous",
             )
         if sources.user_optional and not auth.reports_absence:
             raise WiringError(
                 f"{resource_cls.__name__}.{name}: 'user' must be annotated "
                 f"'{declared}' — {auth.owner}.authenticate returns "
-                f"'{declared}', so an unauthenticated caller never reaches the "
-                f"handler; return '{declared} | None' from it to accept anonymous "
+                f"'{returns}', so an unauthenticated caller never reaches the "
+                f"handler; return '{returns} | None' from it to accept anonymous "
                 f"callers",
             )
 

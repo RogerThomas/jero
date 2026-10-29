@@ -84,8 +84,9 @@ typed, JSON-focused framework, msgspec is the better foundation.
 ## Struct everywhere
 
 In jero, JSON request bodies and JSON responses are `Struct`s. Query params, path
-params, typed headers, cookies, form models, auth users, typed response headers, etc. are
-also `Struct`s.
+params, typed headers, cookies, form models, typed response headers, etc. are
+also `Struct`s. (The auth user is the one exception: it never crosses the wire, so it can
+be any type you like.)
 
 That is not ceremony for its own sake. The type is the contract.
 
