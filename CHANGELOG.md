@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.11](https://github.com/RogerThomas/jero/compare/0.1.10...0.1.11) (2026-10-29)
+
+
+### Features
+
+* let authenticate return any user type ([#80](https://github.com/RogerThomas/jero/issues/80)) ([07bd302](https://github.com/RogerThomas/jero/commit/07bd302f3aad79643761fc81bab4a8e9f2314222))
+
 ## [0.1.10](https://github.com/RogerThomas/jero/compare/0.1.9...0.1.10) (2026-10-28)
 
 
