@@ -817,3 +817,57 @@ def test_channel_rejects_unknown_overflow_policy() -> None:
     channel_factory = cast("Callable[..., Channel[Event]]", Channel)
     with pytest.raises(WiringError, match="overflow"):
         channel_factory(Event, overflow="discard")
+
+
+class WebSocketCreds(Struct):
+    """Handshake credentials whose optional field lets absence reach the authenticator."""
+
+    authorization: str | None = None
+
+
+@dataclass
+class WebSocketAccount:
+    """A plain dataclass user on a WebSocket handshake."""
+
+    id: str
+
+
+@dataclass
+class OptionalWebSocketAccountAuth:
+    """An anonymous-accepting authenticator returning a dataclass user."""
+
+    async def authenticate(self, headers: WebSocketCreds) -> WebSocketAccount | None:
+        """The token is the account id; ``None`` when none was presented."""
+        return None if headers.authorization is None else WebSocketAccount(id=headers.authorization)
+
+
+class WhoAmIWebSocket(WebSocketEndpoint, path="/who-am-i"):
+    """Reply to every message with the handshake's user id."""
+
+    async def handle(self, websocket: WebSocket[str, str], user: WebSocketAccount | None) -> None:
+        """Send the user id, or 'anonymous', for each message received."""
+        async for _ in websocket:
+            await websocket.send("anonymous" if user is None else user.id)
+
+
+class DataclassUserWebSocketApp(BaseApp):
+    """App mounting a WebSocket behind a dataclass-returning authenticator."""
+
+    async def wire(self) -> None:
+        self._include_websocket(WhoAmIWebSocket(), auth=OptionalWebSocketAccountAuth())
+
+
+def test_websocket_binds_a_non_struct_user() -> None:
+    """A dataclass user binds on the handshake, and ``| None`` admits anonymous callers."""
+    with TestClient(DataclassUserWebSocketApp()) as client:
+        anonymous: TestWebSocket[str, str]
+        with client.websocket("/who-am-i", inbound=str, outbound=str) as anonymous:
+            anonymous.send("message")
+            assert anonymous.receive() == "anonymous"
+
+        account: TestWebSocket[str, str]
+        with client.websocket(
+            "/who-am-i", inbound=str, outbound=str, headers={"authorization": "account-id"}
+        ) as account:
+            account.send("message")
+            assert account.receive() == "account-id"

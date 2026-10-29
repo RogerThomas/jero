@@ -20,13 +20,14 @@ The contract:
   msgspec ``rename`` is honored everywhere (e.g. ``Struct, rename="camel"`` for camelCase on the
   wire, snake_case in code) — define your own base Struct for the wire convention.
 - Auth is an object passed to ``_include_resource`` implementing
-  ``authenticate(headers: SomeStruct) -> UserStruct``; raise an ``HTTPError`` subclass
+  ``authenticate(headers: SomeStruct) -> User``, where ``User`` is any type the app chooses
+  (a Struct, a dataclass, an ORM model, a bare id); raise an ``HTTPError`` subclass
   to reject. When set, it runs for every method on the resource, before the body is decoded.
   Handlers that declare
   ``user`` receive its result; the annotation is checked against the authenticator's return type at
-  startup. An authenticator declaring ``-> UserStruct | None`` makes credentials an input
+  startup. An authenticator declaring ``-> User | None`` makes credentials an input
   rather than a gate: returning ``None`` reports that none were presented and the route's
-  handlers — which must all declare ``user: UserStruct | None`` — serve the caller
+  handlers — which must all declare ``user: User | None`` — serve the caller
   anonymously, while invalid credentials are still a 401.
 - Dependencies are wired by hand in the overridden ``BaseApp.wire`` method (runs once at startup).
   Open resources with ``self._aenter(cm)`` / ``self._enter(cm)`` — the app holds them on exit stacks
@@ -87,6 +88,7 @@ from typing import (
     get_args,
     get_origin,
     get_type_hints,
+    is_protocol,
     overload,
 )
 from urllib.parse import parse_qsl, unquote, unquote_plus
@@ -525,12 +527,14 @@ class WebSocketEndpoint(_Routable):
         super().__init_subclass__(path=path)
 
 
-class Auth[THeaders: Struct, TUser: Struct](Protocol):
+class Auth[THeaders: Struct, TUser](Protocol):
     """Implement ``authenticate``; raise an ``HTTPError`` subclass to reject.
 
     ``headers`` is bound from the request headers into your declared
     Struct (header names map ``x-trace-id`` -> ``x_trace_id``). The
-    returned Struct is what handlers receive as ``user``.
+    return value is what handlers receive as ``user``: any type you choose (a Struct, a
+    dataclass, an ORM model, a bare id), handed over untouched. Handlers must declare the
+    same type, or a base class of it, checked at startup.
 
     **The return type is the route's auth policy.** Declaring ``-> TUser`` gates the routes
     it is mounted on: a caller without valid credentials never reaches a handler. Declaring
@@ -552,7 +556,7 @@ class Auth[THeaders: Struct, TUser: Struct](Protocol):
     """
 
     def authenticate(self, headers: THeaders) -> TUser | Awaitable[TUser | None] | None:
-        """Validate ``headers`` and return the user Struct; raise ``HTTPError`` to reject.
+        """Validate ``headers`` and return the user; raise ``HTTPError`` to reject.
 
         Return ``None`` only to report that no credentials were presented (see the class
         docstring); it is never a way to say "these credentials are bad".
@@ -560,7 +564,7 @@ class Auth[THeaders: Struct, TUser: Struct](Protocol):
         ...  # pylint: disable=unnecessary-ellipsis  # Protocol stub; pyright needs the body
 
 
-class CookieAuth[TCookies: Struct, TUser: Struct](Protocol):
+class CookieAuth[TCookies: Struct, TUser](Protocol):
     """Implement ``authenticate``; raise an ``HTTPError`` subclass to reject.
 
     Session-cookie auth: ``cookies`` binds from the request's ``Cookie`` header into your
@@ -573,7 +577,7 @@ class CookieAuth[TCookies: Struct, TUser: Struct](Protocol):
     """
 
     def authenticate(self, cookies: TCookies) -> TUser | Awaitable[TUser | None] | None:
-        """Validate ``cookies`` and return the user Struct; raise ``HTTPError`` to reject.
+        """Validate ``cookies`` and return the user; raise ``HTTPError`` to reject.
 
         Return ``None`` only to report that no credentials were presented (see the class
         docstring); it is never a way to say "these credentials are bad".
@@ -581,7 +585,7 @@ class CookieAuth[TCookies: Struct, TUser: Struct](Protocol):
         ...  # pylint: disable=unnecessary-ellipsis  # Protocol stub; pyright needs the body
 
 
-class HybridAuth[THeaders: Struct, TCookies: Struct, TUser: Struct](Protocol):
+class HybridAuth[THeaders: Struct, TCookies: Struct, TUser](Protocol):
     """Implement ``authenticate``; raise an ``HTTPError`` subclass to reject.
 
     Both ``headers`` and ``cookies`` bind — one app serving bearer-token API clients and
@@ -592,7 +596,7 @@ class HybridAuth[THeaders: Struct, TCookies: Struct, TUser: Struct](Protocol):
     def authenticate(
         self, headers: THeaders, cookies: TCookies
     ) -> TUser | Awaitable[TUser | None] | None:
-        """Validate ``headers``/``cookies`` and return the user Struct; raise to reject.
+        """Validate ``headers``/``cookies`` and return the user; raise to reject.
 
         Return ``None`` only to report that no credentials were presented (see the class
         docstring); it is never a way to say "these credentials are bad".
@@ -600,7 +604,7 @@ class HybridAuth[THeaders: Struct, TCookies: Struct, TUser: Struct](Protocol):
         ...  # pylint: disable=unnecessary-ellipsis  # Protocol stub; pyright needs the body
 
 
-class BearerAuth[THeaders: Struct, TUser: Struct](Auth[THeaders, TUser]):
+class BearerAuth[THeaders: Struct, TUser](Auth[THeaders, TUser]):
     """An ``Auth`` whose operations advertise HTTP bearer in the OpenAPI spec.
 
     Sugar over the ``openapi_security`` attribute the spec generator reads — subclass
@@ -610,7 +614,7 @@ class BearerAuth[THeaders: Struct, TUser: Struct](Auth[THeaders, TUser]):
     openapi_security: ClassVar[SecurityScheme] = SecurityScheme.http_bearer()
 
 
-class BasicAuth[THeaders: Struct, TUser: Struct](Auth[THeaders, TUser]):
+class BasicAuth[THeaders: Struct, TUser](Auth[THeaders, TUser]):
     """An ``Auth`` whose operations advertise HTTP basic in the OpenAPI spec."""
 
     openapi_security: ClassVar[SecurityScheme] = SecurityScheme.http_basic()
@@ -1195,6 +1199,52 @@ def _flatten_union_members(members: tuple[object, ...]) -> tuple[object, ...]:
     return tuple(flat)
 
 
+def _user_members(ann: object) -> tuple[tuple[object, ...], bool]:
+    """A ``user`` type as its union members (``type`` aliases resolved, ``None`` taken out), and
+    whether ``None`` was one of them: ``A | B | None`` gives ``((A, B), True)``. ``None`` is the
+    one member jero reads, as the anonymous-caller contract; the rest are the app's choice."""
+    members = _flatten_union_members((ann,))
+    rest = tuple(member for member in members if not _is_none_type(member))
+    return rest, len(rest) < len(members)
+
+
+def _user_annotation(cls: type, method: str, ann: object) -> tuple[tuple[object, ...], bool]:
+    """A handler's ``user`` type members and whether it accepts anonymous callers,
+    cross-checked against the authenticator at wiring."""
+    members, optional = _user_members(ann)
+    if not members:
+        raise WiringError(
+            f"{cls.__name__}.{method}: 'user' must be annotated with the type the "
+            f"authenticator returns, got {ann!r}",
+        )
+    return members, optional
+
+
+def _user_type_name(members: tuple[object, ...]) -> str:
+    return " | ".join(m.__name__ if isinstance(m, type) else repr(m) for m in members)
+
+
+def _user_member_satisfies(returned: object, declared: object) -> bool:
+    if returned == declared:
+        return True
+    if not (isinstance(returned, type) and isinstance(declared, type)):
+        return False
+    # A Protocol matches by explicit inheritance only: issubclass can't check most Protocols,
+    # and checks the runtime-checkable ones structurally, by member names alone.
+    if is_protocol(declared):
+        return declared in returned.__mro__
+    # A class refusing class checks (a TypedDict) matches only itself.
+    with contextlib.suppress(TypeError):
+        return issubclass(returned, declared)
+    return False
+
+
+def _user_type_satisfies(returned: tuple[object, ...], declared: tuple[object, ...]) -> bool:
+    """Whether every type an authenticator can return is one a handler's ``user`` accepts: the
+    same type, or for a plain class a subclass of it."""
+    return all(any(_user_member_satisfies(r, d) for d in declared) for r in returned)
+
+
 def _dispatch_type(ann: object) -> type:
     """The class a union member is matched against at request time. Subscripted
     annotations dispatch on their origin (``JSONResponse[W]`` -> ``JSONResponse``,
@@ -1269,6 +1319,7 @@ def _bind_sources(  # noqa: C901
     wants_content = False
     wants_content_stream = False
     wants_raw_headers = False
+    user_type: tuple[object, ...] | None = None
     user_optional = False
 
     for param in inspect.signature(fn).parameters.values():
@@ -1307,12 +1358,10 @@ def _bind_sources(  # noqa: C901
                 )
             wants_raw_headers = True
             continue
-        annotation = hints.get(param.name)
         if param.name == "user":
-            # 'user' is the one source that may be optional: `UserStruct | None` declares the
-            # handler serves anonymous callers too (cross-checked against the authenticator).
-            annotation, user_optional = _strip_optional(annotation)
-        source_type = _struct_annotation(cls, name, param.name, annotation)
+            user_type, user_optional = _user_annotation(cls, name, hints.get("user"))
+            continue
+        source_type = _struct_annotation(cls, name, param.name, hints.get(param.name))
         if param.name == "form":
             form = _compile_form(cls, name, source_type, decoder_for)
             continue
@@ -1341,13 +1390,19 @@ def _bind_sources(  # noqa: C901
     json_type = types.get("json")
     json_decoder = decoder_for(json_type) if json_type is not None else None
     arity = (
-        len(types) + (form is not None) + wants_content + wants_content_stream + wants_raw_headers
+        len(types)
+        + (form is not None)
+        + (user_type is not None)
+        + wants_content
+        + wants_content_stream
+        + wants_raw_headers
     )
 
     return Sources(
         **types,
         json_decoder=json_decoder,
         form=form,
+        user=user_type,
         user_optional=user_optional,
         content=wants_content,
         content_stream=wants_content_stream,
@@ -1510,6 +1565,7 @@ def _bind_websocket_sources(cls: type, fn: Callable[..., Any]) -> tuple[Sources,
 
     types: dict[str, type[Struct]] = {}
     wants_raw_headers = False
+    user_type: tuple[object, ...] | None = None
     user_optional = False
     allowed = frozenset({"params", "path", "headers", "cookies", "user", "raw_headers"})
     for param in params[1:]:
@@ -1526,21 +1582,21 @@ def _bind_websocket_sources(cls: type, fn: Callable[..., Any]) -> tuple[Sources,
                 )
             wants_raw_headers = True
             continue
-        annotation = hints.get(param.name)
         if param.name == "user":
-            annotation, user_optional = _strip_optional(annotation)
-        types[param.name] = _struct_annotation(cls, "handle", param.name, annotation)
+            user_type, user_optional = _user_annotation(cls, "handle", hints.get("user"))
+            continue
+        types[param.name] = _struct_annotation(cls, "handle", param.name, hints.get(param.name))
     sources = Sources(
         params=types.get("params"),
         path=types.get("path"),
         headers=types.get("headers"),
         cookies=types.get("cookies"),
-        user=types.get("user"),
+        user=user_type,
         user_optional=user_optional,
         raw_headers=wants_raw_headers,
         return_kind="bytes",
         return_annotation=NoneType,
-        arity=len(types) + wants_raw_headers,
+        arity=len(types) + (user_type is not None) + wants_raw_headers,
     )
     inbound, outbound = get_args(websocket_hint)
     return sources, unwrap_alias(inbound), unwrap_alias(outbound)
@@ -1600,17 +1656,18 @@ class _CompiledAuth:
         returns = hints.get("return")
         # `-> TUser | None` is the authenticator declaring that its routes accept anonymous
         # callers: returning None reports absent credentials rather than rejecting them.
-        user_type, self.reports_absence = _strip_optional(returns)
-        if not (isinstance(user_type, type) and issubclass(user_type, Struct)):
+        # TUser itself is the app's to choose; jero only hands it to the handler.
+        user_members, self.reports_absence = _user_members(returns)
+        if not user_members:
             raise WiringError(
-                f"{self.owner}.authenticate must declare a msgspec.Struct return type "
-                f"(or 'Struct | None' to accept anonymous callers), got {returns!r}",
+                f"{self.owner}.authenticate must declare the user type it returns "
+                f"(or 'User | None' to accept anonymous callers), got {returns!r}",
             )
-        self.returns: type[Struct] = user_type
+        self.returns: tuple[object, ...] = user_members
         self._fn: Callable[..., Any] = fn
         self._is_async = inspect.iscoroutinefunction(fn)
 
-    async def __call__(self, raw_headers: dict[str, str], cookies: dict[str, str]) -> Struct | None:
+    async def __call__(self, raw_headers: dict[str, str], cookies: dict[str, str]) -> object:
         try:
             kwargs: dict[str, Struct] = {}
             if self.headers_type is not None:
@@ -1691,7 +1748,7 @@ class _Binder:
         raw_headers: dict[str, str],
         cookies: dict[str, str],
         path_values: dict[str, str],
-        user: Struct | None,
+        user: object,
         body: bytes,
         stream: ContentStream | None,
     ) -> object:
@@ -1722,7 +1779,7 @@ class _Binder:
         raw_headers: dict[str, str],
         cookies: dict[str, str],
         path_values: dict[str, str],
-        user: Struct | None,
+        user: object,
         body: bytes,
         stream: ContentStream | None,
     ) -> object:
@@ -3727,7 +3784,7 @@ class BaseApp[FactoryT = None](ABC):
         auth: _CompiledAuth | None,
     ) -> None:
         """Validate a handler's ``user`` annotation against the route's authenticator — that
-        there is one, that the Struct matches, and that its optionality agrees.
+        there is one, that the type matches, and that its optionality agrees.
 
         A handler on an anonymous-accepting route must declare ``user``: with nothing to
         check, a handler that ignores the auth result would serve anonymous callers with no
@@ -3736,35 +3793,38 @@ class BaseApp[FactoryT = None](ABC):
         user_type = sources.user
         if user_type is None:
             if auth is not None and auth.reports_absence:
+                returns = _user_type_name(auth.returns)
                 raise WiringError(
                     f"{resource_cls.__name__}.{name} declares no 'user', but "
-                    f"{auth.owner}.authenticate returns {auth.returns.__name__} | None, so "
+                    f"{auth.owner}.authenticate returns {returns} | None, so "
                     f"this route serves anonymous callers — declare "
-                    f"'user: {auth.returns.__name__} | None' and handle None, or mount it "
-                    f"behind an authenticator that returns {auth.returns.__name__} to gate it",
+                    f"'user: {returns} | None' and handle None, or mount it "
+                    f"behind an authenticator that returns {returns} to gate it",
                 )
             return
         if auth is None:
             raise WiringError(
                 f"{resource_cls.__name__}.{name} declares 'user' but no auth was given",
             )
-        if not issubclass(auth.returns, user_type):
+        declared = _user_type_name(user_type)
+        returns = _user_type_name(auth.returns)
+        if not _user_type_satisfies(auth.returns, user_type):
             raise WiringError(
-                f"{resource_cls.__name__}.{name}: 'user' expects {user_type.__name__} "
-                f"but {auth.owner}.authenticate returns {auth.returns.__name__}",
+                f"{resource_cls.__name__}.{name}: 'user' expects {declared} "
+                f"but {auth.owner}.authenticate returns {returns}",
             )
         if auth.reports_absence and not sources.user_optional:
             raise WiringError(
                 f"{resource_cls.__name__}.{name}: 'user' must be annotated "
-                f"'{user_type.__name__} | None' — {auth.owner}.authenticate returns "
-                f"'{user_type.__name__} | None', so a caller may arrive anonymous",
+                f"'{declared} | None' — {auth.owner}.authenticate returns "
+                f"'{returns} | None', so a caller may arrive anonymous",
             )
         if sources.user_optional and not auth.reports_absence:
             raise WiringError(
                 f"{resource_cls.__name__}.{name}: 'user' must be annotated "
-                f"'{user_type.__name__}' — {auth.owner}.authenticate returns "
-                f"'{user_type.__name__}', so an unauthenticated caller never reaches the "
-                f"handler; return '{user_type.__name__} | None' from it to accept anonymous "
+                f"'{declared}' — {auth.owner}.authenticate returns "
+                f"'{returns}', so an unauthenticated caller never reaches the "
+                f"handler; return '{returns} | None' from it to accept anonymous "
                 f"callers",
             )
 
@@ -3961,31 +4021,34 @@ class BaseApp[FactoryT = None](ABC):
     # for every parameter and rejects any concrete auth class); overloads give each
     # shape its own clean inference, and every other checker (pyright/ty/zuban/pyrefly)
     # handles both forms equally well. Runtime dispatch is unaffected — the
-    # undecorated implementation below is what actually runs.
+    # undecorated implementation below is what actually runs. The user type is `object`,
+    # not a parameter: nothing here relates it to anything, and an unbounded `TUser` in
+    # `TUser | Awaitable[TUser | None]` is ambiguous to mypy for an `async def`
+    # authenticate (the coroutine itself, or what it resolves to?), so it infers `Never`.
     @overload
-    def _include_resource[THeaders: Struct, TUser: Struct](
+    def _include_resource[THeaders: Struct](
         self,
         resource: Resource,
         *,
-        auth: Auth[THeaders, TUser] | None = None,
+        auth: Auth[THeaders, object] | None = None,
         cors: CORS | None = None,
         middleware: Sequence[object] = (),
     ) -> None: ...
     @overload
-    def _include_resource[TCookies: Struct, TUser: Struct](
+    def _include_resource[TCookies: Struct](
         self,
         resource: Resource,
         *,
-        auth: CookieAuth[TCookies, TUser] | None = None,
+        auth: CookieAuth[TCookies, object] | None = None,
         cors: CORS | None = None,
         middleware: Sequence[object] = (),
     ) -> None: ...
     @overload
-    def _include_resource[THeaders: Struct, TCookies: Struct, TUser: Struct](
+    def _include_resource[THeaders: Struct, TCookies: Struct](
         self,
         resource: Resource,
         *,
-        auth: HybridAuth[THeaders, TCookies, TUser] | None = None,
+        auth: HybridAuth[THeaders, TCookies, object] | None = None,
         cors: CORS | None = None,
         middleware: Sequence[object] = (),
     ) -> None: ...
@@ -4012,29 +4075,29 @@ class BaseApp[FactoryT = None](ABC):
         self.__include(resource, Resource.METHODS, auth=auth, cors=cors, middleware=middleware)
 
     @overload
-    def _include_endpoint[THeaders: Struct, TUser: Struct](
+    def _include_endpoint[THeaders: Struct](
         self,
         endpoint: Endpoint,
         *,
-        auth: Auth[THeaders, TUser] | None = None,
+        auth: Auth[THeaders, object] | None = None,
         cors: CORS | None = None,
         middleware: Sequence[object] = (),
     ) -> None: ...
     @overload
-    def _include_endpoint[TCookies: Struct, TUser: Struct](
+    def _include_endpoint[TCookies: Struct](
         self,
         endpoint: Endpoint,
         *,
-        auth: CookieAuth[TCookies, TUser] | None = None,
+        auth: CookieAuth[TCookies, object] | None = None,
         cors: CORS | None = None,
         middleware: Sequence[object] = (),
     ) -> None: ...
     @overload
-    def _include_endpoint[THeaders: Struct, TCookies: Struct, TUser: Struct](
+    def _include_endpoint[THeaders: Struct, TCookies: Struct](
         self,
         endpoint: Endpoint,
         *,
-        auth: HybridAuth[THeaders, TCookies, TUser] | None = None,
+        auth: HybridAuth[THeaders, TCookies, object] | None = None,
         cors: CORS | None = None,
         middleware: Sequence[object] = (),
     ) -> None: ...
@@ -4063,29 +4126,29 @@ class BaseApp[FactoryT = None](ABC):
         self.__include(endpoint, Endpoint.METHODS, auth=auth, cors=cors, middleware=middleware)
 
     @overload
-    def _include_websocket[THeaders: Struct, TUser: Struct](
+    def _include_websocket[THeaders: Struct](
         self,
         endpoint: WebSocketEndpoint,
         *,
-        auth: Auth[THeaders, TUser] | None = None,
+        auth: Auth[THeaders, object] | None = None,
         max_frame_size: int = 1024 * 1024,
         middleware: Sequence[object] = (),
     ) -> None: ...
     @overload
-    def _include_websocket[TCookies: Struct, TUser: Struct](
+    def _include_websocket[TCookies: Struct](
         self,
         endpoint: WebSocketEndpoint,
         *,
-        auth: CookieAuth[TCookies, TUser] | None = None,
+        auth: CookieAuth[TCookies, object] | None = None,
         max_frame_size: int = 1024 * 1024,
         middleware: Sequence[object] = (),
     ) -> None: ...
     @overload
-    def _include_websocket[THeaders: Struct, TCookies: Struct, TUser: Struct](
+    def _include_websocket[THeaders: Struct, TCookies: Struct](
         self,
         endpoint: WebSocketEndpoint,
         *,
-        auth: HybridAuth[THeaders, TCookies, TUser] | None = None,
+        auth: HybridAuth[THeaders, TCookies, object] | None = None,
         max_frame_size: int = 1024 * 1024,
         middleware: Sequence[object] = (),
     ) -> None: ...

@@ -243,7 +243,8 @@ class ResponseMember(Struct, frozen=True):
 
 
 class Sources(Struct):
-    """The resolved Struct types for one handler's arguments."""
+    """The resolved types for one handler's arguments: a Struct for every wire source, and
+    whatever the authenticator returns for ``user``."""
 
     json: type[Struct] | None = None
     json_decoder: Decoder[Struct] | None = None  # prebuilt decoder for the json body type
@@ -252,8 +253,11 @@ class Sources(Struct):
     path: type[Struct] | None = None
     headers: type[Struct] | None = None
     cookies: type[Struct] | None = None
-    user: type[Struct] | None = None
-    # True when 'user' was declared ``UserStruct | None`` (the anonymous-caller contract). Set
+    # The handler's ``user`` type as its union members (``None`` taken out; see ``user_optional``):
+    # whatever its authenticator returns, so any types at all, not only Structs. None when the
+    # handler declares no 'user'.
+    user: tuple[object, ...] | None = None
+    # True when 'user' was declared ``User | None`` (the anonymous-caller contract). Set
     # together with ``user``; cross-checked at wiring time against whether the route's
     # authenticator reports absence.
     user_optional: bool = False

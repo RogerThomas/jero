@@ -9,7 +9,10 @@ def authenticate(self, headers: THeaders) -> TUser: ...
 
 - `headers` is bound from the request into your declared `Struct` (the same
   header-name mapping as the [`headers` binding](binding.md#headers-headers-typed-and-raw_headers-opaque)).
-- The returned `Struct` is what handlers receive as `user`.
+- The return value is what handlers receive as `user`, untouched. `TUser` is your choice:
+  a `Struct`, a dataclass, an ORM model, a bare `int` id, a union of several. Handlers must
+  accept every type it can return: the same type, a base class of it, or a wider union
+  (a Protocol only if the class explicitly inherits it), checked at startup.
 - Raise an `HTTPError` subclass to reject. `authenticate` may be sync or async.
 - Declaring `-> TUser | None` instead makes the routes it is mounted on accept anonymous
   callers — see [optional authentication](#optional-authentication).

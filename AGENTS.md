@@ -144,7 +144,8 @@ Always follow the following style guide:
   `Location`/`Link` types live in `jero/links.py`; reversal resolves against a wiring-time
   registry (`_Reverser`) in `core`. The `*Target` types are un-underscored
   package-internal boundary-crossers (like `encode_sse`), not public API.
-- Handler args bind **by name**, each a msgspec Struct: `json`, `content` (raw
+- Handler args bind **by name**, each a msgspec Struct (except `user`, which is whatever
+  the authenticator returns): `json`, `content` (raw
   bytes), `content_stream`, `form` (multipart; also `application/x-www-form-urlencoded`
   when the form Struct has no `FilePart` field, decided once at wiring as
   `FormSpec.urlencoded`, else a url-encoded body is a 415) — the four body sources are
@@ -233,16 +234,25 @@ Always follow the following style guide:
 - **Auth**: an object whose `authenticate` binds `headers`, `cookies`, or both
   (`Auth[THeaders, TUser]` / `CookieAuth[TCookies, TUser]` / `HybridAuth[THeaders,
   TCookies, TUser]` — three static protocols, one runtime `_CompiledAuth` that
-  introspects the concrete signature) and returns `UserStruct`; the user type is
-  checked against handlers at startup. Cookie auth is what makes browser WebSocket auth
+  introspects the concrete signature) and returns a user of **any type the app chooses**
+  (a Struct, a dataclass, an ORM model, a bare `int` id, a union) — `user` never crosses
+  the wire, so jero neither decodes nor schemas it, just hands it over. The user type is
+  checked against handlers at startup, member by member (`type` aliases resolved): every
+  type `authenticate` can return must be one the handler accepts, so a handler may declare
+  a wider union. Plain classes match by `issubclass` (a handler may declare a base class),
+  Protocols by explicit inheritance only (never structurally, even when
+  `runtime_checkable`), and anything else (generics, `NewType`) exactly. The
+  `_include_*` overloads take `Auth[THeaders, object]` rather than binding `TUser` (it relates
+  to nothing there, and an unbounded `TUser` against `TUser | Awaitable[TUser | None]` makes
+  mypy infer `Never` for an `async def` authenticate). Cookie auth is what makes browser WebSocket auth
   possible at all (no `Authorization` header there, but cookies always ride along).
   **The authenticator's declared return
-  type is the route's auth policy**: `-> UserStruct` gates, while `-> UserStruct | None`
+  type is the route's auth policy**: `-> User` gates, while `-> User | None`
   makes credentials an *input* — returning `None` reports **absent** credentials and the
   handler runs with `user=None`, while **present but invalid** ones still raise (401).
   Absence is the authenticator's call, never a heuristic; note `authenticate` only sees what
   its declared Struct(s) can bind, so a credential field needs a `| None` default for absence
-  to reach it. Handlers must match (`user: UserStruct | None` against the second), checked
+  to reach it. Handlers must match (`user: User | None` against the second), checked
   both directions at startup — **and a handler that omits `user` is a `WiringError` on an
   anonymous-accepting route** (nothing would record that the route is open; behind a gating
   authenticator omitting it stays fine). An app needing both policies defines two

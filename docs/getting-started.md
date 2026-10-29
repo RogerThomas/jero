@@ -82,7 +82,7 @@ That's the whole loop: a `Struct` for the URL slots (`path`), a `Struct` for the
 response, and a method name (`read_one`) that maps to `GET`.
 
 Everything that crosses the wire is a `Struct` — bodies, params, path slots, headers,
-forms, auth users, etc. The `Struct` is what gives jero validation, fast serialization,
+forms, etc. The `Struct` is what gives jero validation, fast serialization,
 startup checks, and the [OpenAPI spec](guide/openapi.md); a raw `dict` return is a
 startup error. [Philosophy](philosophy.md#struct-everywhere) has the full reasoning.
 
