@@ -233,16 +233,22 @@ Always follow the following style guide:
 - **Auth**: an object whose `authenticate` binds `headers`, `cookies`, or both
   (`Auth[THeaders, TUser]` / `CookieAuth[TCookies, TUser]` / `HybridAuth[THeaders,
   TCookies, TUser]` — three static protocols, one runtime `_CompiledAuth` that
-  introspects the concrete signature) and returns `UserStruct`; the user type is
-  checked against handlers at startup. Cookie auth is what makes browser WebSocket auth
+  introspects the concrete signature) and returns a user of **any type the app chooses**
+  (a Struct, a dataclass, an ORM model, a bare `int` id, a union) — `user` never crosses
+  the wire, so jero neither decodes nor schemas it, just hands it over. The user type is
+  checked against handlers at startup: plain classes by `issubclass` (a handler may declare
+  a base class), anything else (unions, generics, `NewType`, Protocols) by exact match. The
+  `_include_*` overloads take `Auth[THeaders, object]` rather than binding `TUser` (it relates
+  to nothing there, and an unbounded `TUser` against `TUser | Awaitable[TUser | None]` makes
+  mypy infer `Never` for an `async def` authenticate). Cookie auth is what makes browser WebSocket auth
   possible at all (no `Authorization` header there, but cookies always ride along).
   **The authenticator's declared return
-  type is the route's auth policy**: `-> UserStruct` gates, while `-> UserStruct | None`
+  type is the route's auth policy**: `-> User` gates, while `-> User | None`
   makes credentials an *input* — returning `None` reports **absent** credentials and the
   handler runs with `user=None`, while **present but invalid** ones still raise (401).
   Absence is the authenticator's call, never a heuristic; note `authenticate` only sees what
   its declared Struct(s) can bind, so a credential field needs a `| None` default for absence
-  to reach it. Handlers must match (`user: UserStruct | None` against the second), checked
+  to reach it. Handlers must match (`user: User | None` against the second), checked
   both directions at startup — **and a handler that omits `user` is a `WiringError` on an
   anonymous-accepting route** (nothing would record that the route is open; behind a gating
   authenticator omitting it stays fine). An app needing both policies defines two

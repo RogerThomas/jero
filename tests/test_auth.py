@@ -8,7 +8,7 @@ from typing import cast
 import pytest
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, HTTPError
+from jero import Auth, BaseApp, Endpoint, HTTPError
 from jero.testing import TestClient
 
 
@@ -236,3 +236,143 @@ def test_none_from_a_gating_authenticator_is_rejected_not_bound() -> None:
         resp = client.get("/lying", headers={"authorization": "token"})
         assert resp.status_code == 401
         assert resp.json()["type"] == "authentication-required"
+
+
+# --- The user type is the app's choice: jero hands it over untouched ---
+
+
+@dataclass
+class Account:
+    """A plain dataclass user, as an app might already have one."""
+
+    id: str
+
+
+@dataclass
+class AdminAccount(Account):
+    """A more specific account, for a handler that declares the base class."""
+
+
+@dataclass
+class AdminAccountAuth:
+    """An authenticator returning a dataclass subclass rather than a Struct."""
+
+    async def authenticate(self, headers: Creds) -> AdminAccount:
+        """Resolve the token to an admin account."""
+        if headers.authorization is None:
+            raise BadTokenError()
+        return AdminAccount(id=headers.authorization)
+
+
+class AccountEndpoint(Endpoint, path="/account"):
+    """An endpoint declaring the base class of what its authenticator returns."""
+
+    async def get(self, user: Account) -> Greeting:
+        """Greet the account."""
+        return Greeting(caller=user.id)
+
+
+@dataclass
+class UserIdAuth:
+    """An authenticator whose user is a bare id, accepting anonymous callers."""
+
+    async def authenticate(self, headers: Creds) -> int | None:
+        """The token is the id; ``None`` when none was presented."""
+        return None if headers.authorization is None else int(headers.authorization)
+
+
+class UserIdEndpoint(Endpoint, path="/user-id"):
+    """An endpoint whose user is a bare id."""
+
+    async def get(self, user: int | None) -> Greeting:
+        """Greet the caller by id, or as anonymous."""
+        return Greeting(caller="anonymous" if user is None else str(user))
+
+
+@dataclass
+class CallerOrAccountAuth:
+    """An authenticator returning one of two user types, or None for no credentials."""
+
+    async def authenticate(self, headers: Creds) -> Caller | Account | None:
+        """A service token resolves to a Caller, any other to an Account."""
+        if headers.authorization is None:
+            return None
+        if headers.authorization == "service":
+            return Caller(id="caller-id")
+        return Account(id="account-id")
+
+
+class CallerOrAccountEndpoint(Endpoint, path="/caller-or-account"):
+    """An endpoint declaring exactly the union its authenticator returns."""
+
+    async def get(self, user: Caller | Account | None) -> Greeting:
+        """Greet whichever kind of user arrived."""
+        return Greeting(caller="anonymous" if user is None else user.id)
+
+
+class CallerOnlyEndpoint(Endpoint, path="/caller-only"):
+    """An endpoint declaring only one member of its authenticator's union."""
+
+    async def get(self, user: Caller | None) -> Greeting:
+        """Greet the caller (never reached — wiring fails first)."""
+        return Greeting(caller="anonymous" if user is None else user.id)
+
+
+@dataclass
+class NoUserAuth:
+    """An authenticator that declares no user type at all."""
+
+    async def authenticate(self, headers: Creds) -> None:
+        """Return nothing (never reached — wiring fails first)."""
+        _ = headers
+
+
+class _UserTypeApp(BaseApp):
+    """App mounting one endpoint behind one authenticator."""
+
+    def __init__(self, endpoint: Endpoint, auth: Auth[Creds, object]) -> None:
+        self._endpoint = endpoint
+        self._auth = auth
+        super().__init__()
+
+    async def wire(self) -> None:
+        self._include_endpoint(self._endpoint, auth=self._auth)
+
+
+def test_dataclass_user_binds_to_a_base_class_handler() -> None:
+    """A dataclass user binds, and a handler may declare a base class of it."""
+    with TestClient(_UserTypeApp(AccountEndpoint(), AdminAccountAuth())) as client:
+        resp = client.get("/account", headers={"authorization": "account-id"})
+        assert resp.status_code == 200
+        assert resp.json() == {"caller": "account-id"}
+
+
+def test_bare_id_user_binds() -> None:
+    """A bare scalar user binds, and ``| None`` still accepts anonymous callers."""
+    with TestClient(_UserTypeApp(UserIdEndpoint(), UserIdAuth())) as client:
+        assert client.get("/user-id").json() == {"caller": "anonymous"}
+        assert client.get("/user-id", headers={"authorization": "1"}).json() == {"caller": "1"}
+
+
+def test_union_user_binds_each_member() -> None:
+    """A union user binds whichever member the authenticator returned; ``A | B | None`` is
+    read as an anonymous-accepting ``A | B``."""
+    with TestClient(_UserTypeApp(CallerOrAccountEndpoint(), CallerOrAccountAuth())) as client:
+        assert client.get("/caller-or-account").json() == {"caller": "anonymous"}
+        resp = client.get("/caller-or-account", headers={"authorization": "service"})
+        assert resp.json() == {"caller": "caller-id"}
+        resp = client.get("/caller-or-account", headers={"authorization": "token"})
+        assert resp.json() == {"caller": "account-id"}
+
+
+def test_union_user_must_match_exactly() -> None:
+    """A type that isn't a plain class must match exactly: a handler declaring one member
+    of the authenticator's union fails at startup, since the other may arrive."""
+    with pytest.raises(RuntimeError, match="'user' expects Caller but CallerOrAccountAuth"):
+        TestClient(_UserTypeApp(CallerOnlyEndpoint(), CallerOrAccountAuth()))
+
+
+def test_authenticator_without_a_user_type_fails() -> None:
+    """``-> None`` declares no user, so there is nothing to hand the handler."""
+    with pytest.raises(RuntimeError, match="must declare the user type it returns"):
+        TestClient(_UserTypeApp(UserIdEndpoint(), NoUserAuth()))

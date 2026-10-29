@@ -252,8 +252,10 @@ class Sources(Struct):
     path: type[Struct] | None = None
     headers: type[Struct] | None = None
     cookies: type[Struct] | None = None
-    user: type[Struct] | None = None
-    # True when 'user' was declared ``UserStruct | None`` (the anonymous-caller contract). Set
+    # The handler's ``user`` type: whatever its authenticator returns, so any type expression
+    # (a class, a union, a NewType), not only a Struct. None when the handler declares no 'user'.
+    user: object = None
+    # True when 'user' was declared ``User | None`` (the anonymous-caller contract). Set
     # together with ``user``; cross-checked at wiring time against whether the route's
     # authenticator reports absence.
     user_optional: bool = False
