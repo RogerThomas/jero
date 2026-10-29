@@ -3,7 +3,7 @@ callers (absent / valid / invalid credentials) via its /spotlight endpoint."""
 
 from collections.abc import Generator
 from dataclasses import dataclass
-from typing import NewType, Protocol, cast, runtime_checkable
+from typing import NewType, Protocol, TypedDict, cast, runtime_checkable
 
 import pytest
 from msgspec import Struct
@@ -535,7 +535,7 @@ class Describable(Protocol):
 
     def describe(self) -> str:
         """Describe the user."""
-        ...  # pylint: disable=unnecessary-ellipsis  # Protocol stub; pyright needs the body
+        raise NotImplementedError
 
 
 @dataclass
@@ -589,3 +589,34 @@ def test_newtype_user_must_match_exactly() -> None:
     """A ``NewType`` is not a class, so it matches only itself: ``user: int`` fails."""
     with pytest.raises(RuntimeError, match="'user' expects int but NewTypeUserIdAuth"):
         TestClient(_UserTypeApp(UserIdEndpoint(), NewTypeUserIdAuth()))
+
+
+class AccountDict(TypedDict):
+    """A TypedDict user member, a class that refuses ``issubclass`` checks."""
+
+    id: str
+
+
+@dataclass
+class AccountOrDictAuth:
+    """An authenticator returning a dataclass or a TypedDict."""
+
+    async def authenticate(self, headers: Creds) -> Account | AccountDict:
+        """Resolve the token to an account."""
+        return Account(id=headers.authorization or "account-id")
+
+
+class DictFirstEndpoint(Endpoint, path="/dict-first"):
+    """An endpoint listing the TypedDict member first, so it is checked against Account."""
+
+    async def get(self, user: AccountDict | Account) -> Greeting:
+        """Greet whichever kind of user arrived."""
+        return Greeting(caller=user.id if isinstance(user, Account) else user["id"])
+
+
+def test_typeddict_member_in_any_order_wires() -> None:
+    """A TypedDict refuses ``issubclass``; that counts as "no match" for that member rather
+    than crashing wiring, so the member order does not matter."""
+    with TestClient(_UserTypeApp(DictFirstEndpoint(), AccountOrDictAuth())) as client:
+        resp = client.get("/dict-first", headers={"authorization": "account-id"})
+        assert resp.json() == {"caller": "account-id"}

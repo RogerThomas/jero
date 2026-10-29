@@ -1233,7 +1233,10 @@ def _user_member_satisfies(returned: object, declared: object) -> bool:
     # and checks the runtime-checkable ones structurally, by member names alone.
     if is_protocol(declared):
         return declared in returned.__mro__
-    return issubclass(returned, declared)
+    # A class refusing class checks (a TypedDict) matches only itself.
+    with contextlib.suppress(TypeError):
+        return issubclass(returned, declared)
+    return False
 
 
 def _user_type_satisfies(returned: tuple[object, ...], declared: tuple[object, ...]) -> bool:

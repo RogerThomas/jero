@@ -243,7 +243,8 @@ class ResponseMember(Struct, frozen=True):
 
 
 class Sources(Struct):
-    """The resolved Struct types for one handler's arguments."""
+    """The resolved types for one handler's arguments: a Struct for every wire source, and
+    whatever the authenticator returns for ``user``."""
 
     json: type[Struct] | None = None
     json_decoder: Decoder[Struct] | None = None  # prebuilt decoder for the json body type
