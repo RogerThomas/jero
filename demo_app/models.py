@@ -185,3 +185,34 @@ class PingResponse(Camel, tag="ping-response"):
     client_id: str
     user_id: str
     message: str
+
+
+class FixedDiscount(Camel, tag="fixed", tag_field="kind"):
+    """A price quote taking a fixed amount off.
+
+    One member of the ``Discount`` union body: ``tag``/``tag_field`` put
+    ``"kind": "fixed"`` on the wire, which is how msgspec picks the member to decode. The
+    tag field is spelled exactly as given (``rename`` never touches it), while the other
+    fields still go camelCase via ``Camel``.
+    """
+
+    price_cents: int
+    discount_cents: Annotated[int, Meta(ge=0)]
+
+
+class PercentDiscount(Camel, tag="percent", tag_field="kind"):
+    """A price quote taking a percentage off (``"kind": "percent"`` on the wire)."""
+
+    price_cents: int
+    percent_off: Annotated[int, Meta(ge=0, le=100)]
+
+
+type Discount = FixedDiscount | PercentDiscount
+"""The ``/price-quotes`` body: a union of tagged Structs, so one request field set or the
+other, never a single Struct with every field optional."""
+
+
+class PriceQuote(Camel):
+    """The discounted price."""
+
+    price_cents: int

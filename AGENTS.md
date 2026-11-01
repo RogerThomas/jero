@@ -231,6 +231,17 @@ Always follow the following style guide:
   `@api.get(...) → return {"a": 1}` idiom is gone: a `dict`/blob return is a
   `WiringError` at startup. JSON in and out is a typed Struct, every time — that's
   what gives it validation *and* a schema for the OpenAPI spec. No exceptions.
+  - **A `json` body may be a union of tagged Structs** (`json: FixedDiscount |
+    PercentDiscount`; a `type` alias resolves) for a body with several shapes. msgspec
+    dispatches on the tag, so it costs the request path nothing over one Struct; the handler
+    narrows with `match`/`isinstance`. Every member needs an explicit **string** tag (the
+    WebSocket rule; both share `require_string_tags` in `_wiring_types`), else a
+    `WiringError` naming the member; a `tag_field` mismatch or duplicate tag value (msgspec's
+    `TypeError` building the decoder at wiring) is re-raised as a `WiringError`; `X | None`
+    stays rejected. A missing/unknown tag is the usual 422. OpenAPI emits msgspec's `anyOf` +
+    `discriminator` (identical to a tagged-union response); no composed request examples for
+    a union, matching the response side. `rename` never touches `tag_field`. Only `json` takes
+    unions — `form`/`params`/`headers`/`cookies`/`path` stay one Struct.
 - **Auth**: an object whose `authenticate` binds `headers`, `cookies`, or both
   (`Auth[THeaders, TUser]` / `CookieAuth[TCookies, TUser]` / `HybridAuth[THeaders,
   TCookies, TUser]` — three static protocols, one runtime `_CompiledAuth` that
@@ -367,7 +378,8 @@ Always follow the following style guide:
   the senders, `_CoveredRoute`, observe capture) lives in `core`, mirroring the
   `_exception_handlers` split.
   `jero/_wiring_types.py` — the resolved wiring contracts (`Sources`, `FormSpec`,
-  `OperationSpec`, the `*Meta` types, `is_struct_type`/`strip_list`), all msgspec Structs; a leaf depending
+  `OperationSpec`, the `*Meta` types, `is_struct_type`/`strip_list`/`union_members`/
+  `require_string_tags`), all msgspec Structs; a leaf depending
   only on msgspec + `jero.openapi`. `jero/openapi.py` — the dependency-free OpenAPI 3.1
   builder (`SecurityScheme`, `ResponseSpec`, `ModelMeta`, `build_openapi`).
   `jero/structs.py` — `Struct`, jero's drop-in `msgspec.Struct` base whose `meta=` class
@@ -407,7 +419,8 @@ Always follow the following style guide:
   types when the test WebSocket API accepts union type expressions).
 - `demo_app/` — a complete, project-structured example app (`config`, `models`,
   `auth`, `services/`, `operations/`, `factory`, `app`); its `TokenAuth` gates widgets +
-  `/me` and its `OptionalTokenAuth` serves anonymous callers at `/spotlight`. It is the **single source of
+  `/me` and its `OptionalTokenAuth` serves anonymous callers at `/spotlight`; `/price-quotes`
+  takes a tagged-union `json` body (`Discount`). It is the **single source of
   truth**: the worked example in the docs, the app the test suite runs against, and a
   typed consumer of the public API that every type checker validates. Keep it working
   and bounded (it demonstrates the shape; resist turning it into a feature dumping ground).
