@@ -2293,6 +2293,21 @@ class NestedUnionAliasEndpoint(Endpoint, path="/nested-union-alias"):
         return NoContent()
 
 
+class StreamExtra(Struct, tag=True):
+    """A third arm, beside the aliased pair."""
+
+    c: int
+
+
+class NestedItemAliasEndpoint(Endpoint, path="/nested-item-alias"):
+    """A response item union whose first member is an alias for a union itself."""
+
+    async def get(self) -> JSONResponse[RowPairAlias | StreamExtra]:
+        """Get one of the three shapes."""
+        item: RowPairAlias | StreamExtra = StreamExtra(c=3)
+        return JSONResponse(json=item)
+
+
 class StreamItemAliasEndpoint(Endpoint, path="/stream-item-alias"):
     """Streams an aliased item union."""
 
@@ -2311,6 +2326,7 @@ class NestedUnionAliasApp(BaseApp):
     async def wire(self) -> None:
         self._include_endpoint(NestedUnionAliasEndpoint())
         self._include_endpoint(StreamItemAliasEndpoint())
+        self._include_endpoint(NestedItemAliasEndpoint())
         self._include_openapi(title="nested-union", version="1")
 
 
@@ -3262,3 +3278,16 @@ def test_param_prune_keeps_tagged_union_members_via_discriminator() -> None:
     assert "TaggedParamPath" not in schemas
     assert "TagA" in schemas
     assert "TagB" in schemas
+
+
+def test_alias_nested_in_a_response_item_union_flattens(nested_union_client: TestClient) -> None:
+    """``JSONResponse[AB | C]`` with ``type AB = A | B`` documents all three members, the same
+    flattening a ``json`` request body gets (one shared union classifier)."""
+    content = nested_union_client.get("/openapi.json").json()["paths"]["/nested-item-alias"]["get"][
+        "responses"
+    ]["200"]["content"]
+    assert content["application/json"]["schema"]["anyOf"] == [
+        {"$ref": "#/components/schemas/StreamRow"},
+        {"$ref": "#/components/schemas/StreamFooter"},
+        {"$ref": "#/components/schemas/StreamExtra"},
+    ]

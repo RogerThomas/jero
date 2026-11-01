@@ -232,7 +232,8 @@ Always follow the following style guide:
   `WiringError` at startup. JSON in and out is a typed Struct, every time — that's
   what gives it validation *and* a schema for the OpenAPI spec. No exceptions.
   - **A `json` body may be a union of tagged Structs** (`json: FixedDiscount |
-    PercentDiscount`; a `type` alias resolves) for a body with several shapes. msgspec
+    PercentDiscount`; a `type` alias resolves, even nested as `AB | C`, and a union naming one
+    Struct twice collapses to that Struct) for a body with several shapes. msgspec
     dispatches on the tag, so it costs the request path nothing over one Struct; the handler
     narrows with `match`/`isinstance`. Every member needs an explicit **string** tag (the
     WebSocket rule; both share `require_string_tags` in `_wiring_types`), else a
@@ -378,8 +379,10 @@ Always follow the following style guide:
   the senders, `_CoveredRoute`, observe capture) lives in `core`, mirroring the
   `_exception_handlers` split.
   `jero/_wiring_types.py` — the resolved wiring contracts (`Sources`, `FormSpec`,
-  `OperationSpec`, the `*Meta` types, `is_struct_type`/`strip_list`/`union_members`/
-  `require_string_tags`), all msgspec Structs; a leaf depending
+  `OperationSpec`, the `*Meta` types, `is_struct_type`/`strip_list`, and the one union
+  vocabulary every union site uses — `union_members`/`flatten_union_members` (aliases resolved,
+  nested alias-unions spliced in, repeats dropped), `compose_union`, `require_string_tags`), all
+  msgspec Structs; a leaf depending
   only on msgspec + `jero.openapi`. `jero/openapi.py` — the dependency-free OpenAPI 3.1
   builder (`SecurityScheme`, `ResponseSpec`, `ModelMeta`, `build_openapi`).
   `jero/structs.py` — `Struct`, jero's drop-in `msgspec.Struct` base whose `meta=` class

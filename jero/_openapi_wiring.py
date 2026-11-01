@@ -11,7 +11,7 @@ dependency graph stays acyclic (``core`` imports *this* module, never the revers
 from collections.abc import Mapping, Sequence
 from functools import cache
 from types import UnionType, get_original_bases
-from typing import Any, Generic, Literal, TypeVar, Union, cast, get_args, get_origin
+from typing import Any, Generic, Literal, TypeVar, cast, get_args, get_origin
 
 from msgspec import Struct, defstruct
 from msgspec.structs import fields as struct_fields
@@ -23,10 +23,12 @@ from jero._wiring_types import (
     ReturnKind,
     Sources,
     WiringError,
+    compose_union,
     is_struct_type,
     param_bindings,
     strip_list,
     substitute,
+    union_members,
     unwrap_alias,
 )
 from jero.errors import (
@@ -239,15 +241,15 @@ def _item_payload(
         )
     if allow_str and item is str:
         return None
-    if is_struct_type(item):
-        return cast("type[Struct]", item)
-    if get_origin(item) in (Union, UnionType):
-        members = tuple(unwrap_alias(member) for member in get_args(item))
-        if all(is_struct_type(member) or (allow_str and member is str) for member in members):
-            union: type | UnionType = cast("type", members[0])
-            for member in members[1:]:
-                union = union | cast("type", member)
-            return cast("UnionType", union)
+    # The same classifier the request side uses, so an alias nested in the union
+    # (``JSONResponse[AB | C]``) flattens here exactly as it does for a ``json`` body.
+    members = union_members(item)
+    if len(members) == 1 and is_struct_type(members[0]):
+        return cast("type[Struct]", members[0])
+    if len(members) > 1 and all(
+        is_struct_type(member) or (allow_str and member is str) for member in members
+    ):
+        return cast("UnionType", compose_union(members))
     allowed = "a Struct, str, or a union of them" if allow_str else "a Struct or a union of Structs"
     raise WiringError(
         f"{operation_id}: {_WRAPPER_NAMES[kind]} item type must be {allowed}, got {item!r}"
@@ -484,7 +486,6 @@ def _merged_body_model(bodies: Sequence[ResponseBody], operation_id: str) -> Uni
     """The ``A | B`` body for several members sharing one status *and* media type, so they
     document as one ``anyOf`` (with msgspec's ``discriminator`` when the members are
     tagged) — identical to what those Structs produce inside ``JSONResponse[A | B]``."""
-    merged: type[Struct] | UnionType | None = None
     for body in bodies:
         if body.model is None or body.is_list:
             # An anyOf composes object schemas. A bodyless member has no schema to contribute,
@@ -494,8 +495,7 @@ def _merged_body_model(bodies: Sequence[ResponseBody], operation_id: str) -> Uni
                 f"each declare a Struct body to merge into one anyOf; a bodyless or "
                 f"list[Struct] member cannot be combined — give it its own status",
             )
-        merged = body.model if merged is None else merged | body.model
-    return cast("UnionType", merged)
+    return cast("UnionType", compose_union([body.model for body in bodies]))
 
 
 def _merged_header_types(

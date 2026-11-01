@@ -86,11 +86,20 @@ def substitute(ann: object, bindings: Mapping[TypeVar, object]) -> object:
     if replaced == args:
         return ann
     if origin in (Union, UnionType):
-        merged: type | UnionType = cast("type", replaced[0])
-        for arg in replaced[1:]:
-            merged = merged | cast("type", arg)
-        return merged
+        return compose_union(replaced)
     return cast(Mapping[tuple[object, ...], object], origin)[replaced]
+
+
+def compose_union(members: Sequence[object]) -> type | UnionType:
+    """``members`` folded into one union with ``|`` (a single member comes back as itself).
+
+    Rebuilding with ``|`` rather than subscripting ``typing.Union`` yields the
+    ``types.UnionType`` the OpenAPI layer schemas directly, whichever spelling the members
+    arrived in. Each member is a type form to checkers, so the fold goes through a cast."""
+    union: type | UnionType = cast("type", members[0])
+    for member in members[1:]:
+        union = union | cast("type", member)
+    return union
 
 
 def param_bindings(params: Sequence[object], supplied: tuple[object, ...]) -> dict[TypeVar, object]:
@@ -140,14 +149,38 @@ def unwrap_alias(ann: object) -> object:
     return ann
 
 
+def union_args(ann: object) -> tuple[object, ...] | None:
+    """``ann``'s direct union arguments, or ``None`` if ``ann`` is not a union. Both spellings
+    count: ``A | B`` (``types.UnionType``) and ``typing.Union[A, B]``."""
+    if get_origin(ann) not in (UnionType, Union):
+        return None
+    return get_args(ann)
+
+
+def flatten_union_members(members: Sequence[object]) -> tuple[object, ...]:
+    """Union members with every ``type`` alias resolved, a member that resolves to a union
+    itself spliced in, and repeats dropped (first-seen order kept).
+
+    Python flattens and de-duplicates ``A | (B | C)`` as it builds the union, but not when the
+    inner union arrives behind an alias: ``type AB = A | B`` in ``AB | C`` stays a single member
+    until the alias is resolved, and ``type PA = A`` in ``PA | A`` stays two. Recursive, so an
+    alias of an alias of a union flattens too. Repeats are found by equality, not hashing, since
+    a member may be any type form."""
+    flat: list[object] = []
+    for member in members:
+        resolved = unwrap_alias(member)
+        inner = union_args(resolved)
+        for leaf in flatten_union_members(inner) if inner is not None else (resolved,):
+            if leaf not in flat:
+                flat.append(leaf)
+    return tuple(flat)
+
+
 def union_members(ann: object) -> tuple[object, ...]:
-    """``ann``'s union members, each alias-resolved, or ``(ann,)`` when it is not a union.
-    Both spellings of a union classify alike: ``A | B`` (``types.UnionType``) and
-    ``typing.Union[A, B]``."""
-    ann = unwrap_alias(ann)
-    if get_origin(ann) in (UnionType, Union):
-        return tuple(unwrap_alias(member) for member in get_args(ann))
-    return (ann,)
+    """``ann`` as its flattened union members (see :func:`flatten_union_members`), or
+    ``(ann,)`` alias-resolved when it is not a union. The one classifier every union jero
+    reads goes through: ``json`` bodies, WebSocket frames, response item types, ``user``."""
+    return flatten_union_members((ann,))
 
 
 def require_string_tags(label: str, members: Sequence[type[Struct]]) -> None:

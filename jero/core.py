@@ -134,9 +134,12 @@ from jero._wiring_types import (
     ReturnKind,
     Sources,
     WiringError,
+    compose_union,
+    flatten_union_members,
     is_struct_type,
     require_string_tags,
     strip_list,
+    union_args,
     union_members,
     unwrap_alias,
 )
@@ -1095,10 +1098,7 @@ def _json_annotation(cls: type, method: str, ann: object) -> type[Struct] | Unio
         )
     structs = cast(tuple[type[Struct], ...], members)
     require_string_tags(label, structs)
-    union = structs[0] | structs[1]
-    for member in structs[2:]:
-        union |= member
-    return union
+    return cast(UnionType, compose_union(structs))
 
 
 def _wrapper_kind(cls: type) -> ReturnKind | None:
@@ -1202,35 +1202,11 @@ _UNION_MEMBER_KINDS: frozenset[ReturnKind] = frozenset(
 )
 
 
-def _union_args(ann: object) -> tuple[object, ...] | None:
-    """``ann``'s union members, or ``None`` if ``ann`` is not a union (of any arity)."""
-    origin = get_origin(ann)
-    if origin is not UnionType and origin is not Union:
-        return None
-    return get_args(ann)
-
-
-def _flatten_union_members(members: tuple[object, ...]) -> tuple[object, ...]:
-    """Union members with every ``type`` alias resolved, and a member that resolves to a union
-    itself spliced in.
-
-    Python flattens ``A | (B | C)`` as it builds the union, but not when the inner union arrives
-    behind an alias: ``type Kinds = A | B`` in ``Kinds | Created[C]`` stays a single member until
-    the alias is resolved, and would then be classified as one unrecognized return type. Recursive
-    so an alias of an alias of a union flattens too."""
-    flat: list[object] = []
-    for member in members:
-        resolved = unwrap_alias(member)
-        inner = _union_args(resolved)
-        flat.extend(_flatten_union_members(inner) if inner is not None else [resolved])
-    return tuple(flat)
-
-
 def _user_members(ann: object) -> tuple[tuple[object, ...], bool]:
     """A ``user`` type as its union members (``type`` aliases resolved, ``None`` taken out), and
     whether ``None`` was one of them: ``A | B | None`` gives ``((A, B), True)``. ``None`` is the
     one member jero reads, as the anonymous-caller contract; the rest are the app's choice."""
-    members = _flatten_union_members((ann,))
+    members = union_members(ann)
     rest = tuple(member for member in members if not _is_none_type(member))
     return rest, len(rest) < len(members)
 
@@ -1314,15 +1290,15 @@ def _resolve_return(
     cls: type, name: str, http_method: HTTPMethod, verb_status: int, return_hint: object
 ) -> tuple[ReturnKind, tuple[ResponseMember, ...]]:
     """The handler's return kind, and — for a union — its resolved members."""
-    union_args = _union_args(return_hint)
-    if union_args is not None:
-        union_args = _flatten_union_members(union_args)
-        if any(_is_none_type(arg) for arg in union_args):
+    return_args = union_args(return_hint)
+    if return_args is not None:
+        return_args = flatten_union_members(return_args)
+        if any(_is_none_type(arg) for arg in return_args):
             raise WiringError(
                 f"{cls.__name__}.{name}: a handler cannot return None — did you mean "
                 f"'| NoContent' for a 204?",
             )
-        return "union", _union_return_members(f"{cls.__name__}.{name}", union_args, verb_status)
+        return "union", _union_return_members(f"{cls.__name__}.{name}", return_args, verb_status)
     kind = _return_kind(return_hint)
     if kind is None:
         raise WiringError(
@@ -1340,11 +1316,14 @@ def _json_decoder(
 ) -> Decoder[Struct] | None:
     """The prebuilt decoder for the ``json`` body, or None when the handler takes none.
 
-    Building it is where msgspec checks a union's tags against each other (one shared
-    ``tag_field``, no tag value claimed twice); its ``TypeError`` becomes a ``WiringError``
-    naming the handler, so the failure reads like every other contract violation."""
+    Building a union's decoder is where msgspec checks its tags against each other (one shared
+    ``tag_field``, no tag value claimed twice); that ``TypeError`` becomes a ``WiringError``
+    naming the handler, so the failure reads like every other contract violation. A single
+    Struct's decoder is built as before, its errors untouched."""
     if json_type is None:
         return None
+    if not isinstance(json_type, UnionType):
+        return decoder_for(json_type)
     try:
         return decoder_for(json_type)
     except TypeError as e:
@@ -3335,8 +3314,7 @@ def _intercept_sender(
     inherit; the fixed-status wrappers (``NoContent``/``Created``/``Accepted``) and
     ``status_code=`` overrides carry their own."""
     hint = unwrap_alias(hook.return_annotation)
-    members = _union_args(hint)
-    flattened = _flatten_union_members(members) if members is not None else (hint,)
+    flattened = union_members(hint)
     concrete = tuple(member for member in flattened if not _is_none_type(member))
     if not concrete:
         raise WiringError(
