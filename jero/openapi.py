@@ -376,8 +376,9 @@ class _Schemas:
     refs: dict[object, dict[str, Any]]
     components: dict[str, dict[str, Any]]
 
-    def ref(self, struct: type[Struct]) -> dict[str, Any]:
-        """The ``{"$ref": …}`` schema for a Struct."""
+    def ref(self, struct: type[Struct] | UnionType) -> dict[str, Any]:
+        """The ``{"$ref": …}`` schema for a Struct, or msgspec's ``anyOf`` (+ ``discriminator``
+        when tagged) for a union of them."""
         return self.refs[struct]
 
     def schema_for(self, payload: object) -> dict[str, Any]:
@@ -631,9 +632,6 @@ def _form_object_schema(fields: tuple[FormFieldSpec, ...], schemas: _Schemas) ->
 
 
 def _body_schema(body: BodySpec, schemas: _Schemas) -> dict[str, Any]:
-    if isinstance(body.model, UnionType):
-        # a union of tagged Structs: msgspec's anyOf + discriminator, as on the response side
-        return schemas.schema_for(body.model)
     if body.model is not None:
         return schemas.ref(body.model)
     if body.form_fields:

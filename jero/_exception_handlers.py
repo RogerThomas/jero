@@ -14,12 +14,12 @@ sender-free half, split out to keep ``core`` under its size budget (mirroring th
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from types import NoneType, UnionType, get_original_bases
-from typing import Protocol, Union, cast, get_args, get_origin, get_type_hints
+from types import NoneType, get_original_bases
+from typing import Protocol, cast, get_args, get_origin, get_type_hints
 
 from msgspec import Struct
 
-from jero._wiring_types import WiringError
+from jero._wiring_types import WiringError, union_members
 from jero.cookies import SetCookie
 from jero.errors import BaseHTTPError
 from jero.headers import RawHeaders
@@ -91,11 +91,7 @@ def _exception_response_type(
 
 def _valid_exception_handler_return(annotation: object) -> bool:
     """Whether every return member is an HTTP error, response, or ``None``."""
-    variants = (
-        cast("tuple[object, ...]", get_args(annotation))
-        if get_origin(annotation) in (Union, UnionType)
-        else (annotation,)
-    )
+    variants = union_members(annotation)
     has_response = False
     for variant in variants:
         if variant is NoneType:

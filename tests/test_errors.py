@@ -629,6 +629,26 @@ def test_exception_handler_wiring_validation(handler: object, match: str) -> Non
         TestClient(_BareApp(handler))
 
 
+type ServiceErrorResponses = ExceptionResponse[ServiceErrorBody] | ConflictError
+
+
+class AliasedReturnHandler:
+    """Names its return union through a ``type`` alias, beside ``None``."""
+
+    def handle_exception(self, exception: ServiceError) -> ServiceErrorResponses | None:
+        """Translate the failure, or continue default handling."""
+        if not exception.expose:
+            return None
+        return ConflictError()
+
+
+def test_exception_handler_return_union_may_be_an_alias() -> None:
+    """An aliased union inside the return annotation is flattened like every other union
+    jero reads, rather than rejected as one unrecognized member."""
+    with TestClient(_BareApp(AliasedReturnHandler())):
+        pass
+
+
 # --- StructHTTPError (the bring-your-own-body engine) ---
 
 

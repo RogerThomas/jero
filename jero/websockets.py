@@ -39,6 +39,16 @@ def _payload_kind(label: str, annotation: object) -> _PayloadKind:
     return "json"
 
 
+def json_frame_decoder(label: str, annotation: object) -> Decoder[Any]:
+    """The decoder for a JSON-framed direction. Building it is where msgspec checks a union's
+    tags against each other (one shared ``tag_field``, no tag value claimed twice); its
+    ``TypeError`` becomes a ``WiringError`` naming the direction, as for a ``json`` body."""
+    try:
+        return Decoder(annotation)
+    except TypeError as e:
+        raise WiringError(f"{label} {annotation!r} is not decodable: {e}") from e
+
+
 class WebSocket[Inbound, Outbound](AsyncIterator[Inbound]):
     """One accepted, typed WebSocket connection."""
 
@@ -177,7 +187,11 @@ def compile_websocket(
     return CompiledWebSocket(
         inbound_kind=inbound_kind,
         outbound_kind=_payload_kind("WebSocket outbound type", outbound),
-        decoder=Decoder(inbound) if inbound_kind == "json" else None,
+        decoder=(
+            json_frame_decoder("WebSocket inbound type", inbound)
+            if inbound_kind == "json"
+            else None
+        ),
         max_frame_size=max_frame_size,
     )
 

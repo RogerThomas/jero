@@ -2308,6 +2308,29 @@ class NestedItemAliasEndpoint(Endpoint, path="/nested-item-alias"):
         return JSONResponse(json=item)
 
 
+type TextAlias = str
+type StreamRowAlias = StreamRow
+
+
+class TextAliasSSEEndpoint(Endpoint, path="/text-alias-sse"):
+    """An SSE item union that is ``str`` named twice, once through an alias."""
+
+    async def _events(self) -> AsyncIterator[str]:
+        yield "tick"
+
+    async def get(self) -> SSEResponse[str | TextAlias]:
+        """Stream strings."""
+        return SSEResponse(stream=self._events())
+
+
+class RepeatedReturnEndpoint(Endpoint, path="/repeated-return"):
+    """A return union that is one Struct named twice, once through an alias."""
+
+    async def get(self) -> StreamRow | StreamRowAlias:
+        """Return the one Struct."""
+        return StreamRow(a=1)
+
+
 class StreamItemAliasEndpoint(Endpoint, path="/stream-item-alias"):
     """Streams an aliased item union."""
 
@@ -2327,6 +2350,8 @@ class NestedUnionAliasApp(BaseApp):
         self._include_endpoint(NestedUnionAliasEndpoint())
         self._include_endpoint(StreamItemAliasEndpoint())
         self._include_endpoint(NestedItemAliasEndpoint())
+        self._include_endpoint(TextAliasSSEEndpoint())
+        self._include_endpoint(RepeatedReturnEndpoint())
         self._include_openapi(title="nested-union", version="1")
 
 
@@ -3291,3 +3316,28 @@ def test_alias_nested_in_a_response_item_union_flattens(nested_union_client: Tes
         {"$ref": "#/components/schemas/StreamFooter"},
         {"$ref": "#/components/schemas/StreamExtra"},
     ]
+
+
+def test_str_alias_in_a_streamed_item_union_reads_as_str(nested_union_client: TestClient) -> None:
+    """``SSEResponse[str | TextAlias]`` with ``type TextAlias = str`` is a ``str`` stream: the
+    alias resolves before the ``str`` check, not after it."""
+    content = nested_union_client.get("/openapi.json").json()["paths"]["/text-alias-sse"]["get"][
+        "responses"
+    ]["200"]["content"]
+    assert content["text/event-stream"]["schema"] == {"type": "string"}
+
+
+def test_return_union_naming_one_struct_twice_is_that_struct(
+    nested_union_client: TestClient,
+) -> None:
+    """``StreamRow | StreamRowAlias`` is just ``StreamRow``: one 200 entry, served as a plain
+    Struct return."""
+    responses = nested_union_client.get("/openapi.json").json()["paths"]["/repeated-return"]["get"][
+        "responses"
+    ]
+    assert responses["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/StreamRow"
+    }
+    resp = nested_union_client.get("/repeated-return")
+    assert resp.status_code == 200
+    assert resp.json() == {"type": "StreamRow", "a": 1}

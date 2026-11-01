@@ -32,7 +32,7 @@ from typing_extensions import TypeForm
 
 from jero.codecs import msgspec_decoder, msgspec_encoder
 from jero.core import BaseApp, BaseFactory
-from jero.websockets import _payload_kind
+from jero.websockets import _payload_kind, json_frame_decoder
 
 type _DataValue = str | bytes
 type _DataValues = _DataValue | list[_DataValue]
@@ -397,7 +397,9 @@ class TestWebSocket[Inbound, Outbound]:
         self._inbound_kind = _payload_kind("test WebSocket inbound type", inbound)
         self._outbound_kind = _payload_kind("test WebSocket outbound type", outbound)
         self._decoder: Decoder[object] | None = (
-            Decoder(outbound) if self._outbound_kind == "json" else None
+            json_frame_decoder("test WebSocket outbound type", outbound)
+            if self._outbound_kind == "json"
+            else None
         )
         self._closed = False
 

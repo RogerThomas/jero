@@ -238,7 +238,8 @@ Always follow the following style guide:
     narrows with `match`/`isinstance`. Every member needs an explicit **string** tag (the
     WebSocket rule; both share `require_string_tags` in `_wiring_types`), else a
     `WiringError` naming the member; a `tag_field` mismatch or duplicate tag value (msgspec's
-    `TypeError` building the decoder at wiring) is re-raised as a `WiringError`; `X | None`
+    `TypeError` building the decoder at wiring) is re-raised as a `WiringError` — for WebSocket
+    frames too (`json_frame_decoder`), while a single Struct's decoder errors pass through; `X | None`
     stays rejected. A missing/unknown tag is the usual 422. OpenAPI emits msgspec's `anyOf` +
     `discriminator` (identical to a tagged-union response); no composed request examples for
     a union, matching the response side. `rename` never touches `tag_field`. Only `json` takes

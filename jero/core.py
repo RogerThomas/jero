@@ -83,7 +83,6 @@ from typing import (
     Literal,
     Protocol,
     Self,
-    Union,
     cast,
     get_args,
     get_origin,
@@ -852,15 +851,12 @@ def _form_part_types(ann: object) -> tuple[object, object | None] | None:
 
 
 def _strip_optional(ann: object) -> tuple[object, bool]:
-    # `X | None` is a types.UnionType, but get_type_hints/msgspec may resolve the same
-    # annotation to typing.Optional (origin typing.Union) on older Pythons — accept both.
-    origin = get_origin(ann)
-    if origin is not UnionType and origin is not Union:
+    """``X | None`` as ``(X, True)``; anything else as ``(ann, False)``. Classified through the
+    shared ``union_members``, so either union spelling and an aliased ``X | None`` all count."""
+    members = union_members(ann)
+    if len(members) != 2 or not any(_is_none_type(member) for member in members):
         return ann, False
-    args = get_args(ann)
-    if len(args) != 2 or not any(_is_none_type(arg) for arg in args):
-        return ann, False
-    payload = next(arg for arg in args if not _is_none_type(arg))
+    payload = next(member for member in members if not _is_none_type(member))
     return payload, True
 
 
@@ -1311,6 +1307,17 @@ def _resolve_return(
     return kind, ()
 
 
+def _return_hint(annotation: object) -> object:
+    """A handler's return annotation as Sources stores it. A PEP 695 ``type`` alias is resolved
+    to what it aliases before anything classifies it, so the OpenAPI layer derives its schema
+    from the real annotation rather than from an opaque alias object. A union that names one
+    type twice (``Widget | WidgetAlias``) is that type, so it takes the plain sender rather
+    than the union's ``isinstance`` chain."""
+    hint = unwrap_alias(annotation)
+    members = union_members(hint)
+    return members[0] if len(members) == 1 else hint
+
+
 def _json_decoder(
     cls: type, name: str, json_type: type[Struct] | UnionType | None, decoder_for: _DecoderFor
 ) -> Decoder[Struct] | None:
@@ -1407,10 +1414,7 @@ def _bind_sources(  # noqa: C901
             f"or 'form' is allowed",
         )
 
-    # A PEP 695 ``type`` alias is resolved to what it aliases before anything classifies it, and
-    # the resolved form is what Sources stores — so the OpenAPI layer derives its schema from the
-    # real annotation rather than from an opaque alias object.
-    return_hint = unwrap_alias(hints.get("return"))
+    return_hint = _return_hint(hints.get("return"))
     return_kind, return_members = _resolve_return(
         cls, name, http_method, verb.success_status, return_hint
     )

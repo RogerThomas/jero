@@ -459,6 +459,44 @@ def test_websocket_requires_explicit_struct_tags() -> None:
         TestClient(UntaggedApp())
 
 
+class First(Struct, tag="clash"):
+    """One member of a union whose tags clash."""
+
+    a: int
+
+
+class Clash(Struct, tag="clash"):
+    """A member claiming ``First``'s tag value."""
+
+    b: int
+
+
+class ClashingTagsWebSocket(WebSocketEndpoint, path="/clash"):
+    """Declare an inbound union msgspec can't build a decoder for."""
+
+    async def handle(self, websocket: WebSocket[First | Clash, TinyReply]) -> None:
+        """Consume messages if wiring were incorrectly allowed to succeed."""
+        async for _ in websocket:
+            pass
+
+
+class ClashingTagsApp(BaseApp):
+    """Attempt to mount the clashing-tags protocol."""
+
+    async def wire(self) -> None:
+        """Wire the protocol that startup must reject."""
+        self._include_websocket(ClashingTagsWebSocket())
+
+
+def test_websocket_clashing_tags_fail_wiring() -> None:
+    """A tag claimed twice fails as a WiringError naming the direction, exactly as it does for
+    a ``json`` body, not as msgspec's bare TypeError."""
+    with pytest.raises(
+        RuntimeError, match=r"WiringError: WebSocket inbound type .* is not decodable: .*unique"
+    ):
+        TestClient(ClashingTagsApp())
+
+
 class Publish(Struct, tag="publish"):
     """Ask the channel test endpoint to publish a burst."""
 

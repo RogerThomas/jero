@@ -239,11 +239,12 @@ def _item_payload(
             f"{operation_id}: {name} must name its body type — write {name}[YourStruct]. "
             f"A bare {name} declares no schema, and the spec is derived from the annotation."
         )
-    if allow_str and item is str:
-        return None
     # The same classifier the request side uses, so an alias nested in the union
-    # (``JSONResponse[AB | C]``) flattens here exactly as it does for a ``json`` body.
+    # (``JSONResponse[AB | C]``) flattens here exactly as it does for a ``json`` body, and an
+    # alias for ``str`` (or ``str | TextAlias``) reads as ``str``.
     members = union_members(item)
+    if allow_str and members == (str,):
+        return None
     if len(members) == 1 and is_struct_type(members[0]):
         return cast("type[Struct]", members[0])
     if len(members) > 1 and all(
