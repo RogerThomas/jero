@@ -212,3 +212,39 @@ def test_undecodable_union_body_fails_wiring(endpoint: Endpoint, message: str) -
     """A union whose members msgspec can't tell apart by a string tag fails at startup."""
     with pytest.raises(RuntimeError, match=message):
         TestClient(_EndpointApp(endpoint))
+
+
+class Second(Struct, tag="second"):
+    """A second string-tagged member on the default ``type`` tag field."""
+
+    b: int
+
+
+class Third(Struct, tag="third"):
+    """A third string-tagged member on the default ``type`` tag field."""
+
+    c: int
+
+
+class ThreeMemberEndpoint(Endpoint, path="/x"):
+    """A union of more than two tagged members, echoed back."""
+
+    async def post(self, json: Tagged | Second | Third) -> Tagged | Second | Third:
+        """Echo the decoded member, re-encoded with its tag."""
+        return json
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param({"type": "tagged", "a": 1}, id="tagged"),
+        pytest.param({"type": "second", "b": 1}, id="second"),
+        pytest.param({"type": "third", "c": 1}, id="third"),
+    ],
+)
+def test_union_of_three_members_decodes_each(body: dict[str, object]) -> None:
+    """Every member of a wider union is reachable by its tag, not only the first two."""
+    with TestClient(_EndpointApp(ThreeMemberEndpoint())) as client:
+        resp = client.post("/x", json=body)
+    assert resp.status_code == 200
+    assert resp.json() == body
