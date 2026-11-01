@@ -852,12 +852,14 @@ def _form_part_types(ann: object) -> tuple[object, object | None] | None:
 
 def _strip_optional(ann: object) -> tuple[object, bool]:
     """``X | None`` as ``(X, True)``; anything else as ``(ann, False)``. Classified through the
-    shared ``union_members``, so either union spelling and an aliased ``X | None`` all count."""
+    shared ``union_members``, so either union spelling and an aliased ``X | None`` all count.
+    ``X`` may itself be a union (``AB | None`` with ``type AB = A | B`` flattens to three
+    members): everything but ``None`` is folded back into one payload type."""
     members = union_members(ann)
-    if len(members) != 2 or not any(_is_none_type(member) for member in members):
+    rest = tuple(member for member in members if not _is_none_type(member))
+    if not rest or len(rest) == len(members):
         return ann, False
-    payload = next(member for member in members if not _is_none_type(member))
-    return payload, True
+    return (rest[0] if len(rest) == 1 else compose_union(rest)), True
 
 
 def _payload_kind(cls: type, method: str, field_name: str, ann: object) -> PayloadKind:

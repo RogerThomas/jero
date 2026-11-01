@@ -123,6 +123,64 @@ class ParamsOnlyEndpoint(Endpoint, path="/params"):
         return form.params
 
 
+class FixedPick(Struct, tag="fixed"):
+    """One tagged member of the aliased optional form field."""
+
+    a: int
+
+
+class PercentPick(Struct, tag="percent"):
+    """The other tagged member."""
+
+    b: int
+
+
+type Pick = FixedPick | PercentPick
+
+
+class PickForm(Struct):
+    """A form whose one field is an aliased union, optional."""
+
+    pick: Pick | None = None
+
+
+class PickResult(Struct):
+    """Which member the form field bound to, if any."""
+
+    pick: FixedPick | PercentPick | None
+
+
+class PickEndpoint(Endpoint, path="/pick"):
+    """Endpoint echoing the optional aliased-union form field."""
+
+    async def post(self, form: PickForm) -> PickResult:
+        """Echo back the bound field."""
+        return PickResult(pick=form.pick)
+
+
+class PickApp(BaseApp):
+    """Mount only the optional aliased-union form endpoint."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(PickEndpoint())
+
+
+@pytest.mark.parametrize(
+    ("field", "pick"),
+    [
+        pytest.param('{"type": "percent", "b": 1}', {"type": "percent", "b": 1}, id="set"),
+        pytest.param(None, None, id="absent"),
+    ],
+)
+def test_optional_aliased_union_form_field(field: str | None, pick: object) -> None:
+    """``Pick | None`` with ``type Pick = A | B`` is an optional field whose payload is the
+    union: it binds either member by tag, and is ``None`` when the field is absent."""
+    with TestClient(PickApp()) as client:
+        resp = client.post("/pick", data={} if field is None else {"pick": field})
+    assert resp.status_code == 200
+    assert resp.json() == {"pick": pick}
+
+
 class HeadersEndpoint(Endpoint, path="/headers"):
     """Endpoint binding a form whose parts carry typed headers."""
 
