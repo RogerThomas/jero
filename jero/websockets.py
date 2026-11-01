@@ -5,14 +5,13 @@ import contextlib
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
-from types import UnionType
-from typing import Any, Literal, Union, cast, get_args, get_origin
+from typing import Any, Literal, cast
 
 from msgspec import DecodeError, Struct, ValidationError
 from msgspec.json import Decoder
 from typing_extensions import TypeForm
 
-from jero._wiring_types import WiringError, is_struct_type, unwrap_alias
+from jero._wiring_types import WiringError, is_struct_type, require_string_tags, union_members
 from jero.codecs import msgspec_encoder
 
 type _Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
@@ -26,15 +25,8 @@ _STANDARD_CLOSE_CODES = frozenset(
 )
 
 
-def _union_members(annotation: object) -> tuple[object, ...]:
-    annotation = unwrap_alias(annotation)
-    if get_origin(annotation) in (UnionType, Union):
-        return tuple(unwrap_alias(member) for member in get_args(annotation))
-    return (annotation,)
-
-
 def _payload_kind(label: str, annotation: object) -> _PayloadKind:
-    members = _union_members(annotation)
+    members = union_members(annotation)
     if len(members) == 1 and members[0] is str:
         return "text"
     if len(members) == 1 and members[0] is bytes:
@@ -43,13 +35,7 @@ def _payload_kind(label: str, annotation: object) -> _PayloadKind:
         raise WiringError(
             f"{label} must be str, bytes, or a tagged msgspec.Struct union; got {annotation!r}",
         )
-    for member in members:
-        struct_type = cast(type[Struct], member)
-        tag = struct_type.__struct_config__.tag
-        if not isinstance(tag, str) or not tag.strip():
-            raise WiringError(
-                f"{label}: {struct_type.__name__} must declare an explicit string tag",
-            )
+    require_string_tags(label, cast(tuple[type[Struct], ...], members))
     return "json"
 
 

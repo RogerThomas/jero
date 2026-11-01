@@ -135,7 +135,9 @@ from jero._wiring_types import (
     Sources,
     WiringError,
     is_struct_type,
+    require_string_tags,
     strip_list,
+    union_members,
     unwrap_alias,
 )
 from jero.background import BackgroundTasks
@@ -222,7 +224,7 @@ type _AllowedMethods = dict[str, list[HTTPMethod]]
 # Resolves a Struct type to its reusable typed JSON decoder (the app's per-type cache).
 # ReturnKind / PayloadKind (the other wire-shape aliases) live in jero._wiring_types,
 # shared with the OpenAPI generator.
-type _DecoderFor = Callable[[type[Struct]], Decoder[Struct]]
+type _DecoderFor = Callable[[type[Struct] | UnionType], Decoder[Struct]]
 
 
 class _WebSocketInterceptRunner(Protocol):
@@ -1074,6 +1076,31 @@ def _struct_annotation(cls: type, method: str, name: str, ann: object) -> type[S
     return ann
 
 
+def _json_annotation(cls: type, method: str, ann: object) -> type[Struct] | UnionType:
+    """The ``json`` body type: one Struct, or a union of string-tagged Structs.
+
+    msgspec decodes a tagged union by reading the tag, so a union costs the request path
+    nothing a single Struct doesn't. An untagged union is undecodable (msgspec can't tell the
+    members apart), so it fails here, naming the member to tag. The union is rebuilt with
+    ``|`` so a ``typing.Union[...]`` spelling or a ``type`` alias arrives downstream as the
+    same ``UnionType`` the OpenAPI layer schemas directly."""
+    members = union_members(ann)
+    if len(members) == 1 and is_struct_type(members[0]):
+        return cast(type[Struct], members[0])
+    label = f"{cls.__name__}.{method}: 'json'"
+    if len(members) == 1 or not all(is_struct_type(member) for member in members):
+        raise WiringError(
+            f"{label} must be annotated with a msgspec.Struct subclass or a union of tagged "
+            f"Structs, got {ann!r}",
+        )
+    structs = cast(tuple[type[Struct], ...], members)
+    require_string_tags(label, structs)
+    union = structs[0] | structs[1]
+    for member in structs[2:]:
+        union |= member
+    return union
+
+
 def _wrapper_kind(cls: type) -> ReturnKind | None:
     """The return kind ``cls`` is a response wrapper for, or None if it is not one.
 
@@ -1308,6 +1335,24 @@ def _resolve_return(
     return kind, ()
 
 
+def _json_decoder(
+    cls: type, name: str, json_type: type[Struct] | UnionType | None, decoder_for: _DecoderFor
+) -> Decoder[Struct] | None:
+    """The prebuilt decoder for the ``json`` body, or None when the handler takes none.
+
+    Building it is where msgspec checks a union's tags against each other (one shared
+    ``tag_field``, no tag value claimed twice); its ``TypeError`` becomes a ``WiringError``
+    naming the handler, so the failure reads like every other contract violation."""
+    if json_type is None:
+        return None
+    try:
+        return decoder_for(json_type)
+    except TypeError as e:
+        raise WiringError(
+            f"{cls.__name__}.{name}: 'json' {json_type!r} is not decodable: {e}"
+        ) from e
+
+
 def _bind_sources(  # noqa: C901
     cls: type, name: str, fn: Callable[..., Any], verb: _Verb, decoder_for: _DecoderFor
 ) -> Sources:
@@ -1315,6 +1360,7 @@ def _bind_sources(  # noqa: C901
     http_method = verb.method
     hints = get_type_hints(fn)
     types: dict[str, type[Struct]] = {}
+    json_type: type[Struct] | UnionType | None = None
     form: FormSpec | None = None
     wants_content = False
     wants_content_stream = False
@@ -1361,6 +1407,9 @@ def _bind_sources(  # noqa: C901
         if param.name == "user":
             user_type, user_optional = _user_annotation(cls, name, hints.get("user"))
             continue
+        if param.name == "json":
+            json_type = _json_annotation(cls, name, hints.get("json"))
+            continue
         source_type = _struct_annotation(cls, name, param.name, hints.get(param.name))
         if param.name == "form":
             form = _compile_form(cls, name, source_type, decoder_for)
@@ -1370,7 +1419,7 @@ def _bind_sources(  # noqa: C901
     body_sources = (
         int(wants_content)
         + int(wants_content_stream)
-        + int(types.get("json") is not None)
+        + int(json_type is not None)
         + int(form is not None)
     )
     if body_sources > 1:
@@ -1387,10 +1436,10 @@ def _bind_sources(  # noqa: C901
         cls, name, http_method, verb.success_status, return_hint
     )
 
-    json_type = types.get("json")
-    json_decoder = decoder_for(json_type) if json_type is not None else None
+    json_decoder = _json_decoder(cls, name, json_type, decoder_for)
     arity = (
         len(types)
+        + (json_type is not None)
         + (form is not None)
         + (user_type is not None)
         + wants_content
@@ -1400,6 +1449,7 @@ def _bind_sources(  # noqa: C901
 
     return Sources(
         **types,
+        json=json_type,
         json_decoder=json_decoder,
         form=form,
         user=user_type,
@@ -3672,7 +3722,7 @@ class BaseApp[FactoryT = None](ABC):
         self.__websocket_dynamic: dict[int, list[_WebSocketPattern]] = {}
         self.__allowed: _AllowedMethods = {}
         self.__allow_cache: dict[str, bytes] = {}
-        self.__decoders: dict[type[Struct], Decoder[Struct]] = {}
+        self.__decoders: dict[type[Struct] | UnionType, Decoder[Struct]] = {}
         self.__operations: list[OperationSpec] = []  # captured for the OpenAPI document
         self.__openapi: _OpenAPIConfig | None = None  # set by _include_openapi, built at __finalize
         base_url, trust_forwarded = _forwarded_config_from_env()
@@ -3708,11 +3758,13 @@ class BaseApp[FactoryT = None](ABC):
         """Open an async context manager, closed at shutdown in reverse order."""
         return await self.__astack.enter_async_context(cm)
 
-    def __decoder(self, struct_type: type[Struct]) -> Decoder[Struct]:
-        """The reusable typed JSON decoder for ``struct_type``, built once per app.
+    def __decoder(self, struct_type: type[Struct] | UnionType) -> Decoder[Struct]:
+        """The reusable typed JSON decoder for ``struct_type`` (a Struct, or a tagged union
+        of them), built once per app.
 
-        Decoders are keyed by type, so models shared across handlers (a ``WidgetIn``
-        used by both ``create`` and ``update_full``) share one decoder. Populated only at
+        Decoders are keyed by type (equal unions hash alike), so models shared across
+        handlers (a ``WidgetIn`` used by both ``create`` and ``update_full``) share one
+        decoder. Populated only at
         wiring time; the binder holds the resolved decoder, so the request path does
         no lookup.
         """

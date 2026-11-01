@@ -225,13 +225,14 @@ class FormFieldSpec:
 
 @dataclass(slots=True)
 class BodySpec:
-    """A request body: a ``model`` (referenced by ``$ref``), a set of multipart
-    ``form_fields``, or neither (raw bytes -> binary schema). ``alternate_content_types``
-    are further media types accepting the same schema (a file-free form's url-encoded
-    twin of its ``multipart/form-data``)."""
+    """A request body: a ``model`` (referenced by ``$ref``, or msgspec's ``anyOf`` +
+    ``discriminator`` for a union of tagged Structs), a set of multipart ``form_fields``, or
+    neither (raw bytes -> binary schema). ``alternate_content_types`` are further media types
+    accepting the same schema (a file-free form's url-encoded twin of its
+    ``multipart/form-data``)."""
 
     content_type: str
-    model: type[Struct] | None = None
+    model: type[Struct] | UnionType | None = None
     form_fields: tuple[FormFieldSpec, ...] = ()
     required: bool = True
     alternate_content_types: tuple[str, ...] = ()
@@ -319,18 +320,23 @@ def _ref_name(ref_schema: dict[str, Any]) -> str:
     return ref_schema["$ref"].rsplit("/", 1)[-1]
 
 
+def _model_payload_types(model: type[Struct] | UnionType | None) -> tuple[object, ...]:
+    """The types a body model contributes to the schema pass: the model — plus, when it is
+    a union, each member. ModelMeta renames/descriptions are discovered per collected type,
+    so a member reached only through a union must be collected itself."""
+    if model is None:
+        return ()
+    if isinstance(model, UnionType):
+        return (model, *get_args(model))
+    return (model,)
+
+
 def _body_payload_types(body: ResponseBody) -> tuple[object, ...]:
     """The types one media type's body contributes to the schema pass: its ``one_of``
-    variants, or its model — plus, when the model is a union, each member. ModelMeta
-    renames/descriptions are discovered per collected type, so a member reached only
-    through a union must be collected itself."""
+    variants, or its model's types (see :func:`_model_payload_types`)."""
     if body.one_of:
         return body.one_of
-    if body.model is None:
-        return ()
-    if isinstance(body.model, UnionType):
-        return (body.model, *get_args(body.model))
-    return (body.model,)
+    return _model_payload_types(body.model)
 
 
 def _response_payload_types(response: ResponseEntry) -> tuple[object, ...]:
@@ -349,8 +355,8 @@ def _collect_types(operations: tuple[OperationInput, ...]) -> list[object]:
         for param in op.params:
             seen.setdefault(param.struct, None)
         if op.body is not None:
-            if op.body.model is not None:
-                seen.setdefault(op.body.model, None)
+            for payload in _model_payload_types(op.body.model):
+                seen.setdefault(payload, None)
             for field in op.body.form_fields:
                 if not field.binary:
                     seen.setdefault(field.payload, None)
@@ -625,6 +631,9 @@ def _form_object_schema(fields: tuple[FormFieldSpec, ...], schemas: _Schemas) ->
 
 
 def _body_schema(body: BodySpec, schemas: _Schemas) -> dict[str, Any]:
+    if isinstance(body.model, UnionType):
+        # a union of tagged Structs: msgspec's anyOf + discriminator, as on the response side
+        return schemas.schema_for(body.model)
     if body.model is not None:
         return schemas.ref(body.model)
     if body.form_fields:
@@ -634,7 +643,9 @@ def _body_schema(body: BodySpec, schemas: _Schemas) -> dict[str, Any]:
 
 def _request_body(body: BodySpec, schemas: _Schemas) -> dict[str, Any]:
     examples = None
-    if body.model is not None:
+    # Examples compose from one model's fields; a union has no single field set to read
+    # (the response side composes none for a union either).
+    if body.model is not None and not isinstance(body.model, UnionType):
         composed = schemas.model_examples(body.model)
         if composed:
             examples = _examples_map(composed)
