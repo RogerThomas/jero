@@ -199,6 +199,32 @@ class RawHeadersApp(BaseApp):
         self._include_endpoint(BothHeadersEndpoint())
 
 
+type TraceAlias = Trace
+
+
+class AliasedHeadersEndpoint(Endpoint, path="/aliased-headers"):
+    """GET handler naming its headers Struct through a ``type`` alias."""
+
+    async def get(self, headers: TraceAlias) -> Reply:
+        """Echo the bound header."""
+        return Reply(value=headers.x_trace_id)
+
+
+class AliasedHeadersApp(BaseApp):
+    """App wiring the aliased-headers endpoint."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(AliasedHeadersEndpoint())
+
+
+def test_struct_source_may_be_an_alias() -> None:
+    """A Struct source named through a ``type`` alias binds, as a ``json`` body does."""
+    with TestClient(AliasedHeadersApp()) as client:
+        resp = client.get("/aliased-headers", headers={"x-trace-id": "trace"})
+    assert resp.status_code == 200
+    assert resp.json() == {"value": "trace"}
+
+
 def test_raw_headers_handler_sees_request_headers() -> None:
     """A handler declaring raw_headers reads the request headers, casing-insensitively."""
     with TestClient(RawHeadersApp()) as client:

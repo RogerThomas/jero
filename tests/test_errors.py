@@ -630,6 +630,28 @@ def test_exception_handler_wiring_validation(handler: object, match: str) -> Non
 
 
 type ServiceErrorResponses = ExceptionResponse[ServiceErrorBody] | ConflictError
+type ServiceErrorBodyAlias = ServiceErrorBody
+
+
+class AliasedBodyHandler:
+    """Names the ExceptionResponse body Struct through a ``type`` alias."""
+
+    def handle_exception(
+        self, exception: ServiceError
+    ) -> ExceptionResponse[ServiceErrorBodyAlias] | None:
+        """Translate the failure, or continue default handling."""
+        if not exception.expose:
+            return None
+        return ExceptionResponse(
+            status_code=503, json=ServiceErrorBody(code="code", retryable=exception.retryable)
+        )
+
+
+def test_exception_response_body_may_be_an_alias() -> None:
+    """An alias one level down, inside ``ExceptionResponse[...]``, resolves like a top-level
+    one."""
+    with TestClient(_BareApp(AliasedBodyHandler())):
+        pass
 
 
 class AliasedReturnHandler:

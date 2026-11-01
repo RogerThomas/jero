@@ -138,6 +138,26 @@ class PercentPick(Struct, tag="percent"):
 type Pick = FixedPick | PercentPick
 
 
+class OtherPick(Struct, tag="other"):
+    """A third tagged member, beside the aliased pair."""
+
+    c: int
+
+
+class NestedPickForm(Struct):
+    """A form field whose union nests the alias beside a third member."""
+
+    pick: Pick | OtherPick
+
+
+class NestedPickEndpoint(Endpoint, path="/nested-pick"):
+    """Endpoint echoing the nested aliased-union form field."""
+
+    async def post(self, form: NestedPickForm) -> FixedPick | PercentPick | OtherPick:
+        """Echo back the bound field."""
+        return form.pick
+
+
 class PickForm(Struct):
     """A form whose one field is an aliased union, optional."""
 
@@ -163,6 +183,8 @@ class PickApp(BaseApp):
 
     async def wire(self) -> None:
         self._include_endpoint(PickEndpoint())
+        self._include_endpoint(NestedPickEndpoint())
+        self._include_openapi(title="pick", version="1")
 
 
 @pytest.mark.parametrize(
@@ -728,3 +750,33 @@ def test_urlencoded_non_utf8_field_name_is_400(signup_client: TestClient) -> Non
     resp = _post_urlencoded(signup_client, "/signup", b"%FF=1")
 
     assert resp.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        pytest.param('{"type": "fixed", "a": 1}', id="through-the-alias"),
+        pytest.param('{"type": "other", "c": 1}', id="beside-the-alias"),
+    ],
+)
+def test_nested_alias_union_form_field_binds(field: str) -> None:
+    """``Pick | OtherPick`` with ``type Pick = A | B`` flattens for a form field exactly as it
+    does for a ``json`` body."""
+    with TestClient(PickApp()) as client:
+        resp = client.post("/nested-pick", data={"pick": field})
+    assert resp.status_code == 200
+    assert resp.content == field.replace(" ", "").encode()
+
+
+def test_nested_alias_union_form_field_documents_one_discriminator() -> None:
+    """The flattened union schemas as one ``anyOf`` with one discriminator, not a nested one."""
+    with TestClient(PickApp()) as client:
+        spec = client.get("/openapi.json").json()
+    content = spec["paths"]["/nested-pick"]["post"]["requestBody"]["content"]
+    pick = next(iter(content.values()))["schema"]["properties"]["pick"]
+    assert pick["anyOf"] == [
+        {"$ref": "#/components/schemas/FixedPick"},
+        {"$ref": "#/components/schemas/PercentPick"},
+        {"$ref": "#/components/schemas/OtherPick"},
+    ]
+    assert set(pick["discriminator"]["mapping"]) == {"fixed", "percent", "other"}

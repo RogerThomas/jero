@@ -19,7 +19,7 @@ from typing import Protocol, cast, get_args, get_origin, get_type_hints
 
 from msgspec import Struct
 
-from jero._wiring_types import WiringError, union_members
+from jero._wiring_types import WiringError, union_members, unwrap_alias
 from jero.cookies import SetCookie
 from jero.errors import BaseHTTPError
 from jero.headers import RawHeaders
@@ -78,12 +78,12 @@ def _exception_response_type(
     args = _exception_response_args(annotation)
     if not 1 <= len(args) <= 2:
         return None
-    body_type = args[0]
+    body_type = unwrap_alias(args[0])
     if not isinstance(body_type, type) or not issubclass(body_type, Struct):
         return None
     if len(args) == 1 or args[1] in (None, NoneType):
         return body_type, None
-    headers_type = args[1]
+    headers_type = unwrap_alias(args[1])
     if not isinstance(headers_type, type) or not issubclass(headers_type, Struct):
         return None
     return body_type, headers_type

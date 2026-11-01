@@ -133,6 +133,7 @@ from jero._wiring_types import (
     ReturnKind,
     Sources,
     WiringError,
+    build_decoder,
     compose_union,
     flatten_union_members,
     is_struct_type,
@@ -802,11 +803,6 @@ def _is_none_type(ann: object) -> bool:
     return ann is None or ann is NoneType
 
 
-def _alias_value(ann: object) -> object:
-    value = getattr(ann, "__value__", None)
-    return ann if value is None else value
-
-
 def _strip_annotated(ann: object) -> object:
     """The underlying type of an ``Annotated[T, ...]``. Used only to *classify* a payload —
     the original annotation (with its ``msgspec.Meta``) is kept for conversion and schema,
@@ -815,19 +811,12 @@ def _strip_annotated(ann: object) -> object:
 
 
 def _is_struct_payload(ann: object) -> bool:
-    ann = _alias_value(ann)
-    if is_struct_type(ann):
-        return True
-    args = get_args(ann)
-    return (
-        bool(args)
-        and any(_is_none_type(arg) for arg in args) is False
-        and all(is_struct_type(arg) for arg in args)
-    )
+    """A Struct, or a union of them (aliases resolved, nested alias-unions flattened)."""
+    return all(is_struct_type(member) for member in union_members(ann))
 
 
 def _is_scalar_payload(ann: object) -> bool:
-    ann = _alias_value(ann)
+    ann = unwrap_alias(ann)
     if ann is str or ann is int or ann is float or ann is bool:
         return True
     if isinstance(ann, type) and issubclass(ann, Enum):
@@ -908,6 +897,11 @@ def _compile_form(
                 else _struct_annotation(cls, method, f"{field.name}.headers", headers_ann)
             )
         payload_kind = _payload_kind(cls, method, field.name, payload_type)
+        struct_members = union_members(payload_type) if payload_kind == "struct" else ()
+        if len(struct_members) > 1:
+            # A Struct union, rebuilt flat so it decodes and schemas exactly as a ``json`` body
+            # does (``AB | C`` with ``type AB = A | B`` documents one flat discriminator).
+            payload_type = compose_union(struct_members)
         decoder = (
             decoder_for(cast("type[Struct]", payload_type)) if payload_kind == "struct" else None
         )
@@ -1069,6 +1063,8 @@ def _decode_form_body(body: bytes, raw_headers: dict[str, str], spec: FormSpec) 
 
 
 def _struct_annotation(cls: type, method: str, name: str, ann: object) -> type[Struct]:
+    """The one Struct a source binds; a ``type`` alias for it resolves, as it does for ``json``."""
+    ann = unwrap_alias(ann)
     if not (isinstance(ann, type) and issubclass(ann, Struct)):
         raise WiringError(
             f"{cls.__name__}.{method}: {name!r} must be annotated with a "
@@ -1315,30 +1311,18 @@ def _return_hint(annotation: object) -> object:
     from the real annotation rather than from an opaque alias object. A union that names one
     type twice (``Widget | WidgetAlias``) is that type, so it takes the plain sender rather
     than the union's ``isinstance`` chain."""
-    hint = unwrap_alias(annotation)
-    members = union_members(hint)
-    return members[0] if len(members) == 1 else hint
+    members = union_members(annotation)
+    return members[0] if len(members) == 1 else unwrap_alias(annotation)
 
 
 def _json_decoder(
     cls: type, name: str, json_type: type[Struct] | UnionType | None, decoder_for: _DecoderFor
 ) -> Decoder[Struct] | None:
-    """The prebuilt decoder for the ``json`` body, or None when the handler takes none.
-
-    Building a union's decoder is where msgspec checks its tags against each other (one shared
-    ``tag_field``, no tag value claimed twice); that ``TypeError`` becomes a ``WiringError``
-    naming the handler, so the failure reads like every other contract violation. A single
-    Struct's decoder is built as before, its errors untouched."""
+    """The prebuilt decoder for the ``json`` body, or None when the handler takes none (see
+    :func:`build_decoder` for how a union's tag conflicts are reported)."""
     if json_type is None:
         return None
-    if not isinstance(json_type, UnionType):
-        return decoder_for(json_type)
-    try:
-        return decoder_for(json_type)
-    except TypeError as e:
-        raise WiringError(
-            f"{cls.__name__}.{name}: 'json' {json_type!r} is not decodable: {e}"
-        ) from e
+    return build_decoder(f"{cls.__name__}.{name}: 'json'", json_type, decoder_for)
 
 
 def _bind_sources(  # noqa: C901
@@ -3319,8 +3303,7 @@ def _intercept_sender(
     members). A plain member's status is 200: an intercept has no verb defaults to
     inherit; the fixed-status wrappers (``NoContent``/``Created``/``Accepted``) and
     ``status_code=`` overrides carry their own."""
-    hint = unwrap_alias(hook.return_annotation)
-    flattened = union_members(hint)
+    flattened = union_members(hook.return_annotation)
     concrete = tuple(member for member in flattened if not _is_none_type(member))
     if not concrete:
         raise WiringError(

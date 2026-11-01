@@ -24,7 +24,7 @@ from urllib.parse import urlsplit
 from msgspec import Struct, ValidationError, convert
 from msgspec.structs import fields as struct_fields
 
-from jero._wiring_types import WiringError
+from jero._wiring_types import WiringError, is_struct_type, union_members
 from jero.errors import ErrorReason, MalformedRequestError
 
 logger = logging.getLogger("jero")
@@ -350,13 +350,10 @@ def _check_header_fields(owner: str, hook: str, struct_type: type[Struct]) -> No
 def _strip_optional_struct(ann: object) -> tuple[type[Struct] | None, bool]:
     """Resolve ``SomeStruct`` / ``SomeStruct | None`` to (the Struct, had-None);
     ``(None, False)`` for anything else."""
-    if isinstance(ann, type) and issubclass(ann, Struct):
-        return ann, False
-    args = get_args(ann)
-    if len(args) == 2 and NoneType in args:
-        payload = next(arg for arg in args if arg is not NoneType)
-        if isinstance(payload, type) and issubclass(payload, Struct):
-            return payload, True
+    members = union_members(ann)
+    rest = tuple(member for member in members if member is not NoneType and member is not None)
+    if len(rest) == 1 and is_struct_type(rest[0]):
+        return cast("type[Struct]", rest[0]), len(rest) < len(members)
     return None, False
 
 

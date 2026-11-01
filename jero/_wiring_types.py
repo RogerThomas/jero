@@ -9,7 +9,7 @@ build the spec) can import them without importing each other. Keeping the contra
 below both modules is what makes the dependency graph acyclic.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from types import UnionType
 from typing import Literal, TypeAliasType, TypeVar, Union, cast, get_args, get_origin
 
@@ -181,6 +181,25 @@ def union_members(ann: object) -> tuple[object, ...]:
     ``(ann,)`` alias-resolved when it is not a union. The one classifier every union jero
     reads goes through: ``json`` bodies, WebSocket frames, response item types, ``user``."""
     return flatten_union_members((ann,))
+
+
+def build_decoder[D](
+    label: str,
+    annotation: type[Struct] | UnionType,
+    build: Callable[[type[Struct] | UnionType], D],
+) -> D:
+    """``build(annotation)``, with a union's msgspec ``TypeError`` raised as a ``WiringError``.
+
+    Building a union's decoder is where msgspec checks its tags against each other (one shared
+    ``tag_field``, no tag value claimed twice), so that failure reads like every other contract
+    violation, naming ``label``. A single Struct's decoder is built with its errors untouched.
+    Shared by every inbound JSON site (``json`` bodies, WebSocket frames, the test client)."""
+    if not isinstance(annotation, UnionType):
+        return build(annotation)
+    try:
+        return build(annotation)
+    except TypeError as e:
+        raise WiringError(f"{label} {annotation!r} is not decodable: {e}") from e
 
 
 def require_string_tags(label: str, members: Sequence[type[Struct]]) -> None:

@@ -5,13 +5,21 @@ import contextlib
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
+from types import UnionType
 from typing import Any, Literal, cast
 
 from msgspec import DecodeError, Struct, ValidationError
 from msgspec.json import Decoder
 from typing_extensions import TypeForm
 
-from jero._wiring_types import WiringError, is_struct_type, require_string_tags, union_members
+from jero._wiring_types import (
+    WiringError,
+    build_decoder,
+    compose_union,
+    is_struct_type,
+    require_string_tags,
+    union_members,
+)
 from jero.codecs import msgspec_encoder
 
 type _Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
@@ -39,14 +47,16 @@ def _payload_kind(label: str, annotation: object) -> _PayloadKind:
     return "json"
 
 
+def _frame_decoder(json_type: type[Struct] | UnionType) -> Decoder[Any]:
+    return Decoder(json_type)
+
+
 def json_frame_decoder(label: str, annotation: object) -> Decoder[Any]:
-    """The decoder for a JSON-framed direction. Building it is where msgspec checks a union's
-    tags against each other (one shared ``tag_field``, no tag value claimed twice); its
-    ``TypeError`` becomes a ``WiringError`` naming the direction, as for a ``json`` body."""
-    try:
-        return Decoder(annotation)
-    except TypeError as e:
-        raise WiringError(f"{label} {annotation!r} is not decodable: {e}") from e
+    """The decoder for a JSON-framed direction, built from the flattened member union (the
+    same normalization a ``json`` body gets) through the shared :func:`build_decoder`."""
+    members = cast(tuple[type[Struct], ...], union_members(annotation))
+    json_type = cast("type[Struct] | UnionType", compose_union(members))
+    return build_decoder(label, json_type, _frame_decoder)
 
 
 class WebSocket[Inbound, Outbound](AsyncIterator[Inbound]):
