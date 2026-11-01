@@ -95,12 +95,15 @@ class PercentDiscount(Struct, tag="percent", tag_field="kind"):
     percent_off: Annotated[int, Meta(ge=0, le=100)]
 
 
+type Discount = FixedDiscount | PercentDiscount
+
+
 class PriceQuote(Struct):
     price_cents: int
 
 
 class PriceQuotesEndpoint(Endpoint, path="/price-quotes"):
-    async def post(self, json: FixedDiscount | PercentDiscount) -> PriceQuote:
+    async def post(self, json: Discount) -> PriceQuote:
         match json:
             case FixedDiscount():
                 price_cents = json.price_cents - json.discount_cents
@@ -116,6 +119,10 @@ class App(BaseApp):
 
 app = App()
 ```
+
+Naming the union with a `type` alias is optional (`json: FixedDiscount | PercentDiscount`
+works the same), but it gives the body one name to reuse, and an alias can itself sit
+inside a wider union (`json: Discount | Refund`).
 
 `{"kind": "fixed", "price_cents": 1000, "discount_cents": 250}` decodes to a
 `FixedDiscount`. A missing tag, or one no member claims, is a **422** like any other
@@ -134,7 +141,7 @@ The rules, all checked at startup:
 - `json: X | None` is not an optional body. It's rejected.
 
 `demo_app/operations/price_quote_operations.py` is the same endpoint in the
-project-structured app, with camelCase fields and the union named by a `type` alias.
+project-structured app, with camelCase fields.
 
 ## Raw body — `content`
 
