@@ -114,22 +114,11 @@ class Pattern[H]:
 
     def matches(self, segments: list[str]) -> bool:
         """Whether a request path's segments match: every static equal and, for an action,
-        a non-empty slot value before the suffix. The cold-path form (Allow, 405, reversal);
+        a non-empty slot value before the suffix. The cold-path form (Allow, 405);
         the resolvers in ``core`` inline the same checks."""
         if self.suffix and not _ends_in(segments[-1], self.suffix):
             return False
         return all(segments[i] == value for i, value in self.statics)
-
-    def overlaps(self, other: "Pattern[H]") -> bool:
-        """Whether this pattern may match some URL of ``other``, a pattern of the same
-        bucket: each literal here is the same literal in ``other`` or one of its slots, and,
-        for an action, ``other``'s last segment can end in its verb. A cheap prefilter for
-        reversal, which then asks :meth:`matches` about the actual URL."""
-        literals = dict(other.statics)
-        last = literals.get(len(other.statics) + len(other.params) - 1)
-        if self.suffix and last is not None and not _ends_in(last, self.suffix):
-            return False
-        return all(literals.get(i, value) == value for i, value in self.statics)
 
     def covers(self, plain: "Pattern[H]") -> bool:
         """Whether this action answers *every* URL of ``plain``, leaving it unreachable:

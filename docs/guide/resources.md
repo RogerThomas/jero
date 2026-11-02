@@ -179,11 +179,11 @@ The slot binds everything before the suffix, so `POST /widgets/a:b:duplicate` bi
 verb, and a request whose suffix matches no action (or would leave the slot empty) falls
 through to that plain route. Matching sees the path as the server decoded it, so
 `x%3Aduplicate` reaches the action too. Reverse routing (`Location.from_operation(...)`)
-and the OpenAPI path both carry the suffix. Reversal refuses a URL that would not route back
-to its operation: the plain route with `widget_id="x:duplicate"` (the action answers it), or
-the action with an empty `widget_id`. Keep ids free of `:`, as AIP-122 asks. A plain route
-an action would answer entirely is a `WiringError`: a literal `/groups/{group_id}/all:go`
-beside the action `/groups/{group_id}/{item_id}:go` could never run. A
+and the OpenAPI path both carry the suffix. Reversal builds the URL from the values it is
+given, so on the same method an id ending in an action's verb reverses to a URL the action
+answers: keep ids free of `:`, as AIP-122 asks. A plain route an action would answer entirely
+is a `WiringError`: a literal `/groups/{group_id}/all:go` beside the action
+`/groups/{group_id}/{item_id}:go` on the same method could never run. A
 wholly literal last segment such as `/widgets:batchGet` needs none of this: it is matched
 as written.
 
@@ -234,10 +234,10 @@ Rules, all checked at startup with a precise `WiringError`:
 - Path Struct fields **cannot have defaults** — a URL segment is always present.
 - Item routes have exactly one field beyond the slots (the id); every other route has
   none.
-- When two templates could match one path, the one with more literal segments wins
-  (`/groups/special/items/{item_id}` over `/groups/{group_id}/items/{item_id}`), whatever
-  order they were included in. Only between equally literal templates does inclusion order
-  decide.
+- When two templates on the same method could match one path, an action (`:verb`) route
+  wins, then the one with more literal segments (`/groups/special/items/{item_id}` over
+  `/groups/{group_id}/items/{item_id}`), whatever order they were included in. Only between
+  equally literal templates does inclusion order decide.
 - A `:verb` action suffix goes only on the last segment of an `Endpoint` path, right
   after its slot. The verb is letters, digits, `-`, `.`, `_` or `~`.
 
