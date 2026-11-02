@@ -6,7 +6,7 @@ learns *which* sources a handler wants, and the request path just fills them in.
 
 | Argument      | Source                          | Type                     |
 | ------------- | ------------------------------- | ------------------------ |
-| `json`        | request body (JSON)             | a `Struct`               |
+| `json`        | request body (JSON)             | a `Struct`, or a [union of tagged `Struct`s](#one-of-several-shapes-a-tagged-union) |
 | `content`     | request body (raw)              | `bytes`                  |
 | `content_stream` | request body (raw, streamed) | `ContentStream`          |
 | `form`        | form body (multipart, or url-encoded without files) | a `Struct` (see [Forms](forms.md)) |
@@ -66,8 +66,82 @@ header value) are 400s, and only a successfully parsed body or form part whose c
 breaks its declared schema is a 422 — which is why a bad query value is a 400 where the
 same bad value inside a JSON body is a 422.
 
-A JSON body is **always** a `Struct`, never a raw `dict`. That's what gives it both
-validation and a schema in the [OpenAPI spec](openapi.md).
+A JSON body is **always** a `Struct` (or a tagged union of them), never a raw `dict`.
+That's what gives it both validation and a schema in the [OpenAPI spec](openapi.md).
+
+### One of several shapes: a tagged union
+
+When a body comes in more than one shape, declare `json` as a union of **tagged**
+Structs rather than one Struct with every field optional. Each member declares `tag=`
+(`tag=True` uses the class name), and msgspec reads the tag to pick the member to decode,
+so a union costs no more per request than a single Struct. The handler narrows with
+`match` (or `isinstance`), fully typed.
+
+```python
+from typing import Annotated
+
+from msgspec import Meta, Struct
+
+from jero import BaseApp, Endpoint
+
+
+class FixedDiscount(Struct, tag="fixed", tag_field="kind"):
+    price_cents: int
+    discount_cents: Annotated[int, Meta(ge=0)]
+
+
+class PercentDiscount(Struct, tag="percent", tag_field="kind"):
+    price_cents: int
+    percent_off: Annotated[int, Meta(ge=0, le=100)]
+
+
+type Discount = FixedDiscount | PercentDiscount
+
+
+class PriceQuote(Struct):
+    price_cents: int
+
+
+class PriceQuotesEndpoint(Endpoint, path="/price-quotes"):
+    async def post(self, json: Discount) -> PriceQuote:
+        match json:
+            case FixedDiscount():
+                price_cents = json.price_cents - json.discount_cents
+            case PercentDiscount():
+                price_cents = json.price_cents * (100 - json.percent_off) // 100
+        return PriceQuote(price_cents=max(price_cents, 0))
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        self._include_endpoint(PriceQuotesEndpoint())
+
+
+app = App()
+```
+
+Naming the union with a `type` alias is optional (`json: FixedDiscount | PercentDiscount`
+works the same), but it gives the body one name to reuse, and an alias can itself sit
+inside a wider union (`json: Discount | Refund`).
+
+`{"kind": "fixed", "price_cents": 1000, "discount_cents": 250}` decodes to a
+`FixedDiscount`. A missing tag, or one no member claims, is a **422** like any other
+schema failure. In the [OpenAPI spec](openapi.md) the body is msgspec's `anyOf` plus a
+`discriminator` mapping each tag to its member: the same schema a
+[tagged-union response](streaming.md) gets.
+
+The rules, all checked at startup:
+
+- Every member is a `Struct` with an explicit **string** tag. An untagged member (msgspec
+  couldn't tell it apart from the others) or an `int` tag is a `WiringError` naming the
+  member.
+- The members share one `tag_field` (default `"type"`), and no two claim the same tag.
+- `tag_field` is spelled exactly as given: `rename` never touches it, so a
+  `rename="camel"` member carries `kind` verbatim beside its camelCased fields.
+- `json: X | None` is not an optional body. It's rejected.
+
+`demo_app/operations/price_quote_operations.py` is the same endpoint in the
+project-structured app, with camelCase fields.
 
 ## Raw body — `content`
 

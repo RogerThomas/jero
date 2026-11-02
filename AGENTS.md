@@ -113,7 +113,20 @@ Always follow the following style guide:
   `WiringError`).
 - **`Endpoint`** — a class defining any of the five bare verbs above, for non-resource
   routes (health, webhooks, actions). One exact path per Endpoint; a different path is a
-  different `Endpoint`.
+  different `Endpoint`. Its path may end in an AIP-136 custom method, `{slot}:verb`
+  (`/widgets/{widget_id}:duplicate`; split off by `split_action` at wiring, verb limited
+  to RFC 3986 unreserved characters). An action is a `Pattern` with a `suffix` in the same
+  per-(method, segment-count) bucket as plain routes; `insert_pattern` keeps each bucket in
+  match order (actions first, then more literal segments first; registration order breaks only
+  a tie between equally literal routes), and the router swaps in `__resolve_action` (the suffix-aware loop) only when the
+  first action registers, so an app without one pays nothing. A suffix anywhere else, or on a
+  `Resource`/WebSocket path, is a `WiringError`, as is a plain route an action answers entirely
+  (`Pattern.covers`). Reversal (`_RouteRef.action`) and the OpenAPI path carry the suffix, and
+  refuse a URL that would not route back to its operation: one a route earlier in match order
+  would answer (`_RouteRef.ahead`, the `Pattern.overlaps` routes, filled at `__finalize`), or
+  an action with an empty slot. Routing reads ASGI's
+  already-decoded `path` and never decodes again (a literal `%` survives); `TestClient` sends
+  `path` decoded and `raw_path` raw, as servers do; reversal percent-encodes slot values.
 - **The path is declared on the class, not at wiring** — `class Widgets(Resource,
   path="/widgets")`, read once at wiring; `_include_resource(Widgets())` takes no
   `path=`. The class is the single source of truth for its path (what URL reversal /
@@ -231,6 +244,17 @@ Always follow the following style guide:
   `@api.get(...) → return {"a": 1}` idiom is gone: a `dict`/blob return is a
   `WiringError` at startup. JSON in and out is a typed Struct, every time — that's
   what gives it validation *and* a schema for the OpenAPI spec. No exceptions.
+  - **A `json` body may be a union of tagged Structs** (`json: FixedDiscount |
+    PercentDiscount`; a `type` alias resolves) for a body with several shapes. msgspec
+    dispatches on the tag, so it costs the request path nothing over one Struct; the handler
+    narrows with `match`/`isinstance`. Every member needs an explicit **string** tag (the
+    WebSocket rule; both share `require_string_tags` in `_wiring_types`), else a
+    `WiringError` naming the member; a `tag_field` mismatch or duplicate tag value (msgspec's
+    `TypeError` building the decoder at wiring) is re-raised as a `WiringError`; `X | None`
+    stays rejected. A missing/unknown tag is the usual 422. OpenAPI emits msgspec's `anyOf` +
+    `discriminator` (identical to a tagged-union response); no composed request examples for
+    a union, matching the response side. `rename` never touches `tag_field`. Only `json` takes
+    unions — `form`/`params`/`headers`/`cookies`/`path` stay one Struct.
 - **Auth**: an object whose `authenticate` binds `headers`, `cookies`, or both
   (`Auth[THeaders, TUser]` / `CookieAuth[TCookies, TUser]` / `HybridAuth[THeaders,
   TCookies, TUser]` — three static protocols, one runtime `_CompiledAuth` that
@@ -367,7 +391,8 @@ Always follow the following style guide:
   the senders, `_CoveredRoute`, observe capture) lives in `core`, mirroring the
   `_exception_handlers` split.
   `jero/_wiring_types.py` — the resolved wiring contracts (`Sources`, `FormSpec`,
-  `OperationSpec`, the `*Meta` types, `is_struct_type`/`strip_list`), all msgspec Structs; a leaf depending
+  `OperationSpec`, the `*Meta` types, `is_struct_type`/`strip_list`/`union_members`/
+  `require_string_tags`), all msgspec Structs; a leaf depending
   only on msgspec + `jero.openapi`. `jero/openapi.py` — the dependency-free OpenAPI 3.1
   builder (`SecurityScheme`, `ResponseSpec`, `ModelMeta`, `build_openapi`).
   `jero/structs.py` — `Struct`, jero's drop-in `msgspec.Struct` base whose `meta=` class
@@ -386,6 +411,9 @@ Always follow the following style guide:
   `core` and `streaming` both import). `jero/headers.py` — the `RawHeaders` opaque bag.
   `jero/content_stream.py` — `ContentStream` and `ClientDisconnectedError` (a leaf
   module `core` imports).
+  `jero/_routing.py` — path templates (`parse_template`, `split_action`, `template_str`) and
+  the bucket `Pattern` with its ordering (`insert_pattern`); the inlined resolvers stay in
+  `core`. A leaf depending only on `_wiring_types`, split out for the same module cap.
   `jero/_assets.py` — the sender-free half of `_include_assets` and the OpenAPI favicon
   (wiring-time file reads, content types, gzip variants, strong `ETag`s, the
   `Accept-Encoding` / `If-None-Match` checks); the asset handler stays in `core`. A leaf
@@ -407,7 +435,9 @@ Always follow the following style guide:
   types when the test WebSocket API accepts union type expressions).
 - `demo_app/` — a complete, project-structured example app (`config`, `models`,
   `auth`, `services/`, `operations/`, `factory`, `app`); its `TokenAuth` gates widgets +
-  `/me` and its `OptionalTokenAuth` serves anonymous callers at `/spotlight`. It is the **single source of
+  `/me` and its `OptionalTokenAuth` serves anonymous callers at `/spotlight`; `/price-quotes`
+  takes a tagged-union `json` body (`Discount`); `WidgetDuplicateEndpoint` is the
+  `{widget_id}:duplicate` custom method. It is the **single source of
   truth**: the worked example in the docs, the app the test suite runs against, and a
   typed consumer of the public API that every type checker validates. Keep it working
   and bounded (it demonstrates the shape; resist turning it into a feature dumping ground).

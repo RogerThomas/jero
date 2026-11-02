@@ -140,6 +140,36 @@ def unwrap_alias(ann: object) -> object:
     return ann
 
 
+def union_members(ann: object) -> tuple[object, ...]:
+    """``ann``'s union members, each alias-resolved, or ``(ann,)`` when it is not a union.
+    Both spellings of a union classify alike: ``A | B`` (``types.UnionType``) and
+    ``typing.Union[A, B]``. A member that is an alias for a union is spliced in (``AB | C``
+    with ``type AB = A | B`` is ``A | B | C``; Python only flattens unions it can see), and a
+    member named twice, once through an alias, is kept once."""
+    ann = unwrap_alias(ann)
+    if get_origin(ann) not in (UnionType, Union):
+        return (ann,)
+    members: list[object] = []
+    for member in get_args(ann):
+        members += (inner for inner in union_members(member) if inner not in members)
+    return tuple(members)
+
+
+def require_string_tags(label: str, members: Sequence[type[Struct]]) -> None:
+    """Fail wiring unless every member declares an explicit, non-blank string tag — the
+    discriminator a client reads to tell a union's members apart on the wire. Shared by
+    every place a tagged Struct union crosses the wire inbound (``json`` request bodies,
+    WebSocket frames), so they accept the same unions and say the same thing when they
+    don't."""
+    for member in members:
+        tag = member.__struct_config__.tag
+        if not isinstance(tag, str) or not tag.strip():
+            raise WiringError(
+                f"{label}: {member.__name__} must declare an explicit string tag "
+                f"(tag=True, or tag='...'; tag_field= names the discriminator field)",
+            )
+
+
 class EndpointMeta(Struct):
     """OpenAPI metadata shared by all of an ``Endpoint``'s operations.
 
@@ -246,7 +276,8 @@ class Sources(Struct):
     """The resolved types for one handler's arguments: a Struct for every wire source, and
     whatever the authenticator returns for ``user``."""
 
-    json: type[Struct] | None = None
+    # A Struct, or a union of string-tagged Structs (msgspec dispatches on the tag).
+    json: type[Struct] | UnionType | None = None
     json_decoder: Decoder[Struct] | None = None  # prebuilt decoder for the json body type
     form: FormSpec | None = None
     params: type[Struct] | None = None

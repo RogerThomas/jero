@@ -1,15 +1,16 @@
 """The demo app: a factory-injected widgets API used by the test suite and the docs.
 
-It wires authed widgets (CRUD + background analytics + links), an authed ``/me``, an
-optionally-authed ``/spotlight``, open health checks, a raw-form echo, a streamed
-``/uploads``, and a ``from_ref`` link demo. Auth is a pure in-memory token map built in
-``wire`` (no lifecycle), so swapping the factory in tests replaces only the I/O services and
-leaves auth intact.
+It wires authed widgets (CRUD + background analytics + links, plus a ``:duplicate`` custom
+method), an authed ``/me``, an optionally-authed ``/spotlight``, open health checks, a
+raw-form echo, a streamed ``/uploads``, a ``/price-quotes`` taking a tagged-union body, and a
+``from_ref`` link demo. Auth is a pure in-memory token map built in ``wire`` (no lifecycle),
+so swapping the factory in tests replaces only the I/O services and leaves auth intact.
 """
 
 from demo_app.auth import OptionalTokenAuth, SessionAuth, TokenAuth
 from demo_app.factory import Factory
 from demo_app.models import User
+from demo_app.operations.price_quote_operations import PriceQuotesEndpoint
 from demo_app.operations.streaming_operations import NotificationsEndpoint, QuestionsEndpoint
 from demo_app.operations.system_operations import (
     FeaturedWidgetEndpoint,
@@ -23,7 +24,7 @@ from demo_app.operations.system_operations import (
 )
 from demo_app.operations.upload_operations import UploadsEndpoint
 from demo_app.operations.websocket_operations import PingWebSocket
-from demo_app.operations.widget_operations import WidgetResource
+from demo_app.operations.widget_operations import WidgetDuplicateEndpoint, WidgetResource
 from jero import CORS, BaseApp
 
 
@@ -57,6 +58,7 @@ class DemoApp(BaseApp[Factory]):
         # header pairs — free per request); every include below inherits it.
         self._include_cors(CORS())
         self._include_resource(WidgetResource(widget_service, background_tasks), auth=token_auth)
+        self._include_endpoint(WidgetDuplicateEndpoint(widget_service), auth=token_auth)
         self._include_endpoint(WhoAmIEndpoint(), auth=token_auth)
         self._include_endpoint(SpotlightEndpoint(), auth=optional_token_auth)
         self._include_endpoint(SessionEndpoint(users))
@@ -68,6 +70,7 @@ class DemoApp(BaseApp[Factory]):
         self._include_endpoint(QuestionsEndpoint(question_service))
         self._include_endpoint(NotificationsEndpoint())
         self._include_endpoint(UploadsEndpoint())
+        self._include_endpoint(PriceQuotesEndpoint())
         self._include_websocket(PingWebSocket(), auth=token_auth)
         # Serve the auto-generated OpenAPI 3.1 spec at /openapi.json and a Scalar UI at /docs.
         # Tag descriptions are defined on the resources/endpoints themselves (see their meta);
