@@ -39,6 +39,26 @@ Not on the wire — request and response contracts are msgspec `Struct`s. Off th
 anything goes: the [demo app](guide/project-structure.md) uses pydantic-settings to
 parse environment configuration, then maps it into a `Struct`.
 
+## Why does ruff want my Struct imports under `TYPE_CHECKING`?
+
+jero reads your annotations at startup: a handler's `path: WidgetPath` or `json: WidgetIn`,
+an authenticator's `headers: Credentials`, a middleware hook's `request: Request[H]`. They
+*are* the binding and the OpenAPI spec. A type used only there looks typing-only to ruff's
+flake8-type-checking rules (TC001–TC003), which suggest moving its import under
+`if TYPE_CHECKING:` (typically once future annotations or a 3.14 target is on). Don't: the
+name must exist at runtime. If it doesn't, startup fails with a `WiringError` naming the
+method and the annotation.
+
+Turn those rules off for your app's modules, as jero's own demo app does:
+
+```toml
+[tool.ruff.lint.per-file-ignores]
+"myapp/**" = ["TC001", "TC002", "TC003"]
+```
+
+ruff's `runtime-evaluated-base-classes` setting doesn't help here: it exempts class-level
+field annotations, not method signatures.
+
 ## Does it run on Python 3.12?
 
 No. jero's generics use PEP 696 type-parameter defaults, which shipped in 3.13. See

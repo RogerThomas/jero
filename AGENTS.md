@@ -392,7 +392,10 @@ Always follow the following style guide:
   `_exception_handlers` split.
   `jero/_wiring_types.py` — the resolved wiring contracts (`Sources`, `FormSpec`,
   `OperationSpec`, the `*Meta` types, `is_struct_type`/`strip_list`/`union_members`/
-  `require_string_tags`), all msgspec Structs; a leaf depending
+  `require_string_tags`, and `signature_parameters`/`type_hints`, the only way wiring reads a
+  callable's signature: names never evaluate annotations, and an annotation that can't resolve
+  at runtime (a `TYPE_CHECKING`-only import) is a `WiringError` naming the method, not a bare
+  `NameError`), all msgspec Structs; a leaf depending
   only on msgspec + `jero.openapi`. `jero/openapi.py` — the dependency-free OpenAPI 3.1
   builder (`SecurityScheme`, `ResponseSpec`, `ModelMeta`, `build_openapi`).
   `jero/structs.py` — `Struct`, jero's drop-in `msgspec.Struct` base whose `meta=` class
