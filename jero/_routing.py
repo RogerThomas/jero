@@ -88,6 +88,11 @@ def template_str(segments: list[Segment], action: str = "") -> str:
     return joined + action
 
 
+def _ends_in(segment: str, suffix: str) -> bool:
+    """Whether ``segment`` is a non-empty slot value followed by ``suffix``."""
+    return len(segment) > len(suffix) and segment.endswith(suffix)
+
+
 @dataclass(frozen=True, slots=True)
 class Pattern[H]:
     """A compiled templated route within one (method, segment-count) bucket. An action route
@@ -98,22 +103,44 @@ class Pattern[H]:
     params: tuple[tuple[int, str], ...]  # (position, slot name)
     handler: H
     suffix: str = ""
+    template: str = ""  # as written, for wiring errors
 
     @classmethod
     def compile(cls, segments: list[Segment], handler: H, suffix: str = "") -> "Pattern[H]":
         """The pattern for a template's segments."""
         statics = tuple((i, value) for i, (is_param, value) in enumerate(segments) if not is_param)
         params = tuple((i, value) for i, (is_param, value) in enumerate(segments) if is_param)
-        return cls(statics, params, handler, suffix)
+        return cls(statics, params, handler, suffix, template_str(segments, suffix))
 
     def matches(self, segments: list[str]) -> bool:
         """Whether a request path's segments match: every static equal and, for an action,
-        a non-empty slot value before the suffix. The cold-path form (Allow, 405); the
-        resolvers in ``core`` inline the same checks."""
-        last = segments[-1]
-        if self.suffix and (len(last) <= len(self.suffix) or not last.endswith(self.suffix)):
+        a non-empty slot value before the suffix. The cold-path form (Allow, 405, reversal);
+        the resolvers in ``core`` inline the same checks."""
+        if self.suffix and not _ends_in(segments[-1], self.suffix):
             return False
         return all(segments[i] == value for i, value in self.statics)
+
+    def overlaps(self, plain: "Pattern[H]") -> bool:
+        """Whether this action answers some URL of ``plain``, a plain route of the same
+        bucket (actions are tried first): every literal of this action is either the same
+        literal in ``plain`` or one of its slots, and ``plain``'s last segment can end in
+        this action's verb."""
+        literals = dict(plain.statics)
+        last = literals.get(len(plain.statics) + len(plain.params) - 1)
+        if last is not None and not _ends_in(last, self.suffix):
+            return False
+        return all(literals.get(i, value) == value for i, value in self.statics)
+
+    def covers(self, plain: "Pattern[H]") -> bool:
+        """Whether this action answers *every* URL of ``plain``, leaving it unreachable:
+        ``plain`` ends in a literal carrying this verb, and this action's literals are all
+        literals of ``plain``."""
+        last = dict(plain.statics).get(len(plain.statics) + len(plain.params) - 1)
+        return (
+            last is not None
+            and _ends_in(last, self.suffix)
+            and set(self.statics) <= set(plain.statics)
+        )
 
     def with_handler(self, handler: H) -> "Pattern[H]":
         """The same pattern serving ``handler`` (a covered route's wrapper)."""
@@ -121,11 +148,20 @@ class Pattern[H]:
 
 
 def insert_pattern[H](bucket: list[Pattern[H]], pattern: Pattern[H], label: str) -> None:
-    """Add ``pattern`` to its bucket, failing wiring if one of the same shape is there. The
-    bucket is kept in match order, so registration order never decides: action routes first
-    (``/things/x:convert`` reaches the action, not a ``{thing_id}`` route beside it), then
-    more literal segments first (``/groups/special/...`` before ``/groups/{group_id}/...``)."""
+    """Add ``pattern`` to its bucket, failing wiring if one of the same shape is there, or if
+    an action would answer every URL of a plain route (the plain route could never run). The
+    bucket is kept in match order: action routes first (``/things/x:convert`` reaches the
+    action, not a ``{thing_id}`` route beside it), then more literal segments first
+    (``/groups/special/...`` before ``/groups/{group_id}/...``); registration order breaks
+    only a tie between equally literal routes."""
     if any(p.statics == pattern.statics and p.suffix == pattern.suffix for p in bucket):
         raise WiringError(f"{label} is already registered")
+    for other in bucket:
+        action, plain = (pattern, other) if pattern.suffix else (other, pattern)
+        if action.suffix and not plain.suffix and action.covers(plain):
+            raise WiringError(
+                f"{label}: {plain.template} can never be reached; the action route "
+                f"{action.template} answers every URL it matches",
+            )
     bucket.append(pattern)
     bucket.sort(key=lambda p: (not p.suffix, -len(p.statics)))

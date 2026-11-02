@@ -117,12 +117,13 @@ Always follow the following style guide:
   (`/widgets/{widget_id}:duplicate`; split off by `split_action` at wiring, verb limited
   to RFC 3986 unreserved characters). An action is a `Pattern` with a `suffix` in the same
   per-(method, segment-count) bucket as plain routes; `insert_pattern` keeps each bucket in
-  match order (actions first, then more literal segments first, so registration order never
-  decides), and the router swaps in `__resolve_action` (the suffix-aware loop) only when the
+  match order (actions first, then more literal segments first; registration order breaks only
+  a tie between equally literal routes), and the router swaps in `__resolve_action` (the suffix-aware loop) only when the
   first action registers, so an app without one pays nothing. A suffix anywhere else, or on a
-  `Resource`/WebSocket path, is a `WiringError`. Reversal (`_RouteRef.action`) and the OpenAPI
-  path carry the suffix; reversing a plain route whose last slot ends in the verb of an action
-  that captures it raises (`_RouteRef.shadowed`, filled at `__finalize`). Routing reads ASGI's
+  `Resource`/WebSocket path, is a `WiringError`, as is a plain route an action answers entirely
+  (`Pattern.covers`). Reversal (`_RouteRef.action`) and the OpenAPI path carry the suffix;
+  reversing a plain route to a URL an overlapping action would match raises
+  (`_RouteRef.shadowed`, the `Pattern.overlaps` actions, filled at `__finalize`). Routing reads ASGI's
   already-decoded `path` and never decodes again (a literal `%` survives); `TestClient` sends
   `path` decoded and `raw_path` raw, as servers do; reversal percent-encodes slot values.
 - **The path is declared on the class, not at wiring** — `class Widgets(Resource,

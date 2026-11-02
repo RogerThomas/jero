@@ -179,9 +179,11 @@ The slot binds everything before the suffix, so `POST /widgets/a:b:duplicate` bi
 verb, and a request whose suffix matches no action (or would leave the slot empty) falls
 through to that plain route. Matching sees the path as the server decoded it, so
 `x%3Aduplicate` reaches the action too. Reverse routing (`Location.from_operation(...)`)
-and the OpenAPI path both carry the suffix. Because the action answers first, reversing the
-plain route with an id that ends in the action's verb (`widget_id="x:duplicate"`) raises
-rather than build a URL the action would answer. Keep ids free of `:`, as AIP-122 asks. A
+and the OpenAPI path both carry the suffix. Because the action answers first, reversing a
+plain route to a URL the action would match (`widget_id="x:duplicate"`) raises rather than
+build an address that reaches the wrong operation. Keep ids free of `:`, as AIP-122 asks. A
+plain route the action would answer entirely (a literal `/widgets/{widget_id}/all:duplicate`
+beside it) is a `WiringError`. A
 wholly literal last segment such as `/widgets:batchGet` needs none of this: it is matched
 as written.
 
@@ -234,7 +236,8 @@ Rules, all checked at startup with a precise `WiringError`:
   none.
 - When two templates could match one path, the one with more literal segments wins
   (`/groups/special/items/{item_id}` over `/groups/{group_id}/items/{item_id}`), whatever
-  order they were included in.
+  order they were included in. Only between equally literal templates does inclusion order
+  decide.
 - A `:verb` action suffix goes only on the last segment of an `Endpoint` path, right
   after its slot. The verb is letters, digits, `-`, `.`, `_` or `~`.
 

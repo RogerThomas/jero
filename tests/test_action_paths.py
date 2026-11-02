@@ -276,6 +276,22 @@ class MidPathActionEndpoint(Endpoint, path="/groups/{group_id}:convert/things"):
         return path
 
 
+class LiteralGoEndpoint(Endpoint, path="/groups/{group_id}/things:go"):
+    """A plain route whose literal last segment ends in an action's verb."""
+
+    async def post(self, path: GroupPath) -> GroupPath:
+        """Never reached; wiring fails first."""
+        return path
+
+
+class ThingGoEndpoint(Endpoint, path="/groups/{group_id}/{thing_id}:go"):
+    """An action answering every URL ``LiteralGoEndpoint`` matches."""
+
+    async def post(self, path: ThingPath) -> Seen:
+        """Never reached; wiring fails first."""
+        return Seen(route="go", group_id=path.group_id, thing_id=path.thing_id)
+
+
 class ActionWebSocket(WebSocketEndpoint, path="/groups/{group_id}:join"):
     """A suffix on a WebSocket path."""
 
@@ -324,6 +340,16 @@ class _RoutableApp(BaseApp):
             r"POST /groups/\{group_id\}/things/\{thing_id\}:convert is already registered",
             id="duplicate",
         ),
+        pytest.param(
+            (LiteralGoEndpoint(), ThingGoEndpoint()),
+            r"/groups/\{group_id\}/things:go can never be reached",
+            id="unreachable-literal-first",
+        ),
+        pytest.param(
+            (ThingGoEndpoint(), LiteralGoEndpoint()),
+            r"/groups/\{group_id\}/things:go can never be reached",
+            id="unreachable-literal-second",
+        ),
         pytest.param((EmptyActionEndpoint(),), r"action '' must be", id="empty-verb"),
         pytest.param((SlashActionEndpoint(),), r"action 'a b' must be", id="bad-verb"),
         pytest.param(
@@ -344,3 +370,98 @@ def test_misplaced_or_clashing_action_fails_wiring(
     """An action is one unreserved verb on an Endpoint's last segment, registered once."""
     with pytest.raises(RuntimeError, match=message):
         TestClient(_RoutableApp(*routables))
+
+
+class PairPath(Struct):
+    """Two free slots."""
+
+    x: str
+    y: str
+
+
+class XPath(Struct):
+    """The one slot before a literal last segment."""
+
+    x: str
+
+
+class YPath(Struct):
+    """The one slot left once ``x`` is literal."""
+
+    y: str
+
+
+class PairEndpoint(Endpoint, path="/pairs/{x}/{y}"):
+    """A plain route an action overlaps only where ``x`` is ``fixed``."""
+
+    async def post(self, path: PairPath) -> PairPath:
+        """Echo the slots."""
+        return path
+
+
+class FixedGoEndpoint(Endpoint, path="/pairs/fixed/{y}:go"):
+    """An action more literal than the plain route, capturing part of it."""
+
+    async def post(self, path: YPath) -> YPath:
+        """Echo the slot."""
+        return path
+
+
+class PairListEndpoint(Endpoint, path="/pairs/{x}/list"):
+    """A plain route whose literal last segment no action's verb ends."""
+
+    async def post(self, path: XPath) -> XPath:
+        """Echo the slot."""
+        return path
+
+
+class PairLinkEndpoint(Endpoint, path="/pair-link"):
+    """Reverse-routes ``PairEndpoint.post`` for the queried slots."""
+
+    async def get(self, params: PairPath) -> JSONResponse[PairPath]:
+        """Point at the plain route for these slots."""
+        return JSONResponse(
+            json=params, location=Location.from_operation(PairEndpoint.post, path=params)
+        )
+
+
+class PairApp(BaseApp):
+    """The plain route, the partly overlapping action, and the reversal."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(PairEndpoint())
+        self._include_endpoint(PairListEndpoint())
+        self._include_endpoint(FixedGoEndpoint())
+        self._include_endpoint(PairLinkEndpoint())
+
+
+@pytest.mark.parametrize(
+    ("x", "y", "location"),
+    [
+        pytest.param("fixed", "z:go", None, id="captured-by-the-action"),
+        pytest.param("other", "z:go", "/pairs/other/z:go", id="action-does-not-match-x"),
+        pytest.param("fixed", ":go", "/pairs/fixed/:go", id="empty-stem-is-no-action"),
+    ],
+)
+def test_reversal_refuses_exactly_the_urls_an_action_captures(
+    x: str, y: str, location: str | None
+) -> None:
+    """The guard asks whether an action would answer the built URL, so a partly overlapping
+    action counts, and a URL the action would not match (another ``x``, or nothing before
+    ``:go``) reverses normally."""
+    with TestClient(PairApp()) as client:
+        resp = client.get("/pair-link", params={"x": x, "y": y})
+    if location is None:
+        assert resp.status_code == 500
+    else:
+        assert resp.status_code == 200
+        assert resp.headers["location"] == location
+
+
+def test_action_leaves_other_literal_routes_alone() -> None:
+    """An action only competes for URLs ending in its verb: a plain route ending in another
+    literal keeps all of its URLs."""
+    with TestClient(PairApp()) as client:
+        resp = client.post("/pairs/fixed/list")
+    assert resp.status_code == 200
+    assert resp.json() == {"x": "fixed"}

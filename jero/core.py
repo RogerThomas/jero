@@ -61,7 +61,6 @@ from collections.abc import (
     Mapping,
     MutableMapping,
     Sequence,
-    Set,
 )
 from contextlib import (
     AbstractAsyncContextManager,
@@ -2089,9 +2088,9 @@ class _RouteRef:
     segments: tuple[Segment, ...]
     path_type: type[Struct] | None
     action: str = ""  # a ":verb" suffix on the last segment, or ""
-    # The verbs of actions that capture this plain route's URLs (filled at __finalize): a
-    # last slot value ending in one would reverse to a URL the action answers instead.
-    shadowed: Set[str] = frozenset()
+    # The actions answering some of this plain route's URLs (filled at __finalize): a URL
+    # one of them matches would reverse to an address the action answers instead.
+    shadowed: Sequence[Pattern[_Handler]] = ()
 
 
 def _build_url(route_ref: _RouteRef, path: Struct | None) -> str:
@@ -2101,17 +2100,21 @@ def _build_url(route_ref: _RouteRef, path: Struct | None) -> str:
     if path is None:
         return "/".join(value for _, value in segments) + route_ref.action
     data = to_builtins(path)
+    parts = [
+        _encode_header_value(data[value]) if is_param else value for is_param, value in segments
+    ]
+    # The router sees the decoded parts, so ask the overlapping actions about those.
+    for action in route_ref.shadowed:
+        if action.matches(parts):
+            raise ValueError(
+                f"{'/'.join(parts)!r} would route to {action.template}, not to this operation",
+            )
     # Slot values are percent-encoded (RFC 3986 pchar stays as is, so ``:`` and ``@`` read
     # naturally); the server decodes them back before routing.
     url = "/".join(
-        quote(_encode_header_value(data[value]), safe="-._~!$&'()*+,;=:@") if is_param else value
-        for is_param, value in segments
+        quote(part, safe="-._~!$&'()*+,;=:@") if is_param else part
+        for part, (is_param, _) in zip(parts, segments, strict=True)
     )
-    if route_ref.shadowed and url.endswith(tuple(route_ref.shadowed)):
-        raise ValueError(
-            f"{url!r} would route to the action ending it, not to this operation; a slot "
-            f"value beside an action route may not end in {sorted(route_ref.shadowed)}",
-        )
     return url + route_ref.action
 
 
@@ -3680,9 +3683,9 @@ class BaseApp[FactoryT = None](ABC):
         self.__dynamic: _DynamicRoutes = {}
         # The first action route swaps in __resolve_action; apps without one pay nothing.
         self.__resolve: _Resolver = self.__resolve_dynamic
-        # Per plain templated route, the ``:verb`` suffixes of the actions that would capture
-        # its URLs; filled in place at __finalize (see _RouteRef.shadowed).
-        self.__shadowed: dict[_Handler, set[str]] = {}
+        # Per plain templated route, the actions answering some of its URLs; filled in place
+        # at __finalize (see _RouteRef.shadowed).
+        self.__shadowed: dict[_Handler, list[Pattern[_Handler]]] = {}
         self.__websocket_static: dict[str, _WebSocketHandler] = {}
         self.__websocket_dynamic: dict[int, list[Pattern[_WebSocketHandler]]] = {}
         self.__allowed: _AllowedMethods = {}
@@ -3765,36 +3768,35 @@ class BaseApp[FactoryT = None](ABC):
 
     def __register(
         self, method: HTTPMethod, segments: list[Segment], handler: _Handler, action: str = ""
-    ) -> set[str]:
-        """Route ``handler``; returns the set of action suffixes that capture its URLs (filled
-        in place at __finalize), for the route's reverse-routing guard."""
+    ) -> list[Pattern[_Handler]]:
+        """Route ``handler``; returns the list of actions answering some of its URLs (filled in
+        place at __finalize), for the route's reverse-routing guard."""
         if not any(is_param for is_param, _ in segments):
             route_path = "/".join(value for _, value in segments)
             if (method, route_path) in self.__static:
                 raise WiringError(f"{method} {route_path} is already registered")
             self.__static[(method, route_path)] = handler
             self.__allowed.setdefault(route_path, []).append(method)
-            return set()
+            return []
         pattern = Pattern.compile(segments, handler, action)
         bucket = self.__dynamic.setdefault((method, len(segments)), [])
         insert_pattern(bucket, pattern, f"{method} {template_str(segments, action)}")
         if action:
             self.__resolve = self.__resolve_action
-            return set()
-        return self.__shadowed.setdefault(handler, set())
+            return []
+        return self.__shadowed.setdefault(handler, [])
 
     def __finalize_shadows(self) -> None:
-        """An action whose literal segments are a subset of a plain route's, on the same verb
-        and segment count, captures every URL of that route whose last slot ends in its verb
-        (actions match first). Record those verbs on the plain route for reversal to refuse."""
+        """Actions are tried first, so one that overlaps a plain route of its bucket (same
+        verb and segment count) answers some of that route's URLs. Record it on the plain
+        route, for reversal to refuse exactly the URLs it would capture."""
         for bucket in self.__dynamic.values():
             actions = [pattern for pattern in bucket if pattern.suffix]
             for pattern in bucket if actions else ():
                 if not pattern.suffix:
-                    statics = set(pattern.statics)
-                    self.__shadowed[pattern.handler] |= {
-                        action.suffix for action in actions if set(action.statics) <= statics
-                    }
+                    self.__shadowed[pattern.handler] += (
+                        action for action in actions if action.overlaps(pattern)
+                    )
 
     def __register_websocket(self, segments: list[Segment], handler: _WebSocketHandler) -> None:
         if not any(is_param for is_param, _ in segments):
