@@ -615,18 +615,24 @@ class HybridAuth[THeaders: Struct, TCookies: Struct, TUser](Protocol):
         ...  # pylint: disable=unnecessary-ellipsis  # Protocol stub; pyright needs the body
 
 
-class BearerAuth[THeaders: Struct, TUser](Auth[THeaders, TUser]):
-    """An ``Auth`` whose operations advertise HTTP bearer in the OpenAPI spec.
+class BearerAuth:
+    """A base whose operations advertise HTTP bearer in the OpenAPI spec.
 
     Sugar over the ``openapi_security`` attribute the spec generator reads — subclass
-    this instead of writing the attribute by hand. Implement ``authenticate`` as usual.
+    this instead of writing the attribute by hand, and implement ``authenticate`` (sync
+    or ``async def``) as for any :class:`Auth`. Deliberately not a subclass of the
+    protocol: there is no inherited ``authenticate`` stub to override, so either flavor
+    lints clean. ``authenticate`` is checked by the type checker at the ``auth=`` mount and
+    by jero at wiring, which also requires it to bind ``headers`` (the scheme names the
+    ``Authorization`` header).
     """
 
     openapi_security: ClassVar[SecurityScheme] = SecurityScheme.http_bearer()
 
 
-class BasicAuth[THeaders: Struct, TUser](Auth[THeaders, TUser]):
-    """An ``Auth`` whose operations advertise HTTP basic in the OpenAPI spec."""
+class BasicAuth:
+    """A base whose operations advertise HTTP basic in the OpenAPI spec; otherwise as
+    :class:`BearerAuth`."""
 
     openapi_security: ClassVar[SecurityScheme] = SecurityScheme.http_basic()
 
@@ -3394,6 +3400,28 @@ def _derive_security_scheme(compiled_auth: _CompiledAuth) -> SecurityScheme | No
     return None
 
 
+def _security_scheme(auth: object, compiled_auth: _CompiledAuth) -> SecurityScheme | None:
+    """An authed route's scheme: the declared ``openapi_security``, or one derived from what
+    ``authenticate`` binds (:func:`_derive_security_scheme`; deriving nothing is only a
+    problem for an app that calls ``_include_openapi``, where ``operation_input`` raises).
+    An http scheme (bearer/basic) is the ``Authorization`` header, so declaring one for an
+    authenticator that binds no headers would send clients the wrong credential."""
+    declared: object = getattr(type(auth), "openapi_security", None)
+    if declared is None:
+        return _derive_security_scheme(compiled_auth)
+    if not isinstance(declared, SecurityScheme):
+        raise WiringError(
+            f"{type(auth).__name__}: openapi_security must be SecurityScheme, "
+            f"got {type(declared).__name__}",
+        )
+    if declared.type == "http" and compiled_auth.headers_type is None:
+        raise WiringError(
+            f"{type(auth).__name__}: openapi_security is HTTP {declared.scheme} "
+            f"(the Authorization header), but authenticate binds no headers",
+        )
+    return declared
+
+
 def _json_doc_handler(config: "_OpenAPIConfig", tail: _RouteTail) -> _Handler:
     """A handler serving the cached OpenAPI document. The payload is filled in at
     ``__finalize`` (after wiring), so the route can be registered before the document
@@ -3887,21 +3915,9 @@ class BaseApp[FactoryT = None](ABC):
         auth_mode: AuthMode = None
         if compiled_auth is not None:
             auth_mode = "optional" if compiled_auth.reports_absence else "required"
-        # An authed route with no declared scheme derives one from what authenticate()
-        # binds — see _derive_security_scheme; it may derive nothing, which is only a
-        # problem for an app that calls _include_openapi (operation_input raises there).
-        security_scheme: SecurityScheme | None = None
-        if compiled_auth is not None:
-            declared: object = getattr(type(auth), "openapi_security", None)
-            if declared is None:
-                security_scheme = _derive_security_scheme(compiled_auth)
-            elif isinstance(declared, SecurityScheme):
-                security_scheme = declared
-            else:
-                raise WiringError(
-                    f"{type(auth).__name__}: openapi_security must be SecurityScheme, "
-                    f"got {type(declared).__name__}",
-                )
+        security_scheme = (
+            _security_scheme(auth, compiled_auth) if compiled_auth is not None else None
+        )
 
         registered = False
         for name, verb in methods.items():

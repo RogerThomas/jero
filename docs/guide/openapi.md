@@ -338,7 +338,7 @@ An operation mounted behind `auth` gets a `security` requirement. To advertise t
 from jero import BearerAuth
 
 
-class TokenAuth(BearerAuth[Credentials, User]):    # -> {"type": "http", "scheme": "bearer"}
+class TokenAuth(BearerAuth):    # -> {"type": "http", "scheme": "bearer"}
     async def authenticate(self, headers: Credentials) -> User:
         ...
 ```

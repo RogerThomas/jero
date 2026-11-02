@@ -41,16 +41,14 @@ class TokenLookup:
         return user
 
 
-class TokenAuth(TokenLookup, BearerAuth[Credentials, User]):
+class TokenAuth(TokenLookup, BearerAuth):
     """Gating authenticator: every route mounted with it requires valid credentials.
 
     Subclassing :class:`~jero.BearerAuth` makes its routes advertise HTTP bearer in the
     generated OpenAPI spec.
     """
 
-    # Auth.authenticate is declared sync-or-async (-> TUser | Awaitable[TUser]); pylint
-    # only sees the sync arm of the union and flags the async override. It's a false positive.
-    async def authenticate(self, headers: Credentials) -> User:  # pylint: disable=invalid-overridden-method
+    async def authenticate(self, headers: Credentials) -> User:
         """Resolve the bearer token to a user, or raise 401."""
         user = self._resolve(headers)
         if user is None:
@@ -58,7 +56,7 @@ class TokenAuth(TokenLookup, BearerAuth[Credentials, User]):
         return user
 
 
-class OptionalTokenAuth(TokenLookup, BearerAuth[Credentials, User]):
+class OptionalTokenAuth(TokenLookup, BearerAuth):
     """Anonymous-accepting authenticator: returning ``None`` reports that the caller
     presented no credentials, and the route's handlers are invoked with ``user=None``.
 
@@ -66,7 +64,7 @@ class OptionalTokenAuth(TokenLookup, BearerAuth[Credentials, User]):
     these routes must declare ``user: User | None``; jero checks that at startup.
     """
 
-    async def authenticate(self, headers: Credentials) -> User | None:  # pylint: disable=invalid-overridden-method
+    async def authenticate(self, headers: Credentials) -> User | None:
         """Resolve the bearer token to a user, ``None`` if none was presented, or raise 401."""
         return self._resolve(headers)
 
