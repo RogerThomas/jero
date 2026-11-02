@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any, Self, cast
-from urllib.parse import urlencode
+from urllib.parse import unquote, urlencode
 
 from msgspec.json import Decoder
 from typing_extensions import TypeForm
@@ -637,7 +637,10 @@ class TestClient:
         scope: dict[str, Any] = {
             "type": "http",
             "method": method,
-            "path": path,
+            # ASGI's ``path`` is percent-decoded (``raw_path`` keeps the bytes as sent), as
+            # every server delivers it, so routing sees what it sees in production.
+            "path": unquote(path),
+            "raw_path": path.encode(),
             "query_string": urlencode(params or {}).encode("latin-1"),
             "headers": [
                 (k.encode("latin-1"), v.encode("latin-1")) for k, v in wire_headers.items()
@@ -684,7 +687,10 @@ class TestClient:
         scope: dict[str, Any] = {
             "type": "http",
             "method": method,
-            "path": path,
+            # ASGI's ``path`` is percent-decoded (``raw_path`` keeps the bytes as sent), as
+            # every server delivers it, so routing sees what it sees in production.
+            "path": unquote(path),
+            "raw_path": path.encode(),
             "query_string": urlencode(params or {}).encode("latin-1"),
             "headers": [
                 (k.encode("latin-1"), v.encode("latin-1")) for k, v in wire_headers.items()
@@ -712,7 +718,10 @@ class TestClient:
         wire_headers = {key.lower(): value for key, value in outgoing.items()}
         scope: dict[str, Any] = {
             "type": "websocket",
-            "path": path,
+            # ASGI's ``path`` is percent-decoded (``raw_path`` keeps the bytes as sent), as
+            # every server delivers it, so routing sees what it sees in production.
+            "path": unquote(path),
+            "raw_path": path.encode(),
             "query_string": urlencode(params or {}).encode("latin-1"),
             "headers": [
                 (key.encode("latin-1"), value.encode("latin-1"))

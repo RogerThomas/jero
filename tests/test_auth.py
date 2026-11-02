@@ -620,3 +620,22 @@ def test_typeddict_member_in_any_order_wires() -> None:
     with TestClient(_UserTypeApp(DictFirstEndpoint(), AccountOrDictAuth())) as client:
         resp = client.get("/dict-first", headers={"authorization": "account-id"})
         assert resp.json() == {"caller": "account-id"}
+
+
+class NoAuthenticate:
+    """Passed as an authenticator but defines no ``authenticate``."""
+
+
+class _NoAuthenticateApp(BaseApp):
+    """App mounting an endpoint behind an object that cannot authenticate."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(
+            GreetingEndpoint(), auth=cast("Auth[Struct, object]", NoAuthenticate())
+        )
+
+
+def test_authenticator_without_authenticate_fails_wiring() -> None:
+    """An auth object with no ``authenticate`` method is a startup error naming it."""
+    with pytest.raises(RuntimeError, match="NoAuthenticate must define an 'authenticate' method"):
+        TestClient(_NoAuthenticateApp())

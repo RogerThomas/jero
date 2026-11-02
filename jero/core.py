@@ -61,6 +61,7 @@ from collections.abc import (
     Mapping,
     MutableMapping,
     Sequence,
+    Set,
 )
 from contextlib import (
     AbstractAsyncContextManager,
@@ -91,7 +92,7 @@ from typing import (
     is_protocol,
     overload,
 )
-from urllib.parse import parse_qsl, unquote, unquote_plus
+from urllib.parse import parse_qsl, quote, unquote_plus
 
 from msgspec import DecodeError, Struct, ValidationError, convert, to_builtins
 from msgspec.json import Decoder
@@ -121,6 +122,15 @@ from jero._middleware import (
     requested_method,
 )
 from jero._openapi_wiring import operation_input
+from jero._routing import (
+    Pattern,
+    Segment,
+    insert_pattern,
+    literal_segments,
+    parse_template,
+    split_action,
+    template_str,
+)
 from jero._wiring_types import (
     AuthMode,
     EndpointMeta,
@@ -214,10 +224,8 @@ type Send = Callable[[dict[str, Any]], Awaitable[None]]
 # A compiled per-request handler: decode -> call -> encode.
 type _Handler = Callable[[Scope, Receive, Send, dict[str, str]], Awaitable[None]]
 type _WebSocketHandler = Callable[[Scope, Receive, Send, dict[str, str]], Awaitable[None]]
-# A template segment: (is_param, static_value_or_slot_name).
-type _Segment = tuple[bool, str]
 type _StaticRoutes = dict[tuple[str, str], _Handler]
-type _DynamicRoutes = dict[tuple[HTTPMethod, int], list[_Pattern]]
+type _DynamicRoutes = dict[tuple[HTTPMethod, int], list[Pattern[_Handler]]]
 type _AllowedMethods = dict[str, list[HTTPMethod]]
 type _Resolver = Callable[[str, str], tuple[_Handler, dict[str, str]] | None]
 # Resolves a Struct type to its reusable typed JSON decoder (the app's per-type cache).
@@ -1416,82 +1424,14 @@ def _bind_sources(  # noqa: C901
     )
 
 
-def _path_parts(path: str) -> list[str]:
-    """Validate and split a mount path shared by :func:`_parse_template` and
-    :func:`_literal_segments` — the one rule ('/'-rooted) both interpretations agree
-    on, kept in one place so it can't drift between them."""
-    if not path.startswith("/"):
-        raise WiringError(f"path {path!r} must start with '/'")
-    return path.split("/")
-
-
-def _parse_template(path: str) -> list[_Segment]:
-    """Parse a mount path like ``/collections/{collection_id}/pokemon``."""
-    segments: list[_Segment] = []
-    slots: set[str] = set()
-    for raw in _path_parts(path):
-        if raw.startswith("{") and raw.endswith("}"):
-            slot = raw[1:-1]
-            if not slot.isidentifier():
-                raise WiringError(f"path {path!r}: slot {raw!r} is not a valid identifier")
-            if slot in slots:
-                raise WiringError(f"path {path!r}: duplicate slot {raw!r}")
-            slots.add(slot)
-            segments.append((True, slot))
-        elif raw.startswith("{") and "}:" in raw:
-            raise WiringError(
-                f"path {path!r}: segment {raw!r} carries an action suffix, which only the "
-                f"last segment of an Endpoint path may (`/things/{{thing_id}}:convert`)",
-            )
-        elif "{" in raw or "}" in raw:
-            raise WiringError(f"path {path!r}: malformed segment {raw!r}")
-        else:
-            segments.append((False, raw))
-    return segments
-
-
-def _split_action(path: str) -> tuple[str, str]:
-    """An Endpoint path ending in a custom-method suffix, ``/things/{thing_id}:convert``, as
-    ``("/things/{thing_id}", ":convert")``; any other path as ``(path, "")``. The suffix
-    follows the last-segment slot (the AIP-136 custom-method shape) and is restricted to
-    RFC 3986 unreserved characters, so it can never smuggle in a ``/`` or another slot. A
-    wholly literal last segment (``/things:batchGet``) needs no split: it is matched as
-    written."""
-    head, _, last = path.rpartition("/")
-    if not last.startswith("{"):
-        return path, ""
-    slot, separator, verb = last.partition("}:")
-    if not separator:
-        return path, ""
-    if not verb or not verb.isascii() or not all(c.isalnum() or c in "-._~" for c in verb):
-        raise WiringError(
-            f"path {path!r}: action {verb!r} must be a non-empty run of letters, digits, "
-            f"'-', '.', '_' or '~'",
-        )
-    return f"{head}/{slot}}}", f":{verb}"
-
-
-def _literal_segments(path: str) -> list[_Segment]:
-    """Split ``path`` into purely literal segments — unlike :func:`_parse_template`, a
-    ``{...}``-shaped component is never a slot. For routes whose path components come
-    from data (a filesystem path under ``_include_assets``), not a developer-authored
-    template: a file or directory literally named ``{locale}`` must never become a
-    route parameter."""
-    return [(False, raw) for raw in _path_parts(path)]
-
-
-def _template_str(segments: list[_Segment]) -> str:
-    return "/".join(f"{{{value}}}" if is_param else value for is_param, value in segments)
-
-
 def _route_segments(
     cls: type,
     name: str,
-    template: list[_Segment],
+    template: list[Segment],
     path_type: type[Struct] | None,
     *,
     is_item: bool,
-) -> list[_Segment]:
+) -> list[Segment]:
     """Combine the mount template with a handler's path Struct. An item route appends
     exactly one segment, the path field the template doesn't name (the item id)."""
     slots = [value for is_param, value in template if is_param]
@@ -1546,54 +1486,12 @@ def _route_segments(
     # Bind by encode_name so renamed Structs (e.g. CamelStruct) work: the
     # values dict we hand to convert() must use the wire names it expects.
     encode_names = {f.name: f.encode_name for f in struct_fields(path_type)}
-    segments: list[_Segment] = [
+    segments: list[Segment] = [
         (True, encode_names[value]) if is_param else (is_param, value)
         for is_param, value in template
     ]
     segments += ((True, encode_names[field]) for field in trailing)
     return segments
-
-
-@dataclass(frozen=True, slots=True)
-class _Pattern:
-    """A compiled templated route within one (method, segment-count) bucket."""
-
-    statics: tuple[tuple[int, str], ...]  # (position, required value)
-    params: tuple[tuple[int, str], ...]  # (position, slot name)
-    handler: _Handler
-
-    def matches(self, segments: list[str]) -> bool:
-        """Whether this pattern's static segments all equal the request path's."""
-        return all(segments[i] == value for i, value in self.statics)
-
-
-@dataclass(frozen=True, slots=True)
-class _ActionPattern:
-    """A templated route whose last segment is ``{slot}:verb``. Kept in its own table, so an
-    app without action routes never pays for the suffix check."""
-
-    statics: tuple[tuple[int, str], ...]  # (position, required value)
-    params: tuple[tuple[int, str], ...]  # (position, slot name), every slot but the last
-    slot: str  # the last segment's slot, matched with ``suffix`` cut off
-    suffix: str  # ":verb"
-    handler: _Handler
-
-    def matches(self, segments: list[str]) -> bool:
-        """Whether the last segment is a non-empty slot value plus the suffix, and every
-        static segment equals the request path's."""
-        last = segments[-1]
-        return (
-            len(last) > len(self.suffix)
-            and last.endswith(self.suffix)
-            and all(segments[i] == value for i, value in self.statics)
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class _WebSocketPattern:
-    statics: tuple[tuple[int, str], ...]
-    params: tuple[tuple[int, str], ...]
-    handler: _WebSocketHandler
 
 
 def _bind_websocket_sources(cls: type, fn: Callable[..., Any]) -> tuple[Sources, object, object]:
@@ -2138,9 +2036,12 @@ class _RouteRef:
     """A mounted operation, as the reverse registry stores it: the compiled path
     segments (template slots + any trailing id, by wire name) and the path Struct type."""
 
-    segments: tuple[_Segment, ...]
+    segments: tuple[Segment, ...]
     path_type: type[Struct] | None
     action: str = ""  # a ":verb" suffix on the last segment, or ""
+    # The verbs of actions that capture this plain route's URLs (filled at __finalize): a
+    # last slot value ending in one would reverse to a URL the action answers instead.
+    shadowed: Set[str] = frozenset()
 
 
 def _build_url(route_ref: _RouteRef, path: Struct | None) -> str:
@@ -2148,11 +2049,19 @@ def _build_url(route_ref: _RouteRef, path: Struct | None) -> str:
     # path is None only for slot-less routes: both validators reject a None against a
     # route with path slots before we get here, so there is never a param to fill.
     if path is None:
-        return "/".join(value for _, value in segments)
+        return "/".join(value for _, value in segments) + route_ref.action
     data = to_builtins(path)
+    # Slot values are percent-encoded (RFC 3986 pchar stays as is, so ``:`` and ``@`` read
+    # naturally); the server decodes them back before routing.
     url = "/".join(
-        _encode_header_value(data[value]) if is_param else value for is_param, value in segments
+        quote(_encode_header_value(data[value]), safe="-._~!$&'()*+,;=:@") if is_param else value
+        for is_param, value in segments
     )
+    if route_ref.shadowed and url.endswith(tuple(route_ref.shadowed)):
+        raise ValueError(
+            f"{url!r} would route to the action ending it, not to this operation; a slot "
+            f"value beside an action route may not end in {sorted(route_ref.shadowed)}",
+        )
     return url + route_ref.action
 
 
@@ -3719,11 +3628,13 @@ class BaseApp[FactoryT = None](ABC):
     def __init__(self, *, factory: FactoryT | None = None) -> None:
         self.__static: _StaticRoutes = {}
         self.__dynamic: _DynamicRoutes = {}
-        self.__actions: dict[tuple[HTTPMethod, int], list[_ActionPattern]] = {}
         # The first action route swaps in __resolve_action; apps without one pay nothing.
         self.__resolve: _Resolver = self.__resolve_dynamic
+        # Per plain templated route, the ``:verb`` suffixes of the actions that would capture
+        # its URLs; filled in place at __finalize (see _RouteRef.shadowed).
+        self.__shadowed: dict[_Handler, set[str]] = {}
         self.__websocket_static: dict[str, _WebSocketHandler] = {}
-        self.__websocket_dynamic: dict[int, list[_WebSocketPattern]] = {}
+        self.__websocket_dynamic: dict[int, list[Pattern[_WebSocketHandler]]] = {}
         self.__allowed: _AllowedMethods = {}
         self.__allow_cache: dict[str, bytes] = {}
         self.__decoders: dict[type[Struct], Decoder[Struct]] = {}
@@ -3800,51 +3711,50 @@ class BaseApp[FactoryT = None](ABC):
         omits it is flagged at its instantiation site by the type checker.
         """
 
-    def __register_action(
-        self, method: HTTPMethod, segments: list[_Segment], action: str, handler: _Handler
-    ) -> None:
-        statics = tuple((i, value) for i, (is_param, value) in enumerate(segments) if not is_param)
-        params = tuple((i, value) for i, (is_param, value) in enumerate(segments) if is_param)
-        bucket = self.__actions.setdefault((method, len(segments)), [])
-        if any(pattern.statics == statics and pattern.suffix == action for pattern in bucket):
-            raise WiringError(f"{method} {_template_str(segments)}{action} is already registered")
-        bucket.append(_ActionPattern(statics, params[:-1], params[-1][1], action, handler))
-        self.__resolve = self.__resolve_action
-
     def __register(
-        self, method: HTTPMethod, segments: list[_Segment], handler: _Handler, action: str = ""
-    ) -> None:
-        if action:
-            self.__register_action(method, segments, action, handler)
-            return
-        params = tuple((i, value) for i, (is_param, value) in enumerate(segments) if is_param)
-        if not params:
+        self, method: HTTPMethod, segments: list[Segment], handler: _Handler, action: str = ""
+    ) -> set[str]:
+        """Route ``handler``; returns the set of action suffixes that capture its URLs (filled
+        in place at __finalize), for the route's reverse-routing guard."""
+        if not any(is_param for is_param, _ in segments):
             route_path = "/".join(value for _, value in segments)
             if (method, route_path) in self.__static:
                 raise WiringError(f"{method} {route_path} is already registered")
             self.__static[(method, route_path)] = handler
             self.__allowed.setdefault(route_path, []).append(method)
-            return
-
-        statics = tuple((i, value) for i, (is_param, value) in enumerate(segments) if not is_param)
+            return set()
+        pattern = Pattern.compile(segments, handler, action)
         bucket = self.__dynamic.setdefault((method, len(segments)), [])
-        if any(pattern.statics == statics for pattern in bucket):
-            raise WiringError(f"{method} {_template_str(segments)} is already registered")
-        bucket.append(_Pattern(statics, params, handler))
+        insert_pattern(bucket, pattern, f"{method} {template_str(segments, action)}")
+        if action:
+            self.__resolve = self.__resolve_action
+            return set()
+        return self.__shadowed.setdefault(handler, set())
 
-    def __register_websocket(self, segments: list[_Segment], handler: _WebSocketHandler) -> None:
-        params = tuple((i, value) for i, (is_param, value) in enumerate(segments) if is_param)
-        if not params:
+    def __finalize_shadows(self) -> None:
+        """An action whose literal segments are a subset of a plain route's, on the same verb
+        and segment count, captures every URL of that route whose last slot ends in its verb
+        (actions match first). Record those verbs on the plain route for reversal to refuse."""
+        for bucket in self.__dynamic.values():
+            actions = [pattern for pattern in bucket if pattern.suffix]
+            for pattern in bucket if actions else ():
+                if not pattern.suffix:
+                    statics = set(pattern.statics)
+                    self.__shadowed[pattern.handler] |= {
+                        action.suffix for action in actions if set(action.statics) <= statics
+                    }
+
+    def __register_websocket(self, segments: list[Segment], handler: _WebSocketHandler) -> None:
+        if not any(is_param for is_param, _ in segments):
             route_path = "/".join(value for _, value in segments)
             if route_path in self.__websocket_static:
                 raise WiringError(f"WebSocket {route_path} is already registered")
             self.__websocket_static[route_path] = handler
             return
-        statics = tuple((i, value) for i, (is_param, value) in enumerate(segments) if not is_param)
         bucket = self.__websocket_dynamic.setdefault(len(segments), [])
-        if any(pattern.statics == statics for pattern in bucket):
-            raise WiringError(f"WebSocket {_template_str(segments)} is already registered")
-        bucket.append(_WebSocketPattern(statics, params, handler))
+        insert_pattern(
+            bucket, Pattern.compile(segments, handler), f"WebSocket {template_str(segments)}"
+        )
 
     @staticmethod
     def __check_user_source(
@@ -3935,8 +3845,8 @@ class BaseApp[FactoryT = None](ABC):
                 f"{cls.__name__}: no path — declare it on the class, "
                 f"e.g. `class {cls.__name__}(..., path='/...')`.",
             )
-        path, action = _split_action(path) if isinstance(obj, Endpoint) else (path, "")
-        template = _parse_template(path)
+        path, action = split_action(path) if isinstance(obj, Endpoint) else (path, "")
+        template = parse_template(path)
         # The authenticator's declared return type is the policy: `-> TUser | None` accepts
         # anonymous callers, `-> TUser` gates. Never inferred from anything else.
         compiled_auth = _CompiledAuth(auth) if auth is not None else None
@@ -3979,14 +3889,13 @@ class BaseApp[FactoryT = None](ABC):
                 exceptions=self.__exceptions,
                 tail=tail,
             )
-            self.__register(verb.method, segments, handler, action)
+            shadowed = self.__register(verb.method, segments, handler, action)
             record.routes.append((verb.method, handler))
-            self.__reverser.register(
-                fn.__func__, cls.ref, name, _RouteRef(tuple(segments), sources.path, action)
-            )
+            route_ref = _RouteRef(tuple(segments), sources.path, action, shadowed)
+            self.__reverser.register(fn.__func__, cls.ref, name, route_ref)
             self.__operations.append(
                 OperationSpec(
-                    path=_template_str(segments) + action,
+                    path=template_str(segments) + action,
                     method=verb.method.lower(),
                     success_status=status,
                     sources=sources,
@@ -4272,9 +4181,7 @@ class BaseApp[FactoryT = None](ABC):
                     ),
                 )
             )
-        segments = _route_segments(
-            cls, "handle", _parse_template(path), sources.path, is_item=False
-        )
+        segments = _route_segments(cls, "handle", parse_template(path), sources.path, is_item=False)
         route = _WebSocketRoute(
             fn,
             sources=sources,
@@ -4367,7 +4274,7 @@ class BaseApp[FactoryT = None](ABC):
                 tail,
                 self.__exceptions,
             )
-            self.__register("GET", _literal_segments(f"{prefix}/{relative}"), handler)
+            self.__register("GET", literal_segments(f"{prefix}/{relative}"), handler)
             record.routes.append(("GET", handler))
         self.__includes.append(record)
 
@@ -4438,13 +4345,13 @@ class BaseApp[FactoryT = None](ABC):
         if isinstance(favicon, Path):
             body, content_type = favicon_payload(favicon)
             favicon_handler = _static_bytes_handler(body, content_type, tail)
-            self.__register("GET", _parse_template("/favicon.ico"), favicon_handler)
+            self.__register("GET", parse_template("/favicon.ico"), favicon_handler)
             record.routes.append(("GET", favicon_handler))
             favicon_href = "/favicon.ico"
         elif favicon is not None:
             favicon_href = favicon
         doc_handler = _json_doc_handler(self.__openapi, tail)
-        self.__register("GET", _parse_template(openapi_path), doc_handler)
+        self.__register("GET", parse_template(openapi_path), doc_handler)
         record.routes.append(("GET", doc_handler))
         if docs_path is not None:
             page = (
@@ -4453,7 +4360,7 @@ class BaseApp[FactoryT = None](ABC):
                 else _scalar_html(title, openapi_path, favicon_href, scalar_config)
             )
             page_handler = _static_bytes_handler(page.encode(), b"text/html; charset=utf-8", tail)
-            self.__register("GET", _parse_template(docs_path), page_handler)
+            self.__register("GET", parse_template(docs_path), page_handler)
             record.routes.append(("GET", page_handler))
         self.__includes.append(record)
 
@@ -4524,16 +4431,13 @@ class BaseApp[FactoryT = None](ABC):
         verb = cast("HTTPMethod", method)
         for pattern in self.__dynamic.get((verb, len(segments)), ()):
             # Inlines pattern.matches (kept for the cold Allow path): a genexpr per
-            # candidate is measurable here. unquote only when a segment is escaped.
+            # candidate is measurable here. Segments arrive decoded: ASGI's ``path`` is
+            # percent-decoded by the server, so decoding again would corrupt a literal ``%``.
             for i, value in pattern.statics:
                 if segments[i] != value:
                     break
             else:
-                values: dict[str, str] = {}
-                for i, name in pattern.params:
-                    segment = segments[i]
-                    values[name] = unquote(segment) if "%" in segment else segment
-                return pattern.handler, values
+                return pattern.handler, {name: segments[i] for i, name in pattern.params}
         return None
 
     def __resolve_websocket_dynamic(
@@ -4545,39 +4449,32 @@ class BaseApp[FactoryT = None](ABC):
                 if segments[index] != value:
                     break
             else:
-                values: dict[str, str] = {}
-                for index, name in pattern.params:
-                    segment = segments[index]
-                    values[name] = unquote(segment) if "%" in segment else segment
-                return pattern.handler, values
+                return pattern.handler, {name: segments[index] for index, name in pattern.params}
         return None
 
     def __resolve_action(self, method: str, path: str) -> tuple[_Handler, dict[str, str]] | None:
-        """``__resolve_dynamic`` with the action routes tried first, so ``POST
-        /things/x:convert`` reaches the ``:convert`` route rather than a ``POST
-        /things/{thing_id}`` beside it. Installed only once an action route registers."""
+        """``__resolve_dynamic`` plus the ``:verb`` check, over the same buckets (which keep
+        action routes first, see ``insert_pattern``). Installed only once an action route
+        registers, so apps without one never pay for the suffix check."""
         segments = path.split("/")
-        for pattern in self.__actions.get((cast("HTTPMethod", method), len(segments)), ()):
-            if pattern.matches(segments):
-                values: dict[str, str] = {}
-                for i, name in pattern.params:
-                    segment = segments[i]
-                    values[name] = unquote(segment) if "%" in segment else segment
-                stem = segments[-1][: -len(pattern.suffix)]
-                values[pattern.slot] = unquote(stem) if "%" in stem else stem
+        last = segments[-1]
+        for pattern in self.__dynamic.get((cast("HTTPMethod", method), len(segments)), ()):
+            suffix = pattern.suffix
+            if suffix and (len(last) <= len(suffix) or not last.endswith(suffix)):
+                continue
+            for i, value in pattern.statics:
+                if segments[i] != value:
+                    break
+            else:
+                values = {name: segments[i] for i, name in pattern.params}
+                if suffix:  # the last slot binds what precedes the suffix
+                    values[pattern.params[-1][1]] = last[: -len(suffix)]
                 return pattern.handler, values
-        return self.__resolve_dynamic(method, path)
+        return None
 
     def __allowed_methods(self, path: str) -> tuple[HTTPMethod, ...]:
         allowed = list(self.__allowed.get(path, ()))
         segments = path.split("/")
-        for (method, count), actions in self.__actions.items():
-            if (
-                count == len(segments)
-                and method not in allowed
-                and any(pattern.matches(segments) for pattern in actions)
-            ):
-                allowed.append(method)
         for (method, count), bucket in self.__dynamic.items():
             if (
                 count == len(segments)
@@ -4716,13 +4613,7 @@ class BaseApp[FactoryT = None](ABC):
         for bucket in self.__dynamic.values():
             for index, pattern in enumerate(bucket):
                 if pattern.handler is old:
-                    bucket[index] = _Pattern(pattern.statics, pattern.params, new)
-        for actions in self.__actions.values():
-            for index, action in enumerate(actions):
-                if action.handler is old:
-                    actions[index] = _ActionPattern(
-                        action.statics, action.params, action.slot, action.suffix, new
-                    )
+                    bucket[index] = pattern.with_handler(new)
 
     def __cover_route(
         self,
@@ -4797,6 +4688,7 @@ class BaseApp[FactoryT = None](ABC):
     def __finalize(self) -> None:
         """Precompute Allow headers, resolve response-header tails, and build the OpenAPI
         document; runs once after wiring."""
+        self.__finalize_shadows()  # before the tails swap covered routes' handlers
         self.__finalize_tails()
         self.__allow_cache = {
             path: _allow_header(self.__allowed_methods(path)) for path in self.__allowed

@@ -11,7 +11,17 @@ import pytest
 from msgspec import Struct
 
 from demo_app.models import Widget, WidgetIn
-from jero import BaseApp, Endpoint, JSONResponse, Location, Request, Resource
+from jero import (
+    BaseApp,
+    Endpoint,
+    JSONResponse,
+    Link,
+    Location,
+    Request,
+    Resource,
+    WebSocket,
+    WebSocketEndpoint,
+)
 from jero.testing import TestClient
 
 
@@ -52,6 +62,12 @@ class ThingPath(Struct):
     thing_id: str
 
 
+class SpecialThingPath(Struct):
+    """The one slot left once the group is literal."""
+
+    thing_id: str
+
+
 class Seen(Struct):
     """Which route answered, and what it bound."""
 
@@ -84,20 +100,39 @@ class ThingEndpoint(Endpoint, path="/groups/{group_id}/things/{thing_id}"):
         return Seen(route="plain", group_id=path.group_id, thing_id=path.thing_id)
 
     async def put(self, path: ThingPath) -> JSONResponse[Seen]:
-        """Point at the ``:convert`` action for these slots."""
+        """Point at the ``:convert`` action, and link back to this route's ``POST``."""
         return JSONResponse(
             json=Seen(route="plain", group_id=path.group_id, thing_id=path.thing_id),
             location=Location.from_operation(ConvertEndpoint.post, path=path),
+            links=[Link.from_operation(ThingEndpoint.post, rel="self", path=path)],
         )
 
 
+class SpecialThingEndpoint(Endpoint, path="/groups/special/things/{thing_id}"):
+    """A plain route more literal than the generic action, registered after it."""
+
+    async def post(self, path: SpecialThingPath) -> Seen:
+        """Echo the bound slot."""
+        return Seen(route="special", group_id="special", thing_id=path.thing_id)
+
+
+class SpecialConvertEndpoint(Endpoint, path="/groups/special/things/{thing_id}:convert"):
+    """An action more literal than the generic one, registered after it."""
+
+    async def post(self, path: SpecialThingPath) -> Seen:
+        """Echo the bound slot."""
+        return Seen(route="special-convert", group_id="special", thing_id=path.thing_id)
+
+
 class ActionApp(BaseApp):
-    """The two actions plus the plain route."""
+    """Actions plus the plain routes beside them, generic ones registered first."""
 
     async def wire(self) -> None:
         self._include_endpoint(ThingEndpoint())
         self._include_endpoint(ConvertEndpoint())
         self._include_endpoint(ArchiveEndpoint())
+        self._include_endpoint(SpecialThingEndpoint())
+        self._include_endpoint(SpecialConvertEndpoint())
 
 
 @pytest.mark.parametrize(
@@ -114,12 +149,26 @@ class ActionApp(BaseApp):
         pytest.param(
             "/groups/g%20h/things/a%20b:convert", "convert", "g h", "a b", id="escapes-decode"
         ),
+        pytest.param(
+            "/groups/g/things/t%3Aconvert", "convert", "g", "t", id="escaped-colon-decodes-first"
+        ),
+        pytest.param("/groups/g/things/%2541", "plain", "g", "%41", id="decoded-only-once"),
         pytest.param("/groups/g/things/a:b:convert", "convert", "g", "a:b", id="colon-in-id"),
+        pytest.param("/groups/special/things/t", "special", "special", "t", id="literal-wins"),
+        pytest.param(
+            "/groups/special/things/t:convert",
+            "special-convert",
+            "special",
+            "t",
+            id="literal-action-wins",
+        ),
     ],
 )
 def test_action_suffix_picks_the_route(url: str, route: str, group_id: str, thing_id: str) -> None:
     """An action route wins over the plain slot route beside it; anything that is not one of
-    its suffixes, or would leave the slot empty, falls through to the plain route."""
+    its suffixes, or would leave the slot empty, falls through to the plain route. Among
+    routes of one kind, more literal segments win whatever the registration order. The path
+    is decoded once, by the server (here ``TestClient``), before routing."""
     with TestClient(ActionApp()) as client:
         resp = client.post(url)
     assert resp.status_code == 200
@@ -127,10 +176,20 @@ def test_action_suffix_picks_the_route(url: str, route: str, group_id: str, thin
 
 
 def test_action_route_reverse_routes_with_its_suffix() -> None:
-    """``Location.from_operation`` on an action builds the slot value plus the suffix."""
+    """``Location.from_operation`` on an action builds the encoded slot value plus the
+    suffix; the plain route beside it reverses without one."""
     with TestClient(ActionApp()) as client:
-        resp = client.put("/groups/g/things/t")
-    assert resp.headers["location"] == "/groups/g/things/t:convert"
+        resp = client.put("/groups/g/things/a%20b")
+    assert resp.headers["location"] == "/groups/g/things/a%20b:convert"
+    assert resp.headers["link"] == '</groups/g/things/a%20b>; rel="self"'
+
+
+def test_reversing_into_an_action_shadow_fails_loud() -> None:
+    """A plain route's slot value ending in a sibling action's verb would build a URL the
+    action answers, so reversal refuses it rather than linking to the wrong operation."""
+    with TestClient(ActionApp()) as client:
+        resp = client.put("/groups/g/things/t:convert")
+    assert resp.status_code == 500
 
 
 class ConvertOnlyApp(BaseApp):
@@ -217,6 +276,25 @@ class MidPathActionEndpoint(Endpoint, path="/groups/{group_id}:convert/things"):
         return path
 
 
+class ActionWebSocket(WebSocketEndpoint, path="/groups/{group_id}:join"):
+    """A suffix on a WebSocket path."""
+
+    async def handle(self, websocket: WebSocket[str, str]) -> None:
+        """Never reached; wiring fails first."""
+        await websocket.send("joined")
+
+
+class _WebSocketApp(BaseApp):
+    async def wire(self) -> None:
+        self._include_websocket(ActionWebSocket())
+
+
+def test_websocket_action_suffix_fails_wiring() -> None:
+    """Only an Endpoint takes a ``:verb``; the error says so rather than blaming the segment."""
+    with pytest.raises(RuntimeError, match=r"only an Endpoint may.*WebSocket paths take none"):
+        TestClient(_WebSocketApp())
+
+
 class ActionResource(Resource, path="/groups/{group_id}:convert"):
     """A suffix on a Resource, whose item routes append a segment after it."""
 
@@ -255,7 +333,7 @@ class _RoutableApp(BaseApp):
         ),
         pytest.param(
             (ActionResource(),),
-            r"only the last segment of an Endpoint path may",
+            r"only an Endpoint may, and only on its last segment",
             id="resource",
         ),
     ],
