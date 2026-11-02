@@ -1329,11 +1329,42 @@ class CookieBasicApp(BaseApp):
         self._include_endpoint(EndpointA(), auth=CookieBasic())
 
 
-def test_http_scheme_on_an_authenticator_without_headers_is_a_wiring_error() -> None:
-    """Bearer/basic name the Authorization header; advertising one for a cookie read
-    would send generated clients the wrong credential, so it fails loud at startup."""
-    with pytest.raises(RuntimeError, match="CookieBasic: openapi_security is HTTP basic"):
-        TestClient(CookieBasicApp())
+class ApiKeyHeaders(Struct):
+    """A credential header that is not Authorization."""
+
+    x_api_key: str
+
+
+class ApiKeyBearer(BearerAuth):
+    """Advertises HTTP bearer (the Authorization header) while reading X-Api-Key."""
+
+    def authenticate(self, headers: ApiKeyHeaders) -> Caller:
+        """Resolve a caller."""
+        return Caller(id=headers.x_api_key)
+
+
+class ApiKeyBearerApp(BaseApp):
+    """Mounts the header-mismatched authenticator."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(EndpointA(), auth=ApiKeyBearer())
+
+
+@pytest.mark.parametrize(
+    ("app_type", "match"),
+    [
+        (CookieBasicApp, "CookieBasic: openapi_security is HTTP basic"),
+        (ApiKeyBearerApp, "ApiKeyBearer: openapi_security is HTTP bearer"),
+    ],
+    ids=["cookies-only", "other-header"],
+)
+def test_http_scheme_without_an_authorization_header_is_a_wiring_error(
+    app_type: type[BaseApp], match: str
+) -> None:
+    """Bearer/basic name the Authorization header; advertising one for a cookie or another
+    header would send generated clients the wrong credential, so it fails loud at startup."""
+    with pytest.raises(RuntimeError, match=match):
+        TestClient(app_type())
 
 
 class CsvEndpoint(
