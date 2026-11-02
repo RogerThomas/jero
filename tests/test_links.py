@@ -7,7 +7,7 @@ import pytest
 
 from demo_app.models import Camel, WidgetPath
 from jero import BaseApp, Endpoint, JSONResponse, Link, Location, Resource, WiringError
-from jero.links import PathTarget, URLTarget
+from jero._links import PathTarget, URLTarget
 from jero.testing import TestClient
 
 

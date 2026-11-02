@@ -3,7 +3,7 @@
 These are the data types produced once at wiring time — the per-handler source model
 (``Sources``), the compiled form spec, the class/operation metadata, and the captured
 ``OperationSpec`` handed to the OpenAPI builder. They live in their own leaf module
-(depending only on msgspec and :mod:`jero.openapi`) so that both :mod:`jero.core` (which
+(depending only on msgspec and :mod:`jero._openapi`) so that both :mod:`jero._core` (which
 builds them on the request path) and :mod:`jero._openapi_wiring` (which reads them to
 build the spec) can import them without importing each other. Keeping the contracts
 below both modules is what makes the dependency graph acyclic.
@@ -28,8 +28,8 @@ from typing import (
 from msgspec import Struct
 from msgspec.json import Decoder
 
-from jero.errors import BaseHTTPError
-from jero.openapi import ResponseSpec, SecurityScheme, Tag
+from jero._errors import BaseHTTPError
+from jero._openapi import ResponseSpec, SecurityScheme, Tag
 
 if sys.version_info >= (3, 14):
     from annotationlib import Format
@@ -63,7 +63,7 @@ type AuthMode = Literal["required", "optional"] | None
 class WiringError(TypeError):
     """A router does not meet the framework contract. Raised at startup.
 
-    Lives here, on the shared wiring leaf, so both :mod:`jero.core` and the sender-free
+    Lives here, on the shared wiring leaf, so both :mod:`jero._core` and the sender-free
     :mod:`jero._exception_handlers` (which validates handlers at wiring time) can raise it
     without importing each other.
     """

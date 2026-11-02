@@ -3,7 +3,7 @@
 Everything here runs once, at wiring (or is a pure per-request header check): reading a
 file with its content type resolved by suffix, the precomputed gzip variant and strong
 ``ETag``, the directory walk, and the ``Accept-Encoding`` / ``If-None-Match`` checks the
-asset handler consults. The handler itself lives in :mod:`jero.core` beside the route
+asset handler consults. The handler itself lives in :mod:`jero._core` beside the route
 tail it depends on; this is the sender-free half, split out to keep ``core`` under its
 size budget (mirroring the :mod:`jero._exception_handlers` split).
 """

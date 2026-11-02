@@ -19,7 +19,9 @@ from msgspec import Struct
 
 from jero._wiring_types import WiringError, signature_parameters, type_hints
 
-logger = logging.getLogger(__name__)
+# Named explicitly, not from __name__: "jero.background" is the user-facing logger name
+# (see the deployment guide), independent of this module's file name.
+logger = logging.getLogger("jero.background")
 
 
 def _infer_item_type(handler: Callable[..., Awaitable[None]]) -> type[Struct]:

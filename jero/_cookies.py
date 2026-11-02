@@ -2,7 +2,7 @@
 
 The response vocabulary (``SetCookie``, ``encode_set_cookie``) and the request-side
 parser (``parse_cookie_header``) live together in this leaf module, mirroring
-:mod:`jero.headers`'s split between the opaque request bag and its own leaf module.
+:mod:`jero._headers`'s split between the opaque request bag and its own leaf module.
 Neither ``core`` nor any Struct crosses through here — ``SetCookie`` is a plain
 dataclass, never a wire model.
 """

@@ -10,7 +10,7 @@ This module is the sender-free half — the public :class:`Request` view and :cl
 policy, plus the wiring-time compilation (:class:`CompiledMiddleware`,
 :class:`CompiledCORS`, the header scanners). The dispatch half — the hook runners that
 send an intercept's response, the header-tail seam in the senders, the observe capture —
-lives in :mod:`jero.core` alongside the response senders it depends on (mirroring the
+lives in :mod:`jero._core` alongside the response senders it depends on (mirroring the
 :mod:`jero._exception_handlers` split).
 """
 
@@ -24,8 +24,8 @@ from urllib.parse import urlsplit
 from msgspec import Struct, ValidationError, convert
 from msgspec.structs import fields as struct_fields
 
+from jero._errors import ErrorReason, MalformedRequestError
 from jero._wiring_types import WiringError, signature_parameters, type_hints
-from jero.errors import ErrorReason, MalformedRequestError
 
 logger = logging.getLogger("jero")
 
@@ -396,7 +396,7 @@ class HeadersHook:
 class InterceptHook:
     """A compiled ``intercept``: scan the declared headers, build the request view, and
     call the hook (sync or async). ``None`` falls through to routing; a response answers
-    the request. The response *sender* is attached in :mod:`jero.core`."""
+    the request. The response *sender* is attached in :mod:`jero._core`."""
 
     __slots__ = ("_fn", "_is_async", "_scanner", "owner", "return_annotation")
 

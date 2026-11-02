@@ -30,9 +30,9 @@ from urllib.parse import unquote, urlencode
 from msgspec.json import Decoder
 from typing_extensions import TypeForm
 
-from jero.codecs import msgspec_decoder, msgspec_encoder
-from jero.core import BaseApp, BaseFactory
-from jero.websockets import _payload_kind
+from jero._codecs import msgspec_decoder, msgspec_encoder
+from jero._core import BaseApp, BaseFactory
+from jero._websockets import _payload_kind
 
 type _DataValue = str | bytes
 type _DataValues = _DataValue | list[_DataValue]

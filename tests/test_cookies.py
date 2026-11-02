@@ -22,11 +22,11 @@ from jero import (
     ExceptionResponse,
     JSONResponse,
     NoContent,
+    SetCookie,
     StreamingResponse,
     WebSocket,
     WebSocketEndpoint,
 )
-from jero.cookies import SetCookie
 from jero.testing import TestClient, WebSocketClosedError, WebSocketUpgradeError
 
 type _Message = MutableMapping[str, Any]

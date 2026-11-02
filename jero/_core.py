@@ -103,11 +103,39 @@ from jero._assets import (
     favicon_payload,
     if_none_match_hit,
 )
+from jero._background import BackgroundTasks
+from jero._codecs import msgspec_encoder
+from jero._content_stream import ClientDisconnectedError, ContentStream
+from jero._cookies import SetCookie, encode_set_cookie, parse_cookie_header
+from jero._errors import (
+    AuthenticationRequiredError,
+    BaseHTTPError,
+    ErrorBodyAdapter,
+    ErrorReason,
+    HTTPError,
+    InternalServerError,
+    MalformedRequestError,
+    MethodNotAllowedError,
+    NotFoundError,
+    UnsupportedMediaTypeError,
+    ValidationFailedError,
+)
 from jero._exception_handlers import (
     CompiledExceptionHandler,
     ExceptionHandler,
     ExceptionResponse,
     invoke_exception_handler,
+)
+from jero._forms import FilePart, FormPart
+from jero._headers import RawHeaders
+from jero._links import (
+    Link,
+    Location,
+    OperationTarget,
+    PathTarget,
+    Target,
+    URLTarget,
+    validate_path_params,
 )
 from jero._middleware import (
     CORS,
@@ -119,6 +147,16 @@ from jero._middleware import (
     ObserveHook,
     requested_method,
 )
+from jero._multipart import MultipartError, MultipartParser, parse_options_header
+from jero._openapi import (
+    Info,
+    OpenAPINameConflictError,
+    OperationInput,
+    ScalarConfig,
+    SecurityScheme,
+    Tag,
+    build_openapi,
+)
 from jero._openapi_wiring import operation_input
 from jero._routing import (
     Pattern,
@@ -129,6 +167,14 @@ from jero._routing import (
     split_action,
     template_str,
 )
+from jero._streaming import (
+    NDJSONStreamingResponse,
+    ServerSentEvent,
+    SSEResponse,
+    StreamingResponse,
+    encode_sse,
+)
+from jero._websockets import CompiledWebSocket, WebSocket, compile_websocket
 from jero._wiring_types import (
     AuthMode,
     EndpointMeta,
@@ -150,55 +196,9 @@ from jero._wiring_types import (
     union_members,
     unwrap_alias,
 )
-from jero.background import BackgroundTasks
-from jero.codecs import msgspec_encoder
-from jero.content_stream import ClientDisconnectedError, ContentStream
-from jero.cookies import SetCookie, encode_set_cookie, parse_cookie_header
-from jero.errors import (
-    AuthenticationRequiredError,
-    BaseHTTPError,
-    ErrorBodyAdapter,
-    ErrorReason,
-    HTTPError,
-    InternalServerError,
-    MalformedRequestError,
-    MethodNotAllowedError,
-    NotFoundError,
-    UnsupportedMediaTypeError,
-    ValidationFailedError,
-)
-from jero.forms import FilePart, FormPart
-from jero.headers import RawHeaders
-from jero.links import (
-    Link,
-    Location,
-    OperationTarget,
-    PathTarget,
-    Target,
-    URLTarget,
-    validate_path_params,
-)
-from jero.multipart import MultipartError, MultipartParser, parse_options_header
-from jero.openapi import (
-    Info,
-    OpenAPINameConflictError,
-    OperationInput,
-    ScalarConfig,
-    SecurityScheme,
-    Tag,
-    build_openapi,
-)
-from jero.streaming import (
-    NDJSONStreamingResponse,
-    ServerSentEvent,
-    SSEResponse,
-    StreamingResponse,
-    encode_sse,
-)
-from jero.websockets import CompiledWebSocket, WebSocket, compile_websocket
 
-# The package-level logger (not ``jero.core``): ``core`` is an internal module name, while
-# ``jero`` is the stable, user-facing namespace to configure. (``jero.background`` keeps its
+# The package-level logger (not ``jero._core``): ``core`` is an internal module name, while
+# ``jero`` is the stable, user-facing namespace to configure. (``jero._background`` keeps its
 # own child name, since background tasks are a user-facing subsystem.)
 logger = logging.getLogger("jero")
 
@@ -282,7 +282,7 @@ class BaseResponse[H: Struct | None = None]:
     (:class:`NoContent` 204, :class:`Created` 201, :class:`Accepted` 202).
 
     ``location`` emits a ``Location`` header and ``links`` a single ``Link`` header,
-    each reverse-routed to a mounted operation (see :mod:`jero.links`). The URLs are
+    each reverse-routed to a mounted operation (see :mod:`jero._links`). The URLs are
     relative unless ``JERO_BASE_URL`` / ``JERO_TRUST_FORWARDED`` is set in the environment,
     which makes them absolute (a static origin, or one rebuilt from ``X-Forwarded-*``).
     """

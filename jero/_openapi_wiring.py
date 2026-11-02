@@ -2,7 +2,7 @@
 
 This is the layer that knows *both* sides: jero's resolved wiring contracts (``Sources``,
 ``FormSpec``, ``OperationSpec``, the return-kind classification) and
-:mod:`jero.openapi`'s plain input records. It is split out of :mod:`jero.core` — that file
+:mod:`jero._openapi`'s plain input records. It is split out of :mod:`jero._core` — that file
 is large, and this translation is the one place the two vocabularies meet. It imports the
 contracts from the :mod:`jero._wiring_types` leaf rather than from ``core``, so the
 dependency graph stays acyclic (``core`` imports *this* module, never the reverse).
@@ -16,20 +16,7 @@ from typing import Any, Generic, Literal, TypeVar, Union, cast, get_args, get_or
 from msgspec import Struct, defstruct
 from msgspec.structs import fields as struct_fields
 
-from jero._wiring_types import (
-    FormSpec,
-    OperationMeta,
-    OperationSpec,
-    ReturnKind,
-    Sources,
-    WiringError,
-    is_struct_type,
-    param_bindings,
-    strip_list,
-    substitute,
-    unwrap_alias,
-)
-from jero.errors import (
+from jero._errors import (
     AuthenticationRequiredError,
     BaseHTTPError,
     ErrorBodyAdapter,
@@ -42,7 +29,7 @@ from jero.errors import (
     UnsupportedMediaTypeError,
     ValidationFailedError,
 )
-from jero.openapi import (
+from jero._openapi import (
     BodySpec,
     FormFieldSpec,
     OperationInput,
@@ -51,6 +38,19 @@ from jero.openapi import (
     ResponseEntry,
     ResponseSpec,
     Tag,
+)
+from jero._wiring_types import (
+    FormSpec,
+    OperationMeta,
+    OperationSpec,
+    ReturnKind,
+    Sources,
+    WiringError,
+    is_struct_type,
+    param_bindings,
+    strip_list,
+    substitute,
+    unwrap_alias,
 )
 
 # Human-readable text for the success response of a given status (OpenAPI requires a

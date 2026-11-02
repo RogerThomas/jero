@@ -26,7 +26,7 @@ from jero import (
     TooManyRequestsError,
     ValidationFailedError,
 )
-from jero.core import ExceptionHandler
+from jero._core import ExceptionHandler
 from jero.testing import TestClient
 
 

@@ -11,8 +11,8 @@ from msgspec import DecodeError, Struct, ValidationError
 from msgspec.json import Decoder
 from typing_extensions import TypeForm
 
+from jero._codecs import msgspec_encoder
 from jero._wiring_types import WiringError, is_struct_type, require_string_tags, union_members
-from jero.codecs import msgspec_encoder
 
 type _Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
 type _Send = Callable[[dict[str, Any]], Awaitable[None]]

@@ -27,7 +27,7 @@ being aggressively opinionated rather than flexible.
 3. **Strict, expressive typing — not optional.** Everything is fully, statically
    typed under pyright-strict. If you don't like typing, this is not your
    framework. Types are not decoration — they *are* the contract (the binding,
-   the `WiringError`s) and the source of the OpenAPI spec (`jero/openapi.py`).
+   the `WiringError`s) and the source of the OpenAPI spec (`jero/_openapi.py`).
    Every design decision must produce precise static types; prefer rich,
    self-documenting generics (`-> NDJSONStreamingResponse[Movie]`,
    `BaseApp[Factory]`) over loose annotations. A feature that can't be expressed
@@ -154,8 +154,8 @@ Always follow the following style guide:
   forwarded headers untrusted is a host-injection footgun). The two are mutually exclusive
   (both set → `WiringError`); operation / ref / `from_path` links pick up the base while
   `from_url` links pass through verbatim. jero reads `os.environ` only here. The
-  `Location`/`Link` types live in `jero/links.py`; reversal resolves against a wiring-time
-  registry (`_Reverser`) in `core`. The `*Target` types are un-underscored
+  `Location`/`Link` types live in `jero/_links.py`; reversal resolves against a wiring-time
+  registry (`_Reverser`) in `_core`. The `*Target` types are un-underscored
   package-internal boundary-crossers (like `encode_sse`), not public API.
 - Handler args bind **by name**, each a msgspec Struct (except `user`, which is whatever
   the authenticator returns): `json`, `content` (raw
@@ -192,7 +192,7 @@ Always follow the following style guide:
 - **Response headers & status**: the wrappers carry a typed `headers` Struct (the
   header *type* is a parameter `H`; field names inverse-mangle `x_trace_id` →
   `x-trace-id`, scalars stringify, Structs JSON-encode, None fields omit), `cookies:
-  Sequence[SetCookie]` (`jero/cookies.py`; secure-by-default `Set-Cookie` — `Path=/;
+  Sequence[SetCookie]` (`jero/_cookies.py`; secure-by-default `Set-Cookie` — `Path=/;
   Secure; HttpOnly; SameSite=Lax` — validated at construction, `SetCookie.expire(name)`
   for deletion, two entries sharing a name is a 500), a
   `raw_headers` escape hatch (exotic names/casing now that cookies has its own typed
@@ -390,11 +390,16 @@ Always follow the following style guide:
 
 ## Layout
 
-- `jero/core.py` — the framework (routing, binding, response senders, lifecycle).
+- **The public surface is `jero` and `jero.testing`; every other module is `_`-prefixed**
+  (PEP 8's internal-module convention), so a file name says whether users may import it.
+  Public names are re-exported from `jero/__init__.py`; never document an import from a
+  `_` module. The `jero.background` logger keeps its user-facing name (set explicitly in
+  `_background.py`, not from `__name__`).
+- `jero/_core.py` — the framework (routing, binding, response senders, lifecycle).
   `jero/_middleware.py` — the sender-free middleware half (public `Request` /
   `HTTPMethod` / `NoHeaders` / `CORS`, `CompiledMiddleware` / `CompiledCORS`, the
   header scanners); the dispatch half (hook runners, the per-route header-tail seam in
-  the senders, `_CoveredRoute`, observe capture) lives in `core`, mirroring the
+  the senders, `_CoveredRoute`, observe capture) lives in `_core`, mirroring the
   `_exception_handlers` split.
   `jero/_wiring_types.py` — the resolved wiring contracts (`Sources`, `FormSpec`,
   `OperationSpec`, the `*Meta` types, `is_struct_type`/`strip_list`/`union_members`/
@@ -402,41 +407,41 @@ Always follow the following style guide:
   callable's signature: names never evaluate annotations, and an annotation that can't resolve
   at runtime (a `TYPE_CHECKING`-only import) is a `WiringError` naming the method, not a bare
   `NameError`), all msgspec Structs; a leaf depending
-  only on msgspec + `jero.openapi`. `jero/openapi.py` — the dependency-free OpenAPI 3.1
+  only on msgspec + `jero._openapi`. `jero/_openapi.py` — the dependency-free OpenAPI 3.1
   builder (`SecurityScheme`, `ResponseSpec`, `ModelMeta`, `build_openapi`).
-  `jero/structs.py` — `Struct`, jero's drop-in `msgspec.Struct` base whose `meta=` class
+  `jero/_structs.py` — `Struct`, jero's drop-in `msgspec.Struct` base whose `meta=` class
   keyword (handled by a `msgspec.StructMeta` subclass) attaches a `ModelMeta` as
   `__model_meta__`; the builder reads it to set a model's schema description. `jero/_openapi_wiring.py` —
   the translation layer (`operation_input`) turning an `OperationSpec` into the builder's
-  inputs. The graph is a strict DAG: `core` and `_openapi_wiring` both import the contracts
-  from `_wiring_types`; `core` imports `_openapi_wiring`; nothing imports `core` back (the
+  inputs. The graph is a strict DAG: `_core` and `_openapi_wiring` both import the contracts
+  from `_wiring_types`; `_core` imports `_openapi_wiring`; nothing imports `_core` back (the
   shared contracts sit *below* both, which is what keeps it acyclic — no lazy imports).
   `jero/testing.py` — sync in-process `TestClient` + `FactoryHarness`.
-  `jero/forms.py` / `jero/streaming.py` — multipart parts and streaming response
-  types. `jero/background.py` — the in-process `BackgroundTasks` queue.
-  `jero/websockets.py` — compiled typed WebSocket framing plus the in-process
+  `jero/_forms.py` / `jero/_streaming.py` — multipart parts and streaming response
+  types. `jero/_background.py` — the in-process `BackgroundTasks` queue.
+  `jero/_websockets.py` — compiled typed WebSocket framing plus the in-process
   `Channel[T]` fan-out primitive.
-  `jero/links.py` — `Location` / `Link` and their reverse-routing targets (a leaf module
-  `core` and `streaming` both import). `jero/headers.py` — the `RawHeaders` opaque bag.
-  `jero/content_stream.py` — `ContentStream` and `ClientDisconnectedError` (a leaf
-  module `core` imports).
+  `jero/_links.py` — `Location` / `Link` and their reverse-routing targets (a leaf module
+  `_core` and `_streaming` both import). `jero/_headers.py` — the `RawHeaders` opaque bag.
+  `jero/_content_stream.py` — `ContentStream` and `ClientDisconnectedError` (a leaf
+  module `_core` imports).
   `jero/_routing.py` — path templates (`parse_template`, `split_action`, `template_str`) and
   the bucket `Pattern` with its ordering (`insert_pattern`); the inlined resolvers stay in
-  `core`. A leaf depending only on `_wiring_types`, split out for the same module cap.
+  `_core`. A leaf depending only on `_wiring_types`, split out for the same module cap.
   `jero/_assets.py` — the sender-free half of `_include_assets` and the OpenAPI favicon
   (wiring-time file reads, content types, gzip variants, strong `ETag`s, the
-  `Accept-Encoding` / `If-None-Match` checks); the asset handler stays in `core`. A leaf
-  depending only on `_wiring_types`, split out to keep `core` under pylint's 5000-line
+  `Accept-Encoding` / `If-None-Match` checks); the asset handler stays in `_core`. A leaf
+  depending only on `_wiring_types`, split out to keep `_core` under pylint's 5000-line
   module cap.
-  `jero/cookies.py` — `SetCookie` (the response-side vocabulary, secure-by-default
+  `jero/_cookies.py` — `SetCookie` (the response-side vocabulary, secure-by-default
   validation, `expire()`), `encode_set_cookie`, and the request-side `parse_cookie_header`
-  — a leaf module mirroring `headers.py`'s split, imported by `core`, `streaming`, and
+  — a leaf module mirroring `_headers.py`'s split, imported by `_core`, `_streaming`, and
   `_exception_handlers` (all three response-wrapper families carry `cookies=`).
-  `jero/errors.py` — typed Problem Details Structs, `HTTPError` foundations, and the
+  `jero/_errors.py` — typed Problem Details Structs, `HTTPError` foundations, and the
   framework's fixed error types.
-  `jero/codecs.py` — the
-  shared reusable `msgspec_encoder` / `msgspec_decoder` (imported by `core`,
-  `streaming`, `testing`; SSE wire-formatting lives in `streaming.py` as the
+  `jero/_codecs.py` — the
+  shared reusable `msgspec_encoder` / `msgspec_decoder` (imported by `_core`,
+  `_streaming`, `testing`; SSE wire-formatting lives in `_streaming.py` as the
   un-underscored boundary-crosser `encode_sse`).
 - Runtime deps are intentionally sparse: `msgspec` for typed validation/JSON,
   `python-multipart` for buffered `multipart/form-data` parsing, and
@@ -551,7 +556,7 @@ Always follow the following style guide:
   including generics like `NDJSONStreamingResponse[Movie]`), with no runtime guessing.
   This is the reason every endpoint must be statically typed end to end — any feature
   that escapes static typing won't appear in the spec, so don't add one. The builder
-  (`jero/openapi.py`) takes resolved operations and never imports `core`; the translation
+  (`jero/_openapi.py`) takes resolved operations and never imports `_core`; the translation
   lives in `jero/_openapi_wiring.py` (`operation_input`). Keep that boundary. Forms can't
   be schema'd whole — schema-ing a form model yields the jero-side envelope
   (`FormPart.data`/`content_type`/`headers`/`raw_headers`, `bytes` as base64, `RawHeaders`
