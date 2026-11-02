@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0](https://github.com/RogerThomas/jero/compare/0.1.13...0.2.0) (2026-11-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* BearerAuth/BasicAuth no longer inherit the Auth protocol ([#89](https://github.com/RogerThomas/jero/issues/89))
+
+### Bug Fixes
+
+* BearerAuth/BasicAuth no longer inherit the Auth protocol ([#89](https://github.com/RogerThomas/jero/issues/89)) ([4684996](https://github.com/RogerThomas/jero/commit/4684996f0b482d3fae716fce04a7ee85e9009633))
+
 ## [0.1.13](https://github.com/RogerThomas/jero/compare/0.1.12...0.1.13) (2026-11-02)
 
 
