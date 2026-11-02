@@ -3320,14 +3320,16 @@ class _RouteMiddleware:
     observes: tuple[ObserveHook, ...]
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class _CoveredRoute:
     """A route at least one middleware hook covers, wrapping the compiled ``_Route``.
 
     Swapped into the routing tables at ``__finalize`` so uncovered routes pay nothing —
-    not even a branch. Per covered request: stamp ``received_at`` (hooks read it off the
-    scope), run the scoped intercepts for the wire method (first response wins, before
-    auth and binding), dispatch, then let the observe hooks see the captured outcome."""
+    not even a branch. Hashed by identity (``eq=False``), like the ``_Route`` it stands in
+    for, since the per-route CORS map is keyed by handler. Per covered request: stamp
+    ``received_at`` (hooks read it off the scope), run the scoped intercepts for the wire
+    method (first response wins, before auth and binding), dispatch, then let the observe
+    hooks see the captured outcome."""
 
     _route: _Handler
     _mw: _RouteMiddleware
