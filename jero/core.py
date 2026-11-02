@@ -49,7 +49,6 @@ import html
 import inspect
 import logging
 import os
-import sys
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import (
@@ -88,7 +87,6 @@ from typing import (
     cast,
     get_args,
     get_origin,
-    get_type_hints,
     is_protocol,
     overload,
 )
@@ -146,7 +144,9 @@ from jero._wiring_types import (
     WiringError,
     is_struct_type,
     require_string_tags,
+    signature_parameters,
     strip_list,
+    type_hints,
     union_members,
     unwrap_alias,
 )
@@ -196,12 +196,6 @@ from jero.streaming import (
     encode_sse,
 )
 from jero.websockets import CompiledWebSocket, WebSocket, compile_websocket
-
-# annotationlib is 3.14+. On 3.14 inspect.signature evaluates annotations by default
-# (PEP 649), so _instantiate_factory asks for the FORWARDREF format instead. Pre-3.14
-# signature never evaluates annotations, so the format argument isn't needed there.
-if sys.version_info >= (3, 14):
-    from annotationlib import Format
 
 # The package-level logger (not ``jero.core``): ``core`` is an internal module name, while
 # ``jero`` is the stable, user-facing namespace to configure. (``jero.background`` keeps its
@@ -1373,7 +1367,7 @@ def _bind_sources(  # noqa: C901
 ) -> Sources:
     """Resolve and validate the Struct types for a handler's arguments."""
     http_method = verb.method
-    hints = get_type_hints(fn)
+    hints = type_hints(f"{cls.__name__}.{name}", fn)
     types: dict[str, type[Struct]] = {}
     json_type: type[Struct] | UnionType | None = None
     form: FormSpec | None = None
@@ -1383,7 +1377,7 @@ def _bind_sources(  # noqa: C901
     user_type: tuple[object, ...] | None = None
     user_optional = False
 
-    for param in inspect.signature(fn).parameters.values():
+    for param in signature_parameters(fn):
         if param.name not in _SOURCES:
             raise WiringError(
                 f"{cls.__name__}.{name}: unsupported argument {param.name!r}; "
@@ -1552,8 +1546,8 @@ def _route_segments(
 
 def _bind_websocket_sources(cls: type, fn: Callable[..., Any]) -> tuple[Sources, object, object]:
     """Compile a WebSocket handler's framing and handshake-only sources."""
-    hints = get_type_hints(fn)
-    params = list(inspect.signature(fn).parameters.values())
+    hints = type_hints(f"{cls.__name__}.handle", fn)
+    params = signature_parameters(fn)
     if not params or params[0].name != "websocket":
         raise WiringError(f"{cls.__name__}.handle must take 'websocket' as its first argument")
     websocket_hint = hints.get("websocket")
@@ -1632,7 +1626,7 @@ class _CompiledAuth:
         if not callable(fn):
             raise WiringError(f"{self.owner} must define an 'authenticate' method")
 
-        params = list(inspect.signature(fn).parameters.values())
+        params = signature_parameters(fn)
         names = [param.name for param in params]
         valid = (
             bool(names)
@@ -1644,7 +1638,7 @@ class _CompiledAuth:
                 f"{self.owner}.authenticate must take 'headers', 'cookies', or both — "
                 f"got {', '.join(names) if names else 'no arguments'}",
             )
-        hints = get_type_hints(fn)
+        hints = type_hints(f"{self.owner}.authenticate", fn)
         self.headers_type = (
             _struct_annotation(type(auth), "authenticate", "headers", hints.get("headers"))
             if "headers" in names
@@ -3676,13 +3670,9 @@ def _instantiate_factory[F](factory_cls: type[F], stack: ExitStack, astack: Asyn
     identically everywhere — given the stacks it opens resources on.
     """
     stacks = {"es": stack, "aes": astack}
-    # We only need parameter names, so don't evaluate the __init__ annotations (they may
-    # reference TYPE_CHECKING-only imports). On 3.14 that means asking signature for the
-    # FORWARDREF format; pre-3.14 signature never evaluates annotations to begin with.
-    if sys.version_info >= (3, 14):
-        params = inspect.signature(factory_cls, annotation_format=Format.FORWARDREF).parameters
-    else:
-        params = inspect.signature(factory_cls).parameters
+    # Only parameter names are needed, so the __init__ annotations (which may reference
+    # TYPE_CHECKING-only imports) are never evaluated.
+    params = {param.name for param in signature_parameters(factory_cls)}
     return factory_cls(**{name: s for name, s in stacks.items() if name in params})
 
 

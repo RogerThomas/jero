@@ -18,13 +18,13 @@ import inspect
 import logging
 from collections.abc import Callable, MutableMapping, Sequence
 from types import NoneType
-from typing import Any, ClassVar, Literal, cast, get_args, get_origin, get_type_hints
+from typing import Any, ClassVar, Literal, cast, get_args, get_origin
 from urllib.parse import urlsplit
 
 from msgspec import Struct, ValidationError, convert
 from msgspec.structs import fields as struct_fields
 
-from jero._wiring_types import WiringError
+from jero._wiring_types import WiringError, signature_parameters, type_hints
 from jero.errors import ErrorReason, MalformedRequestError
 
 logger = logging.getLogger("jero")
@@ -326,12 +326,12 @@ def _request_headers_type(owner: str, hook: str, ann: object) -> type[Struct]:
 
 def _hook_request_param(owner: str, hook: str, fn: Callable[..., object]) -> HeaderScanner:
     """Validate a hook's leading ``request`` parameter and compile its header scanner."""
-    params = list(inspect.signature(fn).parameters.values())
+    params = signature_parameters(fn)
     if not params or params[0].name != "request":
         raise WiringError(
             f"{owner}.{hook} must take 'request' as its first argument",
         )
-    hints = get_type_hints(fn)
+    hints = type_hints(f"{owner}.{hook}", fn)
     return HeaderScanner(_request_headers_type(owner, hook, hints.get("request")))
 
 
@@ -377,7 +377,7 @@ class HeadersHook:
                 f"headers are assembled; move async work into intercept or observe",
             )
         self._scanner = _hook_request_param(owner, "response_headers", fn)
-        hints = get_type_hints(fn)
+        hints = type_hints(f"{owner}.response_headers", fn)
         returns, _ = _strip_optional_struct(hints.get("return"))
         if returns is None:
             raise WiringError(
@@ -403,7 +403,7 @@ class InterceptHook:
     def __init__(self, owner: str, fn: Callable[..., object]) -> None:
         self.owner = owner
         self._scanner = _hook_request_param(owner, "intercept", fn)
-        hints = get_type_hints(fn)
+        hints = type_hints(f"{owner}.intercept", fn)
         self.return_annotation: object = hints.get("return")
         if self.return_annotation is None:
             raise WiringError(
@@ -430,13 +430,13 @@ class ObserveHook:
 
     def __init__(self, owner: str, fn: Callable[..., object]) -> None:
         self.owner = owner
-        params = [p.name for p in inspect.signature(fn).parameters.values()]
+        params = [p.name for p in signature_parameters(fn)]
         if params != ["request", "status", "duration"]:
             raise WiringError(
                 f"{owner}.observe must take exactly (request, status, duration), "
                 f"got ({', '.join(params)})",
             )
-        hints = get_type_hints(fn)
+        hints = type_hints(f"{owner}.observe", fn)
         self._scanner = HeaderScanner(_request_headers_type(owner, "observe", hints.get("request")))
         if hints.get("status") is not int or hints.get("duration") is not float:
             raise WiringError(

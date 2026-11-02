@@ -11,14 +11,13 @@ must-run work, use a real broker.
 
 import asyncio
 import contextlib
-import inspect
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any, Self, get_type_hints
+from typing import Any, Self
 
 from msgspec import Struct
 
-from jero._wiring_types import WiringError
+from jero._wiring_types import WiringError, signature_parameters, type_hints
 
 logger = logging.getLogger(__name__)
 
@@ -30,13 +29,13 @@ def _infer_item_type(handler: Callable[..., Awaitable[None]]) -> type[Struct]:
     handler takes exactly one argument, annotated with the ``Struct`` it processes.
     """
     name = getattr(handler, "__qualname__", repr(handler))
-    params = list(inspect.signature(handler).parameters.values())
+    params = signature_parameters(handler)
     if len(params) != 1:
         raise WiringError(
             f"BackgroundTasks: handler {name} must take exactly one argument "
             f"(the item Struct); got {len(params)}",
         )
-    item_type = get_type_hints(handler).get(params[0].name)
+    item_type = type_hints(f"BackgroundTasks: handler {name}", handler).get(params[0].name)
     if not (isinstance(item_type, type) and issubclass(item_type, Struct)):
         raise WiringError(
             f"BackgroundTasks: handler {name} parameter {params[0].name!r} must be "

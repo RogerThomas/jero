@@ -9,15 +9,30 @@ build the spec) can import them without importing each other. Keeping the contra
 below both modules is what makes the dependency graph acyclic.
 """
 
-from collections.abc import Mapping, Sequence
+import inspect
+import sys
+from collections.abc import Callable, Mapping, Sequence
 from types import UnionType
-from typing import Literal, TypeAliasType, TypeVar, Union, cast, get_args, get_origin
+from typing import (
+    Any,
+    Literal,
+    TypeAliasType,
+    TypeVar,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 from msgspec import Struct
 from msgspec.json import Decoder
 
 from jero.errors import BaseHTTPError
 from jero.openapi import ResponseSpec, SecurityScheme, Tag
+
+if sys.version_info >= (3, 14):
+    from annotationlib import Format
 
 # How a handler's return value is encoded onto the wire; see _return_kind / _result_sender.
 # "no-content" / "created" / "accepted" are JSONResponse-shaped (NoContent excepted) but fix
@@ -52,6 +67,34 @@ class WiringError(TypeError):
     :mod:`jero._exception_handlers` (which validates handlers at wiring time) can raise it
     without importing each other.
     """
+
+
+def _undefined_annotation(label: str, error: NameError) -> WiringError:
+    """The wiring failure for an annotation naming something not importable at runtime."""
+    return WiringError(
+        f"{label}: annotation {error.name!r} is not defined at runtime. jero reads "
+        f"annotations at startup, so import it normally, not under `if TYPE_CHECKING:`",
+    )
+
+
+def signature_parameters(fn: Callable[..., object]) -> list[inspect.Parameter]:
+    """``fn``'s parameters, without evaluating their annotations: on 3.14+ ``signature``
+    evaluates deferred annotations by default (PEP 649), so it is asked for the FORWARDREF
+    format; earlier versions never evaluate them here. Wiring reads names and kinds from
+    this and the types from :func:`type_hints`, the one place an unresolvable annotation
+    surfaces."""
+    if sys.version_info >= (3, 14):
+        return list(inspect.signature(fn, annotation_format=Format.FORWARDREF).parameters.values())
+    return list(inspect.signature(fn).parameters.values())
+
+
+def type_hints(label: str, fn: Callable[..., object]) -> dict[str, Any]:
+    """``get_type_hints(fn)``, with an annotation naming a ``TYPE_CHECKING``-only import (or
+    any undefined name) reported as a :class:`WiringError` naming ``label``."""
+    try:
+        return get_type_hints(fn)
+    except NameError as error:
+        raise _undefined_annotation(label, error) from error
 
 
 def is_struct_type(ann: object) -> bool:
