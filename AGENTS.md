@@ -113,7 +113,18 @@ Always follow the following style guide:
   `WiringError`).
 - **`Endpoint`** — a class defining any of the five bare verbs above, for non-resource
   routes (health, webhooks, actions). One exact path per Endpoint; a different path is a
-  different `Endpoint`.
+  different `Endpoint`. Its path may end in an AIP-136 custom method, `{slot}:verb`
+  (`/widgets/{widget_id}:duplicate`; split off by `split_action` at wiring, verb limited
+  to RFC 3986 unreserved characters). An action is a `Pattern` with a `suffix` in the same
+  per-(method, segment-count) bucket as plain routes; `insert_pattern` keeps each bucket in
+  match order (actions first, then more literal segments first, so registration order never
+  decides), and the router swaps in `__resolve_action` (the suffix-aware loop) only when the
+  first action registers, so an app without one pays nothing. A suffix anywhere else, or on a
+  `Resource`/WebSocket path, is a `WiringError`. Reversal (`_RouteRef.action`) and the OpenAPI
+  path carry the suffix; reversing a plain route whose last slot ends in the verb of an action
+  that captures it raises (`_RouteRef.shadowed`, filled at `__finalize`). Routing reads ASGI's
+  already-decoded `path` and never decodes again (a literal `%` survives); `TestClient` sends
+  `path` decoded and `raw_path` raw, as servers do; reversal percent-encodes slot values.
 - **The path is declared on the class, not at wiring** — `class Widgets(Resource,
   path="/widgets")`, read once at wiring; `_include_resource(Widgets())` takes no
   `path=`. The class is the single source of truth for its path (what URL reversal /
@@ -398,6 +409,9 @@ Always follow the following style guide:
   `core` and `streaming` both import). `jero/headers.py` — the `RawHeaders` opaque bag.
   `jero/content_stream.py` — `ContentStream` and `ClientDisconnectedError` (a leaf
   module `core` imports).
+  `jero/_routing.py` — path templates (`parse_template`, `split_action`, `template_str`) and
+  the bucket `Pattern` with its ordering (`insert_pattern`); the inlined resolvers stay in
+  `core`. A leaf depending only on `_wiring_types`, split out for the same module cap.
   `jero/_assets.py` — the sender-free half of `_include_assets` and the OpenAPI favicon
   (wiring-time file reads, content types, gzip variants, strong `ETag`s, the
   `Accept-Encoding` / `If-None-Match` checks); the asset handler stays in `core`. A leaf
@@ -420,7 +434,8 @@ Always follow the following style guide:
 - `demo_app/` — a complete, project-structured example app (`config`, `models`,
   `auth`, `services/`, `operations/`, `factory`, `app`); its `TokenAuth` gates widgets +
   `/me` and its `OptionalTokenAuth` serves anonymous callers at `/spotlight`; `/price-quotes`
-  takes a tagged-union `json` body (`Discount`). It is the **single source of
+  takes a tagged-union `json` body (`Discount`); `WidgetDuplicateEndpoint` is the
+  `{widget_id}:duplicate` custom method. It is the **single source of
   truth**: the worked example in the docs, the app the test suite runs against, and a
   typed consumer of the public API that every type checker validates. Keep it working
   and bounded (it demonstrates the shape; resist turning it into a feature dumping ground).

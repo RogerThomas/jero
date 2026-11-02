@@ -4,6 +4,9 @@
 the request path (background tasks) and returns ``201`` with a ``Location`` and ``Link``
 reverse-routed to the new resource (links). ``ref="widgets"`` lets other modules address
 this resource by string via ``Link.from_ref('widgets.read_one')``.
+
+``WidgetDuplicateEndpoint`` is a custom method on one widget, the ``{widget_id}:duplicate``
+shape: a verb with no noun to model it as a sub-resource.
 """
 
 from dataclasses import dataclass
@@ -12,6 +15,7 @@ from demo_app.models import Deleted, Page, Widget, WidgetEvent, WidgetIn, Widget
 from demo_app.services.widget_service import WidgetService
 from jero import (
     BackgroundTasks,
+    Endpoint,
     JSONResponse,
     Link,
     Location,
@@ -80,3 +84,28 @@ class WidgetResource(
         """Delete a widget by path id."""
         await self._service.delete_widget(path.widget_id)
         return Deleted(id=path.widget_id, deleted=True)
+
+
+@dataclass
+class WidgetDuplicateEndpoint(
+    Endpoint,
+    path="/widgets/{widget_id}:duplicate",
+    meta_post=OperationMeta(summary="Duplicate a widget."),
+):
+    """Copies a widget under a new id: ``POST /widgets/{widget_id}:duplicate``."""
+
+    _service: WidgetService
+
+    async def post(self, path: WidgetPath) -> JSONResponse[Widget]:
+        """Create a copy of the widget and point the response at it."""
+        widget = await self._service.get_widget(path.widget_id)
+        copy = await self._service.create_widget(
+            WidgetIn(name=widget.name, price_cents=widget.price_cents)
+        )
+        return JSONResponse(
+            json=copy,
+            status_code=201,
+            location=Location.from_operation(
+                WidgetResource.read_one, path=WidgetPath(widget_id=copy.id)
+            ),
+        )

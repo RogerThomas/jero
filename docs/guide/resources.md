@@ -136,6 +136,55 @@ The result gets an id, a later `GET`, 201/`Location` semantics, and an OpenAPI h
 under its parent. State changes (*cancel*, *archive*) are often an `update_partial` on a
 status field. Use an `Endpoint` only when no noun works.
 
+When no noun works, the `Endpoint`'s path may end in a **custom method**: the last
+segment's slot followed by `:verb`, the shape Google's AIP-136 uses
+(`POST /widgets/{widget_id}:duplicate`). It sits beside the resource's own
+`/widgets/{widget_id}` routes without clashing:
+
+```python
+from msgspec import Struct
+
+from jero import BaseApp, Endpoint, Resource
+
+
+class Widget(Struct):
+    id: str
+
+
+class WidgetPath(Struct):
+    widget_id: str
+
+
+class WidgetResource(Resource, path="/widgets"):
+    async def read_one(self, path: WidgetPath) -> Widget:  # GET /widgets/{widget_id}
+        return Widget(id=path.widget_id)
+
+
+class WidgetDuplicateEndpoint(Endpoint, path="/widgets/{widget_id}:duplicate"):
+    async def post(self, path: WidgetPath) -> Widget:  # POST /widgets/{widget_id}:duplicate
+        return Widget(id=f"{path.widget_id}-copy")
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        self._include_resource(WidgetResource())
+        self._include_endpoint(WidgetDuplicateEndpoint())
+
+
+app = App()
+```
+
+The slot binds everything before the suffix, so `POST /widgets/a:b:duplicate` binds
+`widget_id="a:b"`. An action route is tried before a plain `{widget_id}` route on the same
+verb, and a request whose suffix matches no action (or would leave the slot empty) falls
+through to that plain route. Matching sees the path as the server decoded it, so
+`x%3Aduplicate` reaches the action too. Reverse routing (`Location.from_operation(...)`)
+and the OpenAPI path both carry the suffix. Because the action answers first, reversing the
+plain route with an id that ends in the action's verb (`widget_id="x:duplicate"`) raises
+rather than build a URL the action would answer. Keep ids free of `:`, as AIP-122 asks. A
+wholly literal last segment such as `/widgets:batchGet` needs none of this: it is matched
+as written.
+
 ## Path templates
 
 A route declares its path **on the class**, at definition time. jero reads it once at
@@ -183,6 +232,11 @@ Rules, all checked at startup with a precise `WiringError`:
 - Path Struct fields **cannot have defaults** — a URL segment is always present.
 - Item routes have exactly one field beyond the slots (the id); every other route has
   none.
+- When two templates could match one path, the one with more literal segments wins
+  (`/groups/special/items/{item_id}` over `/groups/{group_id}/items/{item_id}`), whatever
+  order they were included in.
+- A `:verb` action suffix goes only on the last segment of an `Endpoint` path, right
+  after its slot. The verb is letters, digits, `-`, `.`, `_` or `~`.
 
 Path values that fail conversion to their field type return **404** — a malformed id
 doesn't identify a resource.
