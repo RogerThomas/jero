@@ -328,8 +328,10 @@ class TokenAuth(BearerAuth):   # adds {"type": "http", "scheme": "bearer"}
 
 `BearerAuth` and `BasicAuth` are plain bases, not the `Auth` protocol itself, so there is
 no inherited `authenticate` to override: write it sync or `async def` and it lints clean
-either way. The class is still checked against `Auth` by the type checker at the `auth=`
-mount and by jero at startup. Both are sugar over an optional
+either way. The type checker checks `authenticate` at the `auth=` mount, and jero checks it
+at startup, including that it binds `headers`: bearer and basic name the `Authorization`
+header, so either scheme on an authenticator that reads only cookies is a `WiringError`.
+Both are sugar over an optional
 `openapi_security: ClassVar[SecurityScheme]` attribute any authenticator can set; an
 authed route that declares nothing defaults to HTTP bearer. For a token in a header,
 query param, or cookie, set the attribute with `SecurityScheme.api_key(...)`. The value
