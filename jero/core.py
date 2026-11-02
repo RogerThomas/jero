@@ -2088,9 +2088,9 @@ class _RouteRef:
     segments: tuple[Segment, ...]
     path_type: type[Struct] | None
     action: str = ""  # a ":verb" suffix on the last segment, or ""
-    # The actions answering some of this plain route's URLs (filled at __finalize): a URL
-    # one of them matches would reverse to an address the action answers instead.
-    shadowed: Sequence[Pattern[_Handler]] = ()
+    # The routes tried before this one that may match its URLs (filled at __finalize): a
+    # URL one of them matches would reverse to an address that runs another operation.
+    ahead: Sequence[Pattern[_Handler]] = ()
 
 
 def _build_url(route_ref: _RouteRef, path: Struct | None) -> str:
@@ -2103,11 +2103,15 @@ def _build_url(route_ref: _RouteRef, path: Struct | None) -> str:
     parts = [
         _encode_header_value(data[value]) if is_param else value for is_param, value in segments
     ]
-    # The router sees the decoded parts, so ask the overlapping actions about those.
-    for action in route_ref.shadowed:
-        if action.matches(parts):
+    # The router sees the decoded parts, suffix included: refuse a URL that would not route
+    # back here.
+    if route_ref.action and not parts[-1]:
+        raise ValueError(f"an action needs a non-empty value before {route_ref.action!r}")
+    routed = [*parts[:-1], parts[-1] + route_ref.action]
+    for pattern in route_ref.ahead:
+        if pattern.matches(routed):
             raise ValueError(
-                f"{'/'.join(parts)!r} would route to {action.template}, not to this operation",
+                f"{'/'.join(routed)!r} would route to {pattern.template}, not this operation",
             )
     # Slot values are percent-encoded (RFC 3986 pchar stays as is, so ``:`` and ``@`` read
     # naturally); the server decodes them back before routing.
@@ -3683,9 +3687,9 @@ class BaseApp[FactoryT = None](ABC):
         self.__dynamic: _DynamicRoutes = {}
         # The first action route swaps in __resolve_action; apps without one pay nothing.
         self.__resolve: _Resolver = self.__resolve_dynamic
-        # Per plain templated route, the actions answering some of its URLs; filled in place
-        # at __finalize (see _RouteRef.shadowed).
-        self.__shadowed: dict[_Handler, list[Pattern[_Handler]]] = {}
+        # Per templated route, the routes tried before it that may match its URLs; filled in
+        # place at __finalize (see _RouteRef.ahead).
+        self.__ahead: dict[_Handler, list[Pattern[_Handler]]] = {}
         self.__websocket_static: dict[str, _WebSocketHandler] = {}
         self.__websocket_dynamic: dict[int, list[Pattern[_WebSocketHandler]]] = {}
         self.__allowed: _AllowedMethods = {}
@@ -3769,8 +3773,8 @@ class BaseApp[FactoryT = None](ABC):
     def __register(
         self, method: HTTPMethod, segments: list[Segment], handler: _Handler, action: str = ""
     ) -> list[Pattern[_Handler]]:
-        """Route ``handler``; returns the list of actions answering some of its URLs (filled in
-        place at __finalize), for the route's reverse-routing guard."""
+        """Route ``handler``; returns the list of routes tried before it that may match its
+        URLs (filled in place at __finalize), for the route's reverse-routing guard."""
         if not any(is_param for is_param, _ in segments):
             route_path = "/".join(value for _, value in segments)
             if (method, route_path) in self.__static:
@@ -3783,20 +3787,17 @@ class BaseApp[FactoryT = None](ABC):
         insert_pattern(bucket, pattern, f"{method} {template_str(segments, action)}")
         if action:
             self.__resolve = self.__resolve_action
-            return []
-        return self.__shadowed.setdefault(handler, [])
+        return self.__ahead.setdefault(handler, [])
 
-    def __finalize_shadows(self) -> None:
-        """Actions are tried first, so one that overlaps a plain route of its bucket (same
-        verb and segment count) answers some of that route's URLs. Record it on the plain
-        route, for reversal to refuse exactly the URLs it would capture."""
+    def __finalize_ahead(self) -> None:
+        """A bucket is in match order, so a route earlier in it that overlaps a later one
+        answers some of the later route's URLs. Record those on each route, for reversal to
+        refuse exactly the URLs that would run another operation."""
         for bucket in self.__dynamic.values():
-            actions = [pattern for pattern in bucket if pattern.suffix]
-            for pattern in bucket if actions else ():
-                if not pattern.suffix:
-                    self.__shadowed[pattern.handler] += (
-                        action for action in actions if action.overlaps(pattern)
-                    )
+            for index, pattern in enumerate(bucket):
+                self.__ahead[pattern.handler] += (
+                    earlier for earlier in bucket[:index] if earlier.overlaps(pattern)
+                )
 
     def __register_websocket(self, segments: list[Segment], handler: _WebSocketHandler) -> None:
         if not any(is_param for is_param, _ in segments):
@@ -3943,9 +3944,9 @@ class BaseApp[FactoryT = None](ABC):
                 exceptions=self.__exceptions,
                 tail=tail,
             )
-            shadowed = self.__register(verb.method, segments, handler, action)
+            ahead = self.__register(verb.method, segments, handler, action)
             record.routes.append((verb.method, handler))
-            route_ref = _RouteRef(tuple(segments), sources.path, action, shadowed)
+            route_ref = _RouteRef(tuple(segments), sources.path, action, ahead)
             self.__reverser.register(fn.__func__, cls.ref, name, route_ref)
             self.__operations.append(
                 OperationSpec(
@@ -4742,7 +4743,7 @@ class BaseApp[FactoryT = None](ABC):
     def __finalize(self) -> None:
         """Precompute Allow headers, resolve response-header tails, and build the OpenAPI
         document; runs once after wiring."""
-        self.__finalize_shadows()  # before the tails swap covered routes' handlers
+        self.__finalize_ahead()  # before the tails swap covered routes' handlers
         self.__finalize_tails()
         self.__allow_cache = {
             path: _allow_header(self.__allowed_methods(path)) for path in self.__allowed

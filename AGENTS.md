@@ -121,9 +121,10 @@ Always follow the following style guide:
   a tie between equally literal routes), and the router swaps in `__resolve_action` (the suffix-aware loop) only when the
   first action registers, so an app without one pays nothing. A suffix anywhere else, or on a
   `Resource`/WebSocket path, is a `WiringError`, as is a plain route an action answers entirely
-  (`Pattern.covers`). Reversal (`_RouteRef.action`) and the OpenAPI path carry the suffix;
-  reversing a plain route to a URL an overlapping action would match raises
-  (`_RouteRef.shadowed`, the `Pattern.overlaps` actions, filled at `__finalize`). Routing reads ASGI's
+  (`Pattern.covers`). Reversal (`_RouteRef.action`) and the OpenAPI path carry the suffix, and
+  refuse a URL that would not route back to its operation: one a route earlier in match order
+  would answer (`_RouteRef.ahead`, the `Pattern.overlaps` routes, filled at `__finalize`), or
+  an action with an empty slot. Routing reads ASGI's
   already-decoded `path` and never decodes again (a literal `%` survives); `TestClient` sends
   `path` decoded and `raw_path` raw, as servers do; reversal percent-encodes slot values.
 - **The path is declared on the class, not at wiring** — `class Widgets(Resource,

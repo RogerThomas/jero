@@ -120,14 +120,14 @@ class Pattern[H]:
             return False
         return all(segments[i] == value for i, value in self.statics)
 
-    def overlaps(self, plain: "Pattern[H]") -> bool:
-        """Whether this action answers some URL of ``plain``, a plain route of the same
-        bucket (actions are tried first): every literal of this action is either the same
-        literal in ``plain`` or one of its slots, and ``plain``'s last segment can end in
-        this action's verb."""
-        literals = dict(plain.statics)
-        last = literals.get(len(plain.statics) + len(plain.params) - 1)
-        if last is not None and not _ends_in(last, self.suffix):
+    def overlaps(self, other: "Pattern[H]") -> bool:
+        """Whether this pattern may match some URL of ``other``, a pattern of the same
+        bucket: each literal here is the same literal in ``other`` or one of its slots, and,
+        for an action, ``other``'s last segment can end in its verb. A cheap prefilter for
+        reversal, which then asks :meth:`matches` about the actual URL."""
+        literals = dict(other.statics)
+        last = literals.get(len(other.statics) + len(other.params) - 1)
+        if self.suffix and last is not None and not _ends_in(last, self.suffix):
             return False
         return all(literals.get(i, value) == value for i, value in self.statics)
 

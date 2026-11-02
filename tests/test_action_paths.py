@@ -465,3 +465,60 @@ def test_action_leaves_other_literal_routes_alone() -> None:
         resp = client.post("/pairs/fixed/list")
     assert resp.status_code == 200
     assert resp.json() == {"x": "fixed"}
+
+
+class GenericGoEndpoint(Endpoint, path="/pairs/{x}/{y}:go"):
+    """A generic action a more literal one (``FixedGoEndpoint``) is tried before."""
+
+    async def post(self, path: PairPath) -> PairPath:
+        """Echo the slots."""
+        return path
+
+
+class GoLinkParams(Struct):
+    """The slots to reverse with; an omitted ``y`` reverses an empty one."""
+
+    x: str
+    y: str = ""
+
+
+class GoLinkEndpoint(Endpoint, path="/go-link"):
+    """Reverse-routes ``GenericGoEndpoint.post`` for the queried slots."""
+
+    async def get(self, params: GoLinkParams) -> JSONResponse[PairPath]:
+        """Point at the generic action for these slots."""
+        path = PairPath(x=params.x, y=params.y)
+        return JSONResponse(
+            json=path, location=Location.from_operation(GenericGoEndpoint.post, path=path)
+        )
+
+
+class GoApp(BaseApp):
+    """Two overlapping actions and the reversal to the generic one."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(GenericGoEndpoint())
+        self._include_endpoint(FixedGoEndpoint())
+        self._include_endpoint(GoLinkEndpoint())
+
+
+@pytest.mark.parametrize(
+    ("x", "y", "location"),
+    [
+        pytest.param("other", "z", "/pairs/other/z:go", id="routes-back"),
+        pytest.param("fixed", "z", None, id="a-more-literal-action-answers"),
+        pytest.param("other", "", None, id="empty-slot-is-no-action"),
+    ],
+)
+def test_reversal_to_an_action_refuses_urls_it_would_not_answer(
+    x: str, y: str, location: str | None
+) -> None:
+    """Reversing to an action checks the URL routes back to it: a more literal action tried
+    first, or an empty value before the verb, would send it elsewhere."""
+    with TestClient(GoApp()) as client:
+        resp = client.get("/go-link", params={"x": x, "y": y} if y else {"x": x})
+    if location is None:
+        assert resp.status_code == 500
+    else:
+        assert resp.status_code == 200
+        assert resp.headers["location"] == location

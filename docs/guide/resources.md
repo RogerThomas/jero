@@ -179,11 +179,11 @@ The slot binds everything before the suffix, so `POST /widgets/a:b:duplicate` bi
 verb, and a request whose suffix matches no action (or would leave the slot empty) falls
 through to that plain route. Matching sees the path as the server decoded it, so
 `x%3Aduplicate` reaches the action too. Reverse routing (`Location.from_operation(...)`)
-and the OpenAPI path both carry the suffix. Because the action answers first, reversing a
-plain route to a URL the action would match (`widget_id="x:duplicate"`) raises rather than
-build an address that reaches the wrong operation. Keep ids free of `:`, as AIP-122 asks. A
-plain route the action would answer entirely (a literal `/widgets/{widget_id}/all:duplicate`
-beside it) is a `WiringError`. A
+and the OpenAPI path both carry the suffix. Reversal refuses a URL that would not route back
+to its operation: the plain route with `widget_id="x:duplicate"` (the action answers it), or
+the action with an empty `widget_id`. Keep ids free of `:`, as AIP-122 asks. A plain route
+an action would answer entirely is a `WiringError`: a literal `/groups/{group_id}/all:go`
+beside the action `/groups/{group_id}/{item_id}:go` could never run. A
 wholly literal last segment such as `/widgets:batchGet` needs none of this: it is matched
 as written.
 
