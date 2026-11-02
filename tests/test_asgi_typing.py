@@ -6,7 +6,7 @@ even though it runs perfectly under every real server. That failure is invisible
 rest of this suite (which passes real dicts) and surfaces only in a *user's* type checker,
 when they mount jero behind something typed the standard way. The aliases below mirror the
 ecosystem ones, and the assignment in the first test is the gate: the four checkers this
-suite runs under fail if ``jero.core`` narrows those aliases again.
+suite runs under fail if ``jero._core`` narrows those aliases again.
 
 The second test keeps the widened annotation honest at runtime. A scope that is a
 ``MutableMapping`` but *not* a ``dict`` has to serve a real request, or the type is a

@@ -6,7 +6,7 @@ ready-to-invoke :class:`CompiledExceptionHandler` (the exception type and the re
 shape are read from the concrete signature, once, at wiring time) and defines the public
 :class:`ExceptionResponse` / :class:`ExceptionHandler` surface. The *dispatch* half — the
 registry that resolves the nearest handler and actually sends its response — lives in
-:mod:`jero.core` alongside the response senders it depends on; this module is the
+:mod:`jero._core` alongside the response senders it depends on; this module is the
 sender-free half, split out to keep ``core`` under its size budget (mirroring the
 :mod:`jero._openapi_wiring` split).
 """
@@ -19,11 +19,11 @@ from typing import Protocol, Union, cast, get_args, get_origin
 
 from msgspec import Struct
 
+from jero._cookies import SetCookie
+from jero._errors import BaseHTTPError
+from jero._headers import RawHeaders
+from jero._links import Link, Location
 from jero._wiring_types import WiringError, signature_parameters, type_hints
-from jero.cookies import SetCookie
-from jero.errors import BaseHTTPError
-from jero.headers import RawHeaders
-from jero.links import Link, Location
 
 
 @dataclass(kw_only=True, slots=True)

@@ -20,7 +20,7 @@ from typing import Any, ClassVar
 import msgspec
 from msgspec import Struct as _Struct
 
-from jero.openapi import ModelMeta
+from jero._openapi import ModelMeta
 
 
 class _MetaCarrier(msgspec.StructMeta):

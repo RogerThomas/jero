@@ -16,7 +16,7 @@ from msgspec import Struct
 from demo_app.auth import TokenAuth
 from demo_app.models import User
 from jero import BaseApp, Endpoint
-from jero.core import _EMPTY_PATH_VALUES  # pyright: ignore[reportPrivateUsage]
+from jero._core import _EMPTY_PATH_VALUES  # pyright: ignore[reportPrivateUsage]
 from jero.testing import TestClient
 
 # ---------------------------------------------------------------------------

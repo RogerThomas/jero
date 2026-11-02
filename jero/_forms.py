@@ -2,7 +2,7 @@
 
 from msgspec import Struct
 
-from jero.headers import RawHeaders
+from jero._headers import RawHeaders
 
 # Alias keeps the runtime-evaluated Struct annotation direct without a TC001 ignore.
 _RawHeaders = RawHeaders

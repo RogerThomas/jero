@@ -1,6 +1,6 @@
 """OpenAPI 3.1 document assembly — the dependency-free builder.
 
-This module never imports :mod:`jero.core`. ``core`` does all the jero-specific
+This module never imports :mod:`jero._core`. ``core`` does all the jero-specific
 introspection (resolving each handler's sources, return type, auth, and metadata) and
 hands this module a list of fully-resolved :class:`OperationInput` records expressed in
 terms of plain values plus msgspec ``Struct`` types. :func:`build_openapi` turns those
