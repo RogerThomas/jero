@@ -143,11 +143,16 @@ def unwrap_alias(ann: object) -> object:
 def union_members(ann: object) -> tuple[object, ...]:
     """``ann``'s union members, each alias-resolved, or ``(ann,)`` when it is not a union.
     Both spellings of a union classify alike: ``A | B`` (``types.UnionType``) and
-    ``typing.Union[A, B]``."""
+    ``typing.Union[A, B]``. A member that is an alias for a union is spliced in (``AB | C``
+    with ``type AB = A | B`` is ``A | B | C``; Python only flattens unions it can see), and a
+    member named twice, once through an alias, is kept once."""
     ann = unwrap_alias(ann)
-    if get_origin(ann) in (UnionType, Union):
-        return tuple(unwrap_alias(member) for member in get_args(ann))
-    return (ann,)
+    if get_origin(ann) not in (UnionType, Union):
+        return (ann,)
+    members: list[object] = []
+    for member in get_args(ann):
+        members += (inner for inner in union_members(member) if inner not in members)
+    return tuple(members)
 
 
 def require_string_tags(label: str, members: Sequence[type[Struct]]) -> None:

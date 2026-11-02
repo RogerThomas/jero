@@ -248,3 +248,47 @@ def test_union_of_three_members_decodes_each(body: dict[str, object]) -> None:
         resp = client.post("/x", json=body)
     assert resp.status_code == 200
     assert resp.json() == body
+
+
+type TaggedOrSecond = Tagged | Second
+type PlainAlias = Plain
+
+
+class NestedAliasEndpoint(Endpoint, path="/x"):
+    """A union whose first member is an alias for a union itself, echoed back."""
+
+    async def post(self, json: TaggedOrSecond | Third) -> Tagged | Second | Third:
+        """Echo the decoded member, re-encoded with its tag."""
+        return json
+
+
+class RepeatedMemberEndpoint(Endpoint, path="/x"):
+    """A "union" that is one untagged Struct named twice, once through an alias."""
+
+    async def post(self, json: PlainAlias | Plain) -> Plain:
+        """Echo the body."""
+        return json
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param({"type": "tagged", "a": 1}, id="through-the-alias"),
+        pytest.param({"type": "third", "c": 1}, id="beside-the-alias"),
+    ],
+)
+def test_alias_nested_in_a_union_body_flattens(body: dict[str, object]) -> None:
+    """``AB | C`` with ``type AB = A | B`` is the union ``A | B | C``: the alias is spliced in
+    rather than read as one non-Struct member."""
+    with TestClient(_EndpointApp(NestedAliasEndpoint())) as client:
+        resp = client.post("/x", json=body)
+    assert resp.status_code == 200
+    assert resp.json() == body
+
+
+def test_union_collapsing_to_one_struct_needs_no_tag() -> None:
+    """A union that names one Struct twice is that Struct, so it binds untagged."""
+    with TestClient(_EndpointApp(RepeatedMemberEndpoint())) as client:
+        resp = client.post("/x", json={"a": 1})
+    assert resp.status_code == 200
+    assert resp.json() == {"a": 1}
