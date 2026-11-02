@@ -15,11 +15,11 @@ import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import NoneType, UnionType, get_original_bases
-from typing import Protocol, Union, cast, get_args, get_origin, get_type_hints
+from typing import Protocol, Union, cast, get_args, get_origin
 
 from msgspec import Struct
 
-from jero._wiring_types import WiringError
+from jero._wiring_types import WiringError, signature_parameters, type_hints
 from jero.cookies import SetCookie
 from jero.errors import BaseHTTPError
 from jero.headers import RawHeaders
@@ -119,12 +119,12 @@ class CompiledExceptionHandler:
         fn = getattr(handler, "handle_exception", None)
         if not callable(fn):
             raise WiringError(f"{self.owner} must define a 'handle_exception' method")
-        params = list(inspect.signature(fn).parameters.values())
+        params = signature_parameters(fn)
         if len(params) != 1 or params[0].name != "exception":
             raise WiringError(
                 f"{self.owner}.handle_exception must take exactly one argument named 'exception'",
             )
-        hints = get_type_hints(fn)
+        hints = type_hints(f"{self.owner}.handle_exception", fn)
         exception_type = hints.get("exception")
         if not (isinstance(exception_type, type) and issubclass(exception_type, Exception)):
             raise WiringError(

@@ -20,6 +20,10 @@ learns *which* sources a handler wants, and the request path just fills them in.
 `json`, `content`, `content_stream`, and `form` are mutually exclusive (one request
 body), and are rejected on bodyless verbs (`GET`, `DELETE`). Everything else can combine freely.
 
+jero reads these annotations at startup, so import their types normally, never under
+`if TYPE_CHECKING:` (see the [FAQ](../faq.md#why-does-ruff-want-my-struct-imports-under-type_checking)
+if ruff suggests it).
+
 ```python
 from msgspec import Struct
 

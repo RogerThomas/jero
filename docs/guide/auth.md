@@ -328,10 +328,13 @@ class TokenAuth(BearerAuth):   # adds {"type": "http", "scheme": "bearer"}
 
 `BearerAuth` and `BasicAuth` are plain bases, not the `Auth` protocol itself, so there is
 no inherited `authenticate` to override: write it sync or `async def` and it lints clean
-either way. The type checker checks `authenticate` at the `auth=` mount, and jero checks it
-at startup, including that its `headers` Struct binds `authorization`: bearer and basic
-name the `Authorization` header, so either scheme on an authenticator that reads a cookie or
-another header is a `WiringError`.
+either way. Import the `headers`/`cookies` Struct normally, not under `if TYPE_CHECKING:`:
+jero reads the annotation at startup (see the
+[FAQ](../faq.md#why-does-ruff-want-my-struct-imports-under-type_checking)). The type
+checker checks `authenticate` at the `auth=` mount, and jero checks it at startup,
+including that its `headers` Struct binds `authorization`: bearer and basic name the
+`Authorization` header, so either scheme on an authenticator that reads a cookie or another
+header is a `WiringError`.
 Both are sugar over an optional
 `openapi_security: ClassVar[SecurityScheme]` attribute any authenticator can set; an
 authed route that declares nothing defaults to HTTP bearer. For a token in a header,
