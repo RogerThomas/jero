@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0](https://github.com/RogerThomas/jero/compare/0.2.0...0.3.0) (2026-11-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* prefix internal modules with _ ([#94](https://github.com/RogerThomas/jero/issues/94))
+
+### Bug Fixes
+
+* report TYPE_CHECKING-only annotations as a WiringError, and document why ([#92](https://github.com/RogerThomas/jero/issues/92)) ([7231789](https://github.com/RogerThomas/jero/commit/72317894e50b1c886adc4df64920754748393dca))
+* require an authorization header binding for a declared http security scheme ([#91](https://github.com/RogerThomas/jero/issues/91)) ([56f098d](https://github.com/RogerThomas/jero/commit/56f098d57a2c66d18518104919fb46797373dd99))
+
+
+### Code Refactoring
+
+* prefix internal modules with _ ([#94](https://github.com/RogerThomas/jero/issues/94)) ([4fcec4c](https://github.com/RogerThomas/jero/commit/4fcec4c270881f096ff8a29034e5817fbedafea8))
+
 ## [0.2.0](https://github.com/RogerThomas/jero/compare/0.1.13...0.2.0) (2026-11-02)
 
 
