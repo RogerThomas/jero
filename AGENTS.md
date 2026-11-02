@@ -113,7 +113,13 @@ Always follow the following style guide:
   `WiringError`).
 - **`Endpoint`** — a class defining any of the five bare verbs above, for non-resource
   routes (health, webhooks, actions). One exact path per Endpoint; a different path is a
-  different `Endpoint`.
+  different `Endpoint`. Its path may end in an AIP-136 custom method, `{slot}:verb`
+  (`/widgets/{widget_id}:duplicate`; split off by `_split_action` at wiring, verb limited
+  to RFC 3986 unreserved characters). Action routes live in their own `__actions` table, tried
+  before the plain dynamic routes, and the router swaps in `__resolve_action` only when the
+  first one registers, so an app without them pays nothing. A suffix anywhere else, or on a
+  `Resource`/WebSocket path, is a `WiringError`. Reversal (`_RouteRef.action`) and the OpenAPI
+  path carry the suffix.
 - **The path is declared on the class, not at wiring** — `class Widgets(Resource,
   path="/widgets")`, read once at wiring; `_include_resource(Widgets())` takes no
   `path=`. The class is the single source of truth for its path (what URL reversal /
@@ -407,7 +413,8 @@ Always follow the following style guide:
   types when the test WebSocket API accepts union type expressions).
 - `demo_app/` — a complete, project-structured example app (`config`, `models`,
   `auth`, `services/`, `operations/`, `factory`, `app`); its `TokenAuth` gates widgets +
-  `/me` and its `OptionalTokenAuth` serves anonymous callers at `/spotlight`. It is the **single source of
+  `/me` and its `OptionalTokenAuth` serves anonymous callers at `/spotlight`;
+  `WidgetDuplicateEndpoint` is the `{widget_id}:duplicate` custom method. It is the **single source of
   truth**: the worked example in the docs, the app the test suite runs against, and a
   typed consumer of the public API that every type checker validates. Keep it working
   and bounded (it demonstrates the shape; resist turning it into a feature dumping ground).

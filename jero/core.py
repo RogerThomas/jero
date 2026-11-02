@@ -219,6 +219,7 @@ type _Segment = tuple[bool, str]
 type _StaticRoutes = dict[tuple[str, str], _Handler]
 type _DynamicRoutes = dict[tuple[HTTPMethod, int], list[_Pattern]]
 type _AllowedMethods = dict[str, list[HTTPMethod]]
+type _Resolver = Callable[[str, str], tuple[_Handler, dict[str, str]] | None]
 # Resolves a Struct type to its reusable typed JSON decoder (the app's per-type cache).
 # ReturnKind / PayloadKind (the other wire-shape aliases) live in jero._wiring_types,
 # shared with the OpenAPI generator.
@@ -1437,11 +1438,37 @@ def _parse_template(path: str) -> list[_Segment]:
                 raise WiringError(f"path {path!r}: duplicate slot {raw!r}")
             slots.add(slot)
             segments.append((True, slot))
+        elif raw.startswith("{") and "}:" in raw:
+            raise WiringError(
+                f"path {path!r}: segment {raw!r} carries an action suffix, which only the "
+                f"last segment of an Endpoint path may (`/things/{{thing_id}}:convert`)",
+            )
         elif "{" in raw or "}" in raw:
             raise WiringError(f"path {path!r}: malformed segment {raw!r}")
         else:
             segments.append((False, raw))
     return segments
+
+
+def _split_action(path: str) -> tuple[str, str]:
+    """An Endpoint path ending in a custom-method suffix, ``/things/{thing_id}:convert``, as
+    ``("/things/{thing_id}", ":convert")``; any other path as ``(path, "")``. The suffix
+    follows the last-segment slot (the AIP-136 custom-method shape) and is restricted to
+    RFC 3986 unreserved characters, so it can never smuggle in a ``/`` or another slot. A
+    wholly literal last segment (``/things:batchGet``) needs no split: it is matched as
+    written."""
+    head, _, last = path.rpartition("/")
+    if not last.startswith("{"):
+        return path, ""
+    slot, separator, verb = last.partition("}:")
+    if not separator:
+        return path, ""
+    if not verb or not verb.isascii() or not all(c.isalnum() or c in "-._~" for c in verb):
+        raise WiringError(
+            f"path {path!r}: action {verb!r} must be a non-empty run of letters, digits, "
+            f"'-', '.', '_' or '~'",
+        )
+    return f"{head}/{slot}}}", f":{verb}"
 
 
 def _literal_segments(path: str) -> list[_Segment]:
@@ -1538,6 +1565,28 @@ class _Pattern:
     def matches(self, segments: list[str]) -> bool:
         """Whether this pattern's static segments all equal the request path's."""
         return all(segments[i] == value for i, value in self.statics)
+
+
+@dataclass(frozen=True, slots=True)
+class _ActionPattern:
+    """A templated route whose last segment is ``{slot}:verb``. Kept in its own table, so an
+    app without action routes never pays for the suffix check."""
+
+    statics: tuple[tuple[int, str], ...]  # (position, required value)
+    params: tuple[tuple[int, str], ...]  # (position, slot name), every slot but the last
+    slot: str  # the last segment's slot, matched with ``suffix`` cut off
+    suffix: str  # ":verb"
+    handler: _Handler
+
+    def matches(self, segments: list[str]) -> bool:
+        """Whether the last segment is a non-empty slot value plus the suffix, and every
+        static segment equals the request path's."""
+        last = segments[-1]
+        return (
+            len(last) > len(self.suffix)
+            and last.endswith(self.suffix)
+            and all(segments[i] == value for i, value in self.statics)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -2091,6 +2140,7 @@ class _RouteRef:
 
     segments: tuple[_Segment, ...]
     path_type: type[Struct] | None
+    action: str = ""  # a ":verb" suffix on the last segment, or ""
 
 
 def _build_url(route_ref: _RouteRef, path: Struct | None) -> str:
@@ -2100,9 +2150,10 @@ def _build_url(route_ref: _RouteRef, path: Struct | None) -> str:
     if path is None:
         return "/".join(value for _, value in segments)
     data = to_builtins(path)
-    return "/".join(
+    url = "/".join(
         _encode_header_value(data[value]) if is_param else value for is_param, value in segments
     )
+    return url + route_ref.action
 
 
 def _forwarded_first(scope: Scope, name: bytes) -> str | None:
@@ -3668,6 +3719,9 @@ class BaseApp[FactoryT = None](ABC):
     def __init__(self, *, factory: FactoryT | None = None) -> None:
         self.__static: _StaticRoutes = {}
         self.__dynamic: _DynamicRoutes = {}
+        self.__actions: dict[tuple[HTTPMethod, int], list[_ActionPattern]] = {}
+        # The first action route swaps in __resolve_action; apps without one pay nothing.
+        self.__resolve: _Resolver = self.__resolve_dynamic
         self.__websocket_static: dict[str, _WebSocketHandler] = {}
         self.__websocket_dynamic: dict[int, list[_WebSocketPattern]] = {}
         self.__allowed: _AllowedMethods = {}
@@ -3746,7 +3800,23 @@ class BaseApp[FactoryT = None](ABC):
         omits it is flagged at its instantiation site by the type checker.
         """
 
-    def __register(self, method: HTTPMethod, segments: list[_Segment], handler: _Handler) -> None:
+    def __register_action(
+        self, method: HTTPMethod, segments: list[_Segment], action: str, handler: _Handler
+    ) -> None:
+        statics = tuple((i, value) for i, (is_param, value) in enumerate(segments) if not is_param)
+        params = tuple((i, value) for i, (is_param, value) in enumerate(segments) if is_param)
+        bucket = self.__actions.setdefault((method, len(segments)), [])
+        if any(pattern.statics == statics and pattern.suffix == action for pattern in bucket):
+            raise WiringError(f"{method} {_template_str(segments)}{action} is already registered")
+        bucket.append(_ActionPattern(statics, params[:-1], params[-1][1], action, handler))
+        self.__resolve = self.__resolve_action
+
+    def __register(
+        self, method: HTTPMethod, segments: list[_Segment], handler: _Handler, action: str = ""
+    ) -> None:
+        if action:
+            self.__register_action(method, segments, action, handler)
+            return
         params = tuple((i, value) for i, (is_param, value) in enumerate(segments) if is_param)
         if not params:
             route_path = "/".join(value for _, value in segments)
@@ -3865,6 +3935,7 @@ class BaseApp[FactoryT = None](ABC):
                 f"{cls.__name__}: no path — declare it on the class, "
                 f"e.g. `class {cls.__name__}(..., path='/...')`.",
             )
+        path, action = _split_action(path) if isinstance(obj, Endpoint) else (path, "")
         template = _parse_template(path)
         # The authenticator's declared return type is the policy: `-> TUser | None` accepts
         # anonymous callers, `-> TUser` gates. Never inferred from anything else.
@@ -3908,14 +3979,14 @@ class BaseApp[FactoryT = None](ABC):
                 exceptions=self.__exceptions,
                 tail=tail,
             )
-            self.__register(verb.method, segments, handler)
+            self.__register(verb.method, segments, handler, action)
             record.routes.append((verb.method, handler))
             self.__reverser.register(
-                fn.__func__, cls.ref, name, _RouteRef(tuple(segments), sources.path)
+                fn.__func__, cls.ref, name, _RouteRef(tuple(segments), sources.path, action)
             )
             self.__operations.append(
                 OperationSpec(
-                    path=_template_str(segments),
+                    path=_template_str(segments) + action,
                     method=verb.method.lower(),
                     success_status=status,
                     sources=sources,
@@ -4481,9 +4552,32 @@ class BaseApp[FactoryT = None](ABC):
                 return pattern.handler, values
         return None
 
+    def __resolve_action(self, method: str, path: str) -> tuple[_Handler, dict[str, str]] | None:
+        """``__resolve_dynamic`` with the action routes tried first, so ``POST
+        /things/x:convert`` reaches the ``:convert`` route rather than a ``POST
+        /things/{thing_id}`` beside it. Installed only once an action route registers."""
+        segments = path.split("/")
+        for pattern in self.__actions.get((cast("HTTPMethod", method), len(segments)), ()):
+            if pattern.matches(segments):
+                values: dict[str, str] = {}
+                for i, name in pattern.params:
+                    segment = segments[i]
+                    values[name] = unquote(segment) if "%" in segment else segment
+                stem = segments[-1][: -len(pattern.suffix)]
+                values[pattern.slot] = unquote(stem) if "%" in stem else stem
+                return pattern.handler, values
+        return self.__resolve_dynamic(method, path)
+
     def __allowed_methods(self, path: str) -> tuple[HTTPMethod, ...]:
         allowed = list(self.__allowed.get(path, ()))
         segments = path.split("/")
+        for (method, count), actions in self.__actions.items():
+            if (
+                count == len(segments)
+                and method not in allowed
+                and any(pattern.matches(segments) for pattern in actions)
+            ):
+                allowed.append(method)
         for (method, count), bucket in self.__dynamic.items():
             if (
                 count == len(segments)
@@ -4515,7 +4609,7 @@ class BaseApp[FactoryT = None](ABC):
         verb = "GET" if requested == "HEAD" else requested
         handler = self.__static.get((verb, path))
         if handler is None:
-            resolved = self.__resolve_dynamic(verb, path)
+            resolved = self.__resolve(verb, path)
             if resolved is None:
                 return None
             handler = resolved[0]
@@ -4623,6 +4717,12 @@ class BaseApp[FactoryT = None](ABC):
             for index, pattern in enumerate(bucket):
                 if pattern.handler is old:
                     bucket[index] = _Pattern(pattern.statics, pattern.params, new)
+        for actions in self.__actions.values():
+            for index, action in enumerate(actions):
+                if action.handler is old:
+                    actions[index] = _ActionPattern(
+                        action.statics, action.params, action.slot, action.suffix, new
+                    )
 
     def __cover_route(
         self,
@@ -4880,7 +4980,7 @@ class BaseApp[FactoryT = None](ABC):
                 _EMPTY_PATH_VALUES,
             )
             return
-        resolved = self.__resolve_dynamic(verb, path)
+        resolved = self.__resolve(verb, path)
         if resolved is not None:
             handler, path_values = resolved
             await handler(
