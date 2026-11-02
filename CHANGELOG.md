@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.13](https://github.com/RogerThomas/jero/compare/0.1.12...0.1.13) (2026-11-02)
+
+
+### Bug Fixes
+
+* let CORS compose with route-covering middleware ([#87](https://github.com/RogerThomas/jero/issues/87)) ([037f1d5](https://github.com/RogerThomas/jero/commit/037f1d5457576fa1b8840b828332c438540ec084))
+
 ## [0.1.12](https://github.com/RogerThomas/jero/compare/0.1.11...0.1.12) (2026-11-02)
 
 
