@@ -20,6 +20,7 @@ from jero import (
     Accepted,
     BaseApp,
     BaseHTTPError,
+    BasicAuth,
     BearerAuth,
     BytesResponse,
     Created,
@@ -1229,12 +1230,10 @@ def test_conflicting_tag_descriptions_within_one_meta_is_a_wiring_error() -> Non
         TestClient(IntraConflictApp())
 
 
-class BearerOne(BearerAuth[Credentials, Caller]):
+class BearerOne(BearerAuth):
     """Bearer auth using the default scheme_name."""
 
-    # Auth.authenticate is sync-or-async (-> TUser | Awaitable[TUser]); pylint only sees the
-    # sync arm and flags the async override. False positive (see demo_app.auth.TokenAuth).
-    async def authenticate(self, headers: Credentials) -> Caller:  # pylint: disable=invalid-overridden-method
+    async def authenticate(self, headers: Credentials) -> Caller:
         """Resolve a caller."""
         return Caller(id=headers.authorization)
 
@@ -1281,6 +1280,32 @@ def test_clashing_security_scheme_names_is_a_wiring_error() -> None:
     """Two different security schemes under one scheme_name fail loud."""
     with pytest.raises(RuntimeError, match="share the name"):
         TestClient(SchemeClashApp())
+
+
+class BasicOne(BasicAuth):
+    """Basic auth with a sync authenticate (BearerOne is the async flavor)."""
+
+    def authenticate(self, headers: Credentials) -> Caller:
+        """Resolve a caller."""
+        return Caller(id=headers.authorization)
+
+
+class BasicApp(BaseApp):
+    """One endpoint behind the sync basic-auth base."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(EndpointA(), auth=BasicOne())
+        self._include_openapi(title="t", version="1")
+
+
+def test_basic_auth_base_authenticates_and_advertises_basic() -> None:
+    """A BasicAuth subclass authenticates like any Auth and advertises HTTP basic."""
+    with TestClient(BasicApp()) as client:
+        response = client.get("/sa-a", headers={"authorization": "caller-id"})
+        schemes = client.get("/openapi.json").json()["components"]["securitySchemes"]
+
+    assert response.json() == {"id": "caller-id"}
+    assert schemes == {"basicAuth": {"type": "http", "scheme": "basic"}}
 
 
 class CsvEndpoint(

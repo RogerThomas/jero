@@ -615,18 +615,23 @@ class HybridAuth[THeaders: Struct, TCookies: Struct, TUser](Protocol):
         ...  # pylint: disable=unnecessary-ellipsis  # Protocol stub; pyright needs the body
 
 
-class BearerAuth[THeaders: Struct, TUser](Auth[THeaders, TUser]):
-    """An ``Auth`` whose operations advertise HTTP bearer in the OpenAPI spec.
+class BearerAuth:
+    """A base whose operations advertise HTTP bearer in the OpenAPI spec.
 
     Sugar over the ``openapi_security`` attribute the spec generator reads — subclass
-    this instead of writing the attribute by hand. Implement ``authenticate`` as usual.
+    this instead of writing the attribute by hand, and implement ``authenticate`` (sync
+    or ``async def``) as for any :class:`Auth`. Deliberately not a subclass of the
+    protocol: there is no inherited ``authenticate`` stub to override, so either flavor
+    lints clean. The class still satisfies :class:`Auth` structurally, checked by the
+    type checker at the ``auth=`` mount and by jero at wiring.
     """
 
     openapi_security: ClassVar[SecurityScheme] = SecurityScheme.http_bearer()
 
 
-class BasicAuth[THeaders: Struct, TUser](Auth[THeaders, TUser]):
-    """An ``Auth`` whose operations advertise HTTP basic in the OpenAPI spec."""
+class BasicAuth:
+    """A base whose operations advertise HTTP basic in the OpenAPI spec; otherwise as
+    :class:`BearerAuth`."""
 
     openapi_security: ClassVar[SecurityScheme] = SecurityScheme.http_basic()
 

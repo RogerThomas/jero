@@ -208,7 +208,7 @@ class TokenLookup:
         return user
 
 
-class TokenAuth(TokenLookup, BearerAuth[Credentials, User]):
+class TokenAuth(TokenLookup, BearerAuth):
     async def authenticate(self, headers: Credentials) -> User:            # gates
         user = self._resolve(headers)
         if user is None:
@@ -216,7 +216,7 @@ class TokenAuth(TokenLookup, BearerAuth[Credentials, User]):
         return user
 
 
-class OptionalTokenAuth(TokenLookup, BearerAuth[Credentials, User]):
+class OptionalTokenAuth(TokenLookup, BearerAuth):
     async def authenticate(self, headers: Credentials) -> User | None:     # serves anonymous
         return self._resolve(headers)
 
@@ -321,12 +321,15 @@ attribute by hand:
 from jero import BearerAuth
 
 
-class TokenAuth(BearerAuth[Credentials, User]):   # adds {"type": "http", "scheme": "bearer"}
+class TokenAuth(BearerAuth):   # adds {"type": "http", "scheme": "bearer"}
     async def authenticate(self, headers: Credentials) -> User:
         ...
 ```
 
-`BearerAuth` and `BasicAuth` are sugar over an optional
+`BearerAuth` and `BasicAuth` are plain bases, not the `Auth` protocol itself, so there is
+no inherited `authenticate` to override: write it sync or `async def` and it lints clean
+either way. The class is still checked against `Auth` by the type checker at the `auth=`
+mount and by jero at startup. Both are sugar over an optional
 `openapi_security: ClassVar[SecurityScheme]` attribute any authenticator can set; an
 authed route that declares nothing defaults to HTTP bearer. For a token in a header,
 query param, or cookie, set the attribute with `SecurityScheme.api_key(...)`. The value
