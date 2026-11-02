@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.12](https://github.com/RogerThomas/jero/compare/0.1.11...0.1.12) (2026-11-02)
+
+
+### Features
+
+* tagged-union json bodies and {slot}:verb custom-method paths ([#84](https://github.com/RogerThomas/jero/issues/84)) ([107611b](https://github.com/RogerThomas/jero/commit/107611bb2502fb34a6d665d92ed7c02fab5f4970))
+
+
+### Bug Fixes
+
+* never fail reversal at request time, and encode only unsafe slot values ([#86](https://github.com/RogerThomas/jero/issues/86)) ([e42d0fd](https://github.com/RogerThomas/jero/commit/e42d0fd3a7ae57a229208eb2fa88dfd8f59d5bda))
+
 ## [0.1.11](https://github.com/RogerThomas/jero/compare/0.1.10...0.1.11) (2026-10-29)
 
 
