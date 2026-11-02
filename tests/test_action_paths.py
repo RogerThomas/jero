@@ -184,12 +184,21 @@ def test_action_route_reverse_routes_with_its_suffix() -> None:
     assert resp.headers["link"] == '</groups/g/things/a%20b>; rel="self"'
 
 
-def test_reversing_into_an_action_shadow_fails_loud() -> None:
-    """A plain route's slot value ending in a sibling action's verb would build a URL the
-    action answers, so reversal refuses it rather than linking to the wrong operation."""
+@pytest.mark.parametrize(
+    ("url", "link"),
+    [
+        pytest.param("/groups/g/things/t:convert", "/groups/g/things/t:convert", id="action-verb"),
+        pytest.param("/groups/special/things/t", "/groups/special/things/t", id="sibling-literal"),
+    ],
+)
+def test_reversal_never_fails_the_request(url: str, link: str) -> None:
+    """Reversal builds the URL from the values it is given, even when another route would
+    answer it (an id ending in an action's verb, or equal to a more literal sibling's
+    segment): the handler has already run, so failing here would turn its work into a 500."""
     with TestClient(ActionApp()) as client:
-        resp = client.put("/groups/g/things/t:convert")
-    assert resp.status_code == 500
+        resp = client.put(url)
+    assert resp.status_code == 200
+    assert resp.headers["link"] == f'<{link}>; rel="self"'
 
 
 class ConvertOnlyApp(BaseApp):
@@ -438,24 +447,18 @@ class PairApp(BaseApp):
 @pytest.mark.parametrize(
     ("x", "y", "location"),
     [
-        pytest.param("fixed", "z:go", None, id="captured-by-the-action"),
-        pytest.param("other", "z:go", "/pairs/other/z:go", id="action-does-not-match-x"),
-        pytest.param("fixed", ":go", "/pairs/fixed/:go", id="empty-stem-is-no-action"),
+        pytest.param("fixed", "z:go", "/pairs/fixed/z:go", id="plain-ascii"),
+        pytest.param("a b", "c/d", "/pairs/a%20b/c%2Fd", id="encoded"),
+        pytest.param("é", "~@:", "/pairs/%C3%A9/~@:", id="non-ascii-and-pchar"),
     ],
 )
-def test_reversal_refuses_exactly_the_urls_an_action_captures(
-    x: str, y: str, location: str | None
-) -> None:
-    """The guard asks whether an action would answer the built URL, so a partly overlapping
-    action counts, and a URL the action would not match (another ``x``, or nothing before
-    ``:go``) reverses normally."""
+def test_reversal_percent_encodes_only_unsafe_values(x: str, y: str, location: str) -> None:
+    """Slot values made of URL-safe characters (RFC 3986 pchar) go in as they are; anything
+    else is percent-encoded."""
     with TestClient(PairApp()) as client:
         resp = client.get("/pair-link", params={"x": x, "y": y})
-    if location is None:
-        assert resp.status_code == 500
-    else:
-        assert resp.status_code == 200
-        assert resp.headers["location"] == location
+    assert resp.status_code == 200
+    assert resp.headers["location"] == location
 
 
 def test_action_leaves_other_literal_routes_alone() -> None:
@@ -465,60 +468,3 @@ def test_action_leaves_other_literal_routes_alone() -> None:
         resp = client.post("/pairs/fixed/list")
     assert resp.status_code == 200
     assert resp.json() == {"x": "fixed"}
-
-
-class GenericGoEndpoint(Endpoint, path="/pairs/{x}/{y}:go"):
-    """A generic action a more literal one (``FixedGoEndpoint``) is tried before."""
-
-    async def post(self, path: PairPath) -> PairPath:
-        """Echo the slots."""
-        return path
-
-
-class GoLinkParams(Struct):
-    """The slots to reverse with; an omitted ``y`` reverses an empty one."""
-
-    x: str
-    y: str = ""
-
-
-class GoLinkEndpoint(Endpoint, path="/go-link"):
-    """Reverse-routes ``GenericGoEndpoint.post`` for the queried slots."""
-
-    async def get(self, params: GoLinkParams) -> JSONResponse[PairPath]:
-        """Point at the generic action for these slots."""
-        path = PairPath(x=params.x, y=params.y)
-        return JSONResponse(
-            json=path, location=Location.from_operation(GenericGoEndpoint.post, path=path)
-        )
-
-
-class GoApp(BaseApp):
-    """Two overlapping actions and the reversal to the generic one."""
-
-    async def wire(self) -> None:
-        self._include_endpoint(GenericGoEndpoint())
-        self._include_endpoint(FixedGoEndpoint())
-        self._include_endpoint(GoLinkEndpoint())
-
-
-@pytest.mark.parametrize(
-    ("x", "y", "location"),
-    [
-        pytest.param("other", "z", "/pairs/other/z:go", id="routes-back"),
-        pytest.param("fixed", "z", None, id="a-more-literal-action-answers"),
-        pytest.param("other", "", None, id="empty-slot-is-no-action"),
-    ],
-)
-def test_reversal_to_an_action_refuses_urls_it_would_not_answer(
-    x: str, y: str, location: str | None
-) -> None:
-    """Reversing to an action checks the URL routes back to it: a more literal action tried
-    first, or an empty value before the verb, would send it elsewhere."""
-    with TestClient(GoApp()) as client:
-        resp = client.get("/go-link", params={"x": x, "y": y} if y else {"x": x})
-    if location is None:
-        assert resp.status_code == 500
-    else:
-        assert resp.status_code == 200
-        assert resp.headers["location"] == location
