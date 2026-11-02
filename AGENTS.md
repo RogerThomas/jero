@@ -288,7 +288,13 @@ Always follow the following style guide:
   HTTP bearer; cookies-only with exactly one cookie field → `apiKey` in `cookie`, named
   for that field; a hybrid authenticator or a multi-field cookies-only one can't be
   reduced to one scheme — `_include_openapi` raises for it, naming the class, but only
-  if OpenAPI is ever wired. `_include_resource` / `_include_endpoint` /
+  if OpenAPI is ever wired. A *declared* http scheme (bearer/basic names the
+  `Authorization` header) on an authenticator whose `headers` Struct binds no
+  `authorization` field is a `WiringError` at the mount (`_security_scheme`).
+  `BearerAuth` / `BasicAuth` are plain bases carrying only `openapi_security`, deliberately
+  *not* subclasses of `Auth`: with no inherited `authenticate` stub, a sync or `async def`
+  override lints clean (pylint W0236 flagged async ones), and conformance is still checked
+  structurally at the `auth=` mount and at wiring. `_include_resource` / `_include_endpoint` /
   `_include_websocket` spell `auth=` as three `@overload`s (one per protocol) rather
   than one three-way Union — mypy's structural-match inference can't solve a Union of
   several generic Protocols each binding its own type parameters (falls back to

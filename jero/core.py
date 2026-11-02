@@ -623,8 +623,8 @@ class BearerAuth:
     or ``async def``) as for any :class:`Auth`. Deliberately not a subclass of the
     protocol: there is no inherited ``authenticate`` stub to override, so either flavor
     lints clean. ``authenticate`` is checked by the type checker at the ``auth=`` mount and
-    by jero at wiring, which also requires it to bind ``headers`` (the scheme names the
-    ``Authorization`` header).
+    by jero at wiring, which also requires its ``headers`` to bind ``authorization`` (the
+    header the scheme names).
     """
 
     openapi_security: ClassVar[SecurityScheme] = SecurityScheme.http_bearer()
@@ -3405,7 +3405,8 @@ def _security_scheme(auth: object, compiled_auth: _CompiledAuth) -> SecuritySche
     ``authenticate`` binds (:func:`_derive_security_scheme`; deriving nothing is only a
     problem for an app that calls ``_include_openapi``, where ``operation_input`` raises).
     An http scheme (bearer/basic) is the ``Authorization`` header, so declaring one for an
-    authenticator that binds no headers would send clients the wrong credential."""
+    authenticator that binds no ``authorization`` header field would send clients the wrong
+    credential."""
     declared: object = getattr(type(auth), "openapi_security", None)
     if declared is None:
         return _derive_security_scheme(compiled_auth)
@@ -3414,10 +3415,14 @@ def _security_scheme(auth: object, compiled_auth: _CompiledAuth) -> SecuritySche
             f"{type(auth).__name__}: openapi_security must be SecurityScheme, "
             f"got {type(declared).__name__}",
         )
-    if declared.type == "http" and compiled_auth.headers_type is None:
+    headers = compiled_auth.headers_type
+    if declared.type == "http" and (
+        headers is None
+        or not any(field.encode_name == "authorization" for field in struct_fields(headers))
+    ):
         raise WiringError(
             f"{type(auth).__name__}: openapi_security is HTTP {declared.scheme} "
-            f"(the Authorization header), but authenticate binds no headers",
+            f"(the Authorization header), but authenticate binds no 'authorization' header",
         )
     return declared
 
@@ -3913,11 +3918,10 @@ class BaseApp[FactoryT = None](ABC):
         # anonymous callers, `-> TUser` gates. Never inferred from anything else.
         compiled_auth = _CompiledAuth(auth) if auth is not None else None
         auth_mode: AuthMode = None
+        security_scheme: SecurityScheme | None = None
         if compiled_auth is not None:
             auth_mode = "optional" if compiled_auth.reports_absence else "required"
-        security_scheme = (
-            _security_scheme(auth, compiled_auth) if compiled_auth is not None else None
-        )
+            security_scheme = _security_scheme(auth, compiled_auth)
 
         registered = False
         for name, verb in methods.items():
