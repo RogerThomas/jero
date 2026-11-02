@@ -243,8 +243,9 @@ Always follow the following style guide:
     decoder errors pass through; `X | None`
     stays rejected. A missing/unknown tag is the usual 422. OpenAPI emits msgspec's `anyOf` +
     `discriminator` (identical to a tagged-union response); no composed request examples for
-    a union, matching the response side. `rename` never touches `tag_field`. Only `json` takes
-    unions — `form`/`params`/`headers`/`cookies`/`path` stay one Struct.
+    a union, matching the response side. `rename` never touches `tag_field`. Among the binding
+    sources only `json` takes a union; `params`/`headers`/`cookies`/`path`/`form` stay one
+    Struct (a *field* inside a form may still be a Struct union, see `_compile_form`).
 - **Auth**: an object whose `authenticate` binds `headers`, `cookies`, or both
   (`Auth[THeaders, TUser]` / `CookieAuth[TCookies, TUser]` / `HybridAuth[THeaders,
   TCookies, TUser]` — three static protocols, one runtime `_CompiledAuth` that
@@ -382,13 +383,12 @@ Always follow the following style guide:
   `_exception_handlers` split.
   `jero/_wiring_types.py` — the resolved wiring contracts (`Sources`, `FormSpec`,
   `OperationSpec`, the `*Meta` types, `is_struct_type`/`strip_list`, and the one union
-  vocabulary every union site uses — `union_members`/`flatten_union_members` (aliases resolved,
-  nested alias-unions spliced in, repeats dropped), `compose_union`, `require_string_tags`,
-  `build_decoder`). Every site that reads a union or an alias goes through them: `json` bodies,
-  form fields (`X | None`, Struct-union payloads), WebSocket frames, response items, returns,
-  intercepts, `user`, exception-handler returns (and `ExceptionResponse[...]` args), middleware
-  `response_headers`, and every single-Struct source (`params`/`headers`/... accept a `type`
-  alias). All msgspec Structs; a leaf depending
+  union vocabulary — `union_members`/`flatten_union_members` (aliases resolved, nested
+  alias-unions spliced in, repeats dropped), `compose_union`, `require_string_tags`,
+  `build_decoder`). Reach for these rather than `get_args` on a new union site. Only `json`
+  bodies and inbound WebSocket frames use all four; form-field Struct unions, response items,
+  returns, `user`, and exception-handler returns use the flattening helpers but not the tag
+  check or `build_decoder` (see `bugs/`). All msgspec Structs; a leaf depending
   only on msgspec + `jero.openapi`. `jero/openapi.py` — the dependency-free OpenAPI 3.1
   builder (`SecurityScheme`, `ResponseSpec`, `ModelMeta`, `build_openapi`).
   `jero/structs.py` — `Struct`, jero's drop-in `msgspec.Struct` base whose `meta=` class

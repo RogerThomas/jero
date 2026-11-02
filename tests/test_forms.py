@@ -601,6 +601,52 @@ def test_meta_constrained_scalar_form_field_binds_and_is_enforced() -> None:
         assert client.post("/constrained-form", data={"quantity": "0"}).status_code == 422
 
 
+type Quantity = Annotated[int, Meta(ge=1, le=9)]
+type Quantities = list[int]
+
+
+class AliasedForm(Camel):
+    """A form whose fields are named through ``type`` aliases, required and optional alike."""
+
+    quantity: Quantity
+    counts: Quantities
+    spare: Quantity | None = None
+
+
+class AliasedTotal(Camel):
+    """Echoes the bound aliased fields."""
+
+    quantity: int
+    counts: list[int]
+    spare: int | None
+
+
+class AliasedFormEndpoint(Endpoint, path="/aliased-form"):
+    """Binds form fields named through ``type`` aliases."""
+
+    async def post(self, form: AliasedForm) -> AliasedTotal:
+        """Echo the fields."""
+        return AliasedTotal(quantity=form.quantity, counts=form.counts, spare=form.spare)
+
+
+class AliasedFormApp(BaseApp):
+    """App wiring the aliased form."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(AliasedFormEndpoint())
+
+
+def test_aliased_form_fields_bind_whether_required_or_optional() -> None:
+    """A required field resolves its alias exactly as ``X | None`` does: the constrained scalar
+    keeps its ``Meta`` and the aliased list repeats."""
+    with TestClient(AliasedFormApp()) as client:
+        ok = client.post("/aliased-form", data={"quantity": "3", "spare": "4", "counts": "5"})
+        too_big = client.post("/aliased-form", data={"quantity": "10", "counts": "5"})
+    assert ok.status_code == 200
+    assert ok.json() == {"quantity": 3, "counts": [5], "spare": 4}
+    assert too_big.status_code == 422
+
+
 def test_non_utf8_scalar_form_part_is_422() -> None:
     """A scalar part whose raw bytes are not valid UTF-8 fails conversion with 422."""
     boundary = b"bad-utf8-boundary"

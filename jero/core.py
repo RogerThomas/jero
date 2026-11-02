@@ -840,14 +840,16 @@ def _form_part_types(ann: object) -> tuple[object, object | None] | None:
 
 
 def _strip_optional(ann: object) -> tuple[object, bool]:
-    """``X | None`` as ``(X, True)``; anything else as ``(ann, False)``. Classified through the
-    shared ``union_members``, so either union spelling and an aliased ``X | None`` all count.
-    ``X`` may itself be a union (``AB | None`` with ``type AB = A | B`` flattens to three
-    members): everything but ``None`` is folded back into one payload type."""
+    """``X | None`` as ``(X, True)``; anything else as ``(ann, False)`` alias-resolved, so a
+    required ``type Quantity = Annotated[...]`` field classifies exactly as its optional
+    spelling does. Classified through the shared ``union_members``, so either union spelling
+    and an aliased ``X | None`` all count. ``X`` may itself be a union (``AB | None`` with
+    ``type AB = A | B`` flattens to three members): everything but ``None`` is folded back
+    into one payload type."""
     members = union_members(ann)
     rest = tuple(member for member in members if not _is_none_type(member))
     if not rest or len(rest) == len(members):
-        return ann, False
+        return unwrap_alias(ann), False
     return (rest[0] if len(rest) == 1 else compose_union(rest)), True
 
 
