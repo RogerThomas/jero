@@ -482,6 +482,32 @@ def test_middleware_and_cors_compose_on_one_route() -> None:
     assert response.headers["x-frame-options"] == "DENY"
 
 
+@pytest.mark.parametrize(
+    ("global_middleware", "scoped"),
+    [
+        ((Observer(),), ()),
+        ((), (GateMiddleware(),)),
+        ((EchoMiddleware(),), ()),
+    ],
+    ids=["observe", "scoped-intercept", "response-headers-method"],
+)
+def test_cors_composes_with_route_covering_middleware(
+    global_middleware: tuple[object, ...], scoped: tuple[object, ...]
+) -> None:
+    """A hook that wraps the route still gets its CORS policy, on requests and preflights."""
+    app = _MiddlewareApp(global_middleware=global_middleware, scoped=scoped, cors=CORS())
+    with TestClient(app) as client:
+        response = client.get("/ping")
+        preflight = client.options(
+            "/ping",
+            headers={"origin": "https://a.example", "access-control-request-method": "GET"},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "*"
+    assert preflight.headers["access-control-allow-origin"] == "*"
+
+
 # --- wiring validation ---
 
 
