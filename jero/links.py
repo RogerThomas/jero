@@ -19,9 +19,11 @@ API — only ``Location`` / ``Link`` are exported from :mod:`jero`.
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Self, get_type_hints
+from typing import Self, cast, get_type_hints
 
 from msgspec import Struct
+
+from jero._wiring_types import is_struct_type, unwrap_alias
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,14 +66,14 @@ type Target = OperationTarget | RefTarget | URLTarget | PathTarget
 _OPERATION_PATH_TYPES: dict[Callable[..., object], type[Struct] | None] = {}
 
 
-def _is_struct_type(ann: object) -> bool:
-    return isinstance(ann, type) and issubclass(ann, Struct)
-
-
 def _operation_path_type(operation: Callable[..., object]) -> type[Struct] | None:
     if operation not in _OPERATION_PATH_TYPES:
-        path = get_type_hints(operation).get("path")
-        _OPERATION_PATH_TYPES[operation] = path if _is_struct_type(path) else None
+        # Alias-resolved like core's own ``path`` binding, so ``path: JobPathAlias`` reverse-
+        # routes as the Struct it names rather than as an operation with no path params.
+        path = unwrap_alias(get_type_hints(operation).get("path"))
+        _OPERATION_PATH_TYPES[operation] = (
+            cast("type[Struct]", path) if is_struct_type(path) else None
+        )
     return _OPERATION_PATH_TYPES[operation]
 
 

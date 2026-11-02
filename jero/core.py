@@ -853,7 +853,11 @@ def _strip_optional(ann: object) -> tuple[object, bool]:
     return (rest[0] if len(rest) == 1 else compose_union(rest)), True
 
 
-def _payload_kind(cls: type, method: str, field_name: str, ann: object) -> PayloadKind:
+def _payload_kind(
+    cls: type, method: str, field_name: str, ann: object, declared: object
+) -> PayloadKind:
+    """Classify a form field's payload ``ann``; a rejection names the field's ``declared``
+    annotation, as written (``str | int | None``, not the payload stripped out of it)."""
     bare = _strip_annotated(ann)  # classify by the underlying type; Meta stays on `ann`
     if bare is bytes:
         return "bytes"
@@ -863,8 +867,33 @@ def _payload_kind(cls: type, method: str, field_name: str, ann: object) -> Paylo
         return "scalar"
     raise WiringError(
         f"{cls.__name__}.{method}: form field {field_name!r} has unsupported payload "
-        f"type {ann!r}; expected bytes, a msgspec.Struct, or a scalar",
+        f"type {declared!r}; expected bytes, a msgspec.Struct, or a scalar",
     )
+
+
+class _RuntimeSubscript(Protocol):
+    """A special form subscripted as a runtime call (``Annotated`` rebuilt from parts)."""
+
+    def __getitem__(self, params: tuple[object, ...], /) -> object: ...
+
+
+def _form_struct_payload(
+    label: str, payload_type: object, decoder_for: _DecoderFor
+) -> tuple[object, Decoder[Struct]]:
+    """A Struct form payload and its decoder. A union follows the ``json`` body's rules:
+    flattened (``AB | C`` with ``type AB = A | B`` documents one flat discriminator, even
+    inside an ``Annotated``, whose metadata it keeps), every member string-tagged, and
+    msgspec's decoder errors raised as a ``WiringError`` naming the field."""
+    bare = _strip_annotated(payload_type)
+    members = union_members(bare)
+    if len(members) > 1:
+        require_string_tags(label, cast("tuple[type[Struct], ...]", members))
+        flat = compose_union(members)
+        metadata = get_args(payload_type)[1:] if bare is not payload_type else ()
+        # Rebuilt at runtime, where a type checker reads ``Annotated[...]`` as a type form.
+        payload_type = cast("_RuntimeSubscript", Annotated)[flat, *metadata] if metadata else flat
+    decoder = build_decoder(label, cast("type[Struct] | UnionType", payload_type), decoder_for)
+    return payload_type, decoder
 
 
 @dataclass(frozen=True, slots=True)
@@ -898,15 +927,11 @@ def _compile_form(
                 if _is_none_type(headers_ann)
                 else _struct_annotation(cls, method, f"{field.name}.headers", headers_ann)
             )
-        payload_kind = _payload_kind(cls, method, field.name, payload_type)
-        struct_members = union_members(payload_type) if payload_kind == "struct" else ()
-        if len(struct_members) > 1:
-            # A Struct union, rebuilt flat so it decodes and schemas exactly as a ``json`` body
-            # does (``AB | C`` with ``type AB = A | B`` documents one flat discriminator).
-            payload_type = compose_union(struct_members)
-        decoder = (
-            decoder_for(cast("type[Struct]", payload_type)) if payload_kind == "struct" else None
-        )
+        payload_kind = _payload_kind(cls, method, field.name, payload_type, field.type)
+        decoder = None
+        if payload_kind == "struct":
+            label = f"{cls.__name__}.{method}: form field {field.name!r}"
+            payload_type, decoder = _form_struct_payload(label, payload_type, decoder_for)
         descriptors.append(
             FormField(
                 name=field.name,
@@ -916,6 +941,7 @@ def _compile_form(
                 payload_kind=payload_kind,
                 decoder=decoder,
                 required=field.required and not optional and not repeated,
+                defaulted=not field.required,
                 repeated=repeated,
                 enveloped=enveloped,
                 file=file,
@@ -1055,7 +1081,8 @@ def _decode_form_body(body: bytes, raw_headers: dict[str, str], spec: FormSpec) 
                 raise ValidationFailedError(
                     ErrorReason(reason=f"missing required form field {field.wire_name!r}")
                 )
-            values[field.wire_name] = None
+            if not field.defaulted:  # absent and defaulted: leave it to the Struct's default
+                values[field.wire_name] = None
             continue
         values[field.wire_name] = _decode_form_value(field, matched[-1])
     try:
@@ -1141,12 +1168,7 @@ def _return_kind(ann: object) -> ReturnKind | None:
         if ann is str:
             return "text"
     args = get_args(ann)
-    if (
-        origin is list
-        and len(args) == 1
-        and isinstance(args[0], type)
-        and issubclass(args[0], Struct)
-    ):
+    if origin is list and len(args) == 1 and is_struct_type(unwrap_alias(args[0])):
         return "json"
     return None
 

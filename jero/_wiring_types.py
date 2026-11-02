@@ -188,14 +188,14 @@ def build_decoder[D](
     annotation: type[Struct] | UnionType,
     build: Callable[[type[Struct] | UnionType], D],
 ) -> D:
-    """``build(annotation)``, with a union's msgspec ``TypeError`` raised as a ``WiringError``.
+    """``build(annotation)``, with msgspec's ``TypeError`` raised as a ``WiringError``.
 
     Building a union's decoder is where msgspec checks its tags against each other (one shared
     ``tag_field``, no tag value claimed twice), so that failure reads like every other contract
-    violation, naming ``label``. A single Struct's decoder is built with its errors untouched.
-    Shared by every inbound JSON site (``json`` bodies, WebSocket frames, the test client)."""
-    if not isinstance(annotation, UnionType):
-        return build(annotation)
+    violation, naming ``label``. (A single Struct's fields are resolved lazily, at decode
+    time, so its decoder builds without raising.) Shared by every JSON Struct-union site
+    (``json`` bodies, form fields, both WebSocket directions, the test client); a union may
+    arrive wrapped in ``Annotated``."""
     try:
         return build(annotation)
     except TypeError as e:
@@ -288,6 +288,7 @@ class FormField(Struct, frozen=True):
     payload_kind: PayloadKind
     decoder: Decoder[Struct] | None  # reusable typed decoder; set iff payload_kind == "struct"
     required: bool
+    defaulted: bool  # the form Struct gives the field a default, so an absent part takes it
     repeated: bool
     enveloped: bool
     file: bool

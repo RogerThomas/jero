@@ -24,7 +24,7 @@ from urllib.parse import urlsplit
 from msgspec import Struct, ValidationError, convert
 from msgspec.structs import fields as struct_fields
 
-from jero._wiring_types import WiringError, is_struct_type, union_members
+from jero._wiring_types import WiringError, is_struct_type, union_members, unwrap_alias
 from jero.errors import ErrorReason, MalformedRequestError
 
 logger = logging.getLogger("jero")
@@ -316,8 +316,10 @@ def _request_headers_type(owner: str, hook: str, ann: object) -> type[Struct]:
         return NoHeaders
     if get_origin(ann) is Request:
         args = get_args(ann)
-        if len(args) == 1 and isinstance(args[0], type) and issubclass(args[0], Struct):
-            return args[0]
+        # Alias-resolved like every handler source: ``Request[TraceAlias]`` binds the Struct.
+        headers = unwrap_alias(args[0]) if len(args) == 1 else None
+        if is_struct_type(headers):
+            return cast("type[Struct]", headers)
     raise WiringError(
         f"{owner}.{hook}: 'request' must be annotated Request[YourHeaders] "
         f"(or a bare Request to bind no headers), got {ann!r}",

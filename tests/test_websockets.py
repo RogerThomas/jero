@@ -488,13 +488,38 @@ class ClashingTagsApp(BaseApp):
         self._include_websocket(ClashingTagsWebSocket())
 
 
-def test_websocket_clashing_tags_fail_wiring() -> None:
+class ClashingOutboundWebSocket(WebSocketEndpoint, path="/clash"):
+    """Declare an outbound union a client could not tell apart."""
+
+    async def handle(self, websocket: WebSocket[TinyReply, First | Clash]) -> None:
+        """Send one frame if wiring were incorrectly allowed to succeed."""
+        await websocket.send(First(a=1))
+
+
+class ClashingOutboundApp(BaseApp):
+    """Attempt to mount the clashing outbound protocol."""
+
+    async def wire(self) -> None:
+        """Wire the protocol that startup must reject."""
+        self._include_websocket(ClashingOutboundWebSocket())
+
+
+@pytest.mark.parametrize(
+    ("app", "direction"),
+    [
+        pytest.param(ClashingTagsApp, "inbound", id="inbound"),
+        pytest.param(ClashingOutboundApp, "outbound", id="outbound"),
+    ],
+)
+def test_websocket_clashing_tags_fail_wiring(app: type[BaseApp], direction: str) -> None:
     """A tag claimed twice fails as a WiringError naming the direction, exactly as it does for
-    a ``json`` body, not as msgspec's bare TypeError."""
+    a ``json`` body, not as msgspec's bare TypeError. Outbound too: the server only encodes,
+    but a client could not decode it."""
     with pytest.raises(
-        RuntimeError, match=r"WiringError: WebSocket inbound type .* is not decodable: .*unique"
+        RuntimeError,
+        match=rf"WiringError: WebSocket {direction} type .* is not decodable: .*unique",
     ):
-        TestClient(ClashingTagsApp())
+        TestClient(app())
 
 
 class Publish(Struct, tag="publish"):

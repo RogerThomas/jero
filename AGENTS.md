@@ -239,13 +239,12 @@ Always follow the following style guide:
     WebSocket rule; both share `require_string_tags` in `_wiring_types`), else a
     `WiringError` naming the member; a `tag_field` mismatch or duplicate tag value (msgspec's
     `TypeError` building the decoder at wiring) is re-raised as a `WiringError` by the shared
-    `build_decoder` — for WebSocket frames too (`json_frame_decoder`), while a single Struct's
-    decoder errors pass through; `X | None`
+    `build_decoder` — for form fields and WebSocket frames too (`json_frame_decoder`); `X | None`
     stays rejected. A missing/unknown tag is the usual 422. OpenAPI emits msgspec's `anyOf` +
     `discriminator` (identical to a tagged-union response); no composed request examples for
     a union, matching the response side. `rename` never touches `tag_field`. Among the binding
     sources only `json` takes a union; `params`/`headers`/`cookies`/`path`/`form` stay one
-    Struct (a *field* inside a form may still be a Struct union, see `_compile_form`).
+    Struct (a *field* inside a form may still be a Struct union, under the same tag rules).
 - **Auth**: an object whose `authenticate` binds `headers`, `cookies`, or both
   (`Auth[THeaders, TUser]` / `CookieAuth[TCookies, TUser]` / `HybridAuth[THeaders,
   TCookies, TUser]` — three static protocols, one runtime `_CompiledAuth` that
@@ -383,12 +382,13 @@ Always follow the following style guide:
   `_exception_handlers` split.
   `jero/_wiring_types.py` — the resolved wiring contracts (`Sources`, `FormSpec`,
   `OperationSpec`, the `*Meta` types, `is_struct_type`/`strip_list`, and the one union
-  union vocabulary — `union_members`/`flatten_union_members` (aliases resolved, nested
+  vocabulary — `union_members`/`flatten_union_members` (aliases resolved, nested
   alias-unions spliced in, repeats dropped), `compose_union`, `require_string_tags`,
-  `build_decoder`). Reach for these rather than `get_args` on a new union site. Only `json`
-  bodies and inbound WebSocket frames use all four; form-field Struct unions, response items,
-  returns, `user`, and exception-handler returns use the flattening helpers but not the tag
-  check or `build_decoder` (see `bugs/`). All msgspec Structs; a leaf depending
+  `build_decoder`). Reach for these rather than `get_args` on a new union site. Every JSON
+  Struct-union site that decodes uses all four: `json` bodies, form fields
+  (`_form_struct_payload`), and both WebSocket directions (outbound is decoder-built at wiring
+  only to check its tags). Response items, returns, `user`, and exception-handler returns use
+  the flattening helpers. All msgspec Structs; a leaf depending
   only on msgspec + `jero.openapi`. `jero/openapi.py` — the dependency-free OpenAPI 3.1
   builder (`SecurityScheme`, `ResponseSpec`, `ModelMeta`, `build_openapi`).
   `jero/structs.py` — `Struct`, jero's drop-in `msgspec.Struct` base whose `meta=` class
@@ -403,8 +403,8 @@ Always follow the following style guide:
   types. `jero/background.py` — the in-process `BackgroundTasks` queue.
   `jero/websockets.py` — compiled typed WebSocket framing plus the in-process
   `Channel[T]` fan-out primitive.
-  `jero/links.py` — `Location` / `Link` and their reverse-routing targets (a leaf module
-  `core` and `streaming` both import). `jero/headers.py` — the `RawHeaders` opaque bag.
+  `jero/links.py` — `Location` / `Link` and their reverse-routing targets (depends only on
+  `_wiring_types`, for alias resolution; `core` and `streaming` both import it). `jero/headers.py` — the `RawHeaders` opaque bag.
   `jero/content_stream.py` — `ContentStream` and `ClientDisconnectedError` (a leaf
   module `core` imports).
   `jero/_assets.py` — the sender-free half of `_include_assets` and the OpenAPI favicon

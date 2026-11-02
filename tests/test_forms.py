@@ -7,7 +7,8 @@ import pytest
 from msgspec import Meta, Struct
 from msgspec.json import encode as json_encode
 
-from jero import BaseApp, Endpoint, FilePart, FormPart, Resource, StreamingResponse
+from jero import BaseApp, Endpoint, FilePart, FormPart, ModelMeta, Resource, StreamingResponse
+from jero import Struct as JeroStruct
 from jero.testing import TestClient, TestResponse
 
 
@@ -826,3 +827,249 @@ def test_nested_alias_union_form_field_documents_one_discriminator() -> None:
         {"$ref": "#/components/schemas/OtherPick"},
     ]
     assert set(pick["discriminator"]["mapping"]) == {"fixed", "percent", "other"}
+
+
+class AnnotatedPickForm(Struct):
+    """A form field whose aliased union is wrapped in ``Annotated`` for its description."""
+
+    pick: Annotated[Pick | OtherPick, Meta(description="pick-description")]
+
+
+class AnnotatedPickEndpoint(Endpoint, path="/annotated-pick"):
+    """Endpoint echoing the annotated aliased-union form field."""
+
+    async def post(self, form: AnnotatedPickForm) -> FixedPick | PercentPick | OtherPick:
+        """Echo back the bound field."""
+        return form.pick
+
+
+class AnnotatedPickApp(BaseApp):
+    """Mount the annotated union form endpoint, with the spec built."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(AnnotatedPickEndpoint())
+        self._include_openapi(title="pick", version="1")
+
+
+def test_annotated_alias_union_form_field_flattens() -> None:
+    """``Annotated[AB | C, Meta(...)]`` flattens exactly as the bare union does, and keeps its
+    description: one flat ``anyOf`` with one discriminator."""
+    with TestClient(AnnotatedPickApp()) as client:
+        resp = client.post("/annotated-pick", data={"pick": '{"type": "percent", "b": 1}'})
+        spec = client.get("/openapi.json").json()
+    assert resp.status_code == 200
+    assert resp.json() == {"type": "percent", "b": 1}
+    content = spec["paths"]["/annotated-pick"]["post"]["requestBody"]["content"]
+    pick = next(iter(content.values()))["schema"]["properties"]["pick"]
+    assert pick["anyOf"] == [
+        {"$ref": "#/components/schemas/FixedPick"},
+        {"$ref": "#/components/schemas/PercentPick"},
+        {"$ref": "#/components/schemas/OtherPick"},
+    ]
+    assert set(pick["discriminator"]["mapping"]) == {"fixed", "percent", "other"}
+    assert pick["description"] == "pick-description"
+
+
+class DescribedPick(JeroStruct, tag="described", meta=ModelMeta(description="member-description")):
+    """A union member carrying its own ModelMeta description."""
+
+    d: int
+
+
+class DescribedPickForm(Struct):
+    """A form field whose union has a described member."""
+
+    pick: DescribedPick | OtherPick
+
+
+class DescribedPickEndpoint(Endpoint, path="/described-pick"):
+    """Endpoint echoing the described-member form field."""
+
+    async def post(self, form: DescribedPickForm) -> Counted:
+        """Report which member bound, so the member is reached only through the form."""
+        return Counted(quantity=1 if isinstance(form.pick, DescribedPick) else 0)
+
+
+class DescribedPickApp(BaseApp):
+    """Mount the described-member form endpoint, with the spec built."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(DescribedPickEndpoint())
+        self._include_openapi(title="pick", version="1")
+
+
+def test_form_union_member_keeps_its_model_meta() -> None:
+    """A member reached only through a form field's union still gets its ModelMeta, as it
+    does through a ``json`` body."""
+    with TestClient(DescribedPickApp()) as client:
+        spec = client.get("/openapi.json").json()
+    assert spec["components"]["schemas"]["DescribedPick"]["description"] == "member-description"
+
+
+class Untagged(Struct):
+    """An untagged member."""
+
+    a: int
+
+
+class OtherUntagged(Struct):
+    """A second untagged member."""
+
+    b: int
+
+
+class IntTagged(Struct, tag=1):
+    """A member tagged with an int."""
+
+    a: int
+
+
+class OtherIntTagged(Struct, tag=2):
+    """A second int-tagged member."""
+
+    b: int
+
+
+class KindTagged(Struct, tag="kind", tag_field="kind"):
+    """A member on a different tag field from ``FixedPick``."""
+
+    c: int
+
+
+class UntaggedForm(Struct):
+    """A form field msgspec can't decode: no member is tagged."""
+
+    pick: Untagged | OtherUntagged
+
+
+class IntTaggedForm(Struct):
+    """A form field whose members carry int tags."""
+
+    pick: IntTagged | OtherIntTagged
+
+
+class MixedTagFieldForm(Struct):
+    """A form field whose members disagree on the tag field."""
+
+    pick: FixedPick | KindTagged
+
+
+class MixedScalarForm(Struct):
+    """An optional form field of an unsupported scalar union."""
+
+    pick: str | int | None = None
+
+
+class UntaggedFormEndpoint(Endpoint, path="/x"):
+    """Never wires."""
+
+    async def post(self, form: UntaggedForm) -> Untagged | OtherUntagged:
+        """Never reached; wiring fails first."""
+        return form.pick
+
+
+class IntTaggedFormEndpoint(Endpoint, path="/x"):
+    """Never wires."""
+
+    async def post(self, form: IntTaggedForm) -> IntTagged | OtherIntTagged:
+        """Never reached; wiring fails first."""
+        return form.pick
+
+
+class MixedTagFieldFormEndpoint(Endpoint, path="/x"):
+    """Never wires."""
+
+    async def post(self, form: MixedTagFieldForm) -> FixedPick | KindTagged:
+        """Never reached; wiring fails first."""
+        return form.pick
+
+
+class MixedScalarFormEndpoint(Endpoint, path="/x"):
+    """Never wires."""
+
+    async def post(self, form: MixedScalarForm) -> Counted:
+        """Never reached; wiring fails first."""
+        return Counted(quantity=0 if form.pick is None else 1)
+
+
+class _FormEndpointApp(BaseApp):
+    def __init__(self, endpoint: Endpoint) -> None:
+        self._endpoint = endpoint
+        super().__init__()
+
+    async def wire(self) -> None:
+        self._include_endpoint(self._endpoint)
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "message"),
+    [
+        pytest.param(
+            UntaggedFormEndpoint(),
+            r"form field 'pick': Untagged must declare an explicit string tag",
+            id="untagged",
+        ),
+        pytest.param(
+            IntTaggedFormEndpoint(),
+            r"form field 'pick': IntTagged must declare an explicit string tag",
+            id="int-tags",
+        ),
+        pytest.param(
+            MixedTagFieldFormEndpoint(),
+            r"WiringError: .*form field 'pick'.* is not decodable: .*same `tag_field`",
+            id="mixed-tag-field",
+        ),
+        pytest.param(
+            MixedScalarFormEndpoint(),
+            r"form field 'pick' has unsupported payload type str \| int \| None",
+            id="optional-scalar-union",
+        ),
+    ],
+)
+def test_undecodable_form_field_fails_wiring(endpoint: Endpoint, message: str) -> None:
+    """A form field's Struct union follows the ``json`` body's rules (string tags, msgspec's
+    errors as a WiringError), and a rejected field is named as it was written."""
+    with pytest.raises(RuntimeError, match=message):
+        TestClient(_FormEndpointApp(endpoint))
+
+
+class DefaultedForm(Struct):
+    """A form with a field that falls back to a non-None default, and a cross-field check."""
+
+    low: int
+    note: str | None
+    high: int = 5
+
+    def __post_init__(self) -> None:
+        if self.low > self.high:
+            raise ValueError("low must not exceed high")
+
+
+class DefaultedFormEndpoint(Endpoint, path="/defaulted"):
+    """Echoes the bound defaulted form."""
+
+    async def post(self, form: DefaultedForm) -> DefaultedForm:
+        """Echo the form back."""
+        return form
+
+
+class DefaultedFormApp(BaseApp):
+    """App wiring the defaulted form."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(DefaultedFormEndpoint())
+
+
+def test_absent_form_field_takes_its_default() -> None:
+    """An omitted field with a default binds that default, not ``None``; an omitted
+    ``X | None`` field without one binds ``None``; the Struct's own ``__post_init__`` check
+    still answers 422."""
+    with TestClient(DefaultedFormApp()) as client:
+        defaulted = client.post("/defaulted", data={"low": "1"})
+        explicit = client.post("/defaulted", data={"low": "1", "high": "2"})
+        invalid = client.post("/defaulted", data={"low": "9"})
+    assert defaulted.status_code == 200
+    assert defaulted.json() == {"low": 1, "note": None, "high": 5}
+    assert explicit.json() == {"low": 1, "note": None, "high": 2}
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"] == "low must not exceed high"

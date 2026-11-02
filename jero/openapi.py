@@ -15,7 +15,7 @@ no extra work here.
 
 from dataclasses import dataclass
 from types import UnionType
-from typing import Any, Literal, cast, get_args
+from typing import Annotated, Any, Literal, cast, get_args, get_origin
 
 from msgspec import Struct
 from msgspec.json import schema_components
@@ -331,6 +331,13 @@ def _model_payload_types(model: type[Struct] | UnionType | None) -> tuple[object
     return (model,)
 
 
+def _form_payload_types(payload: object) -> tuple[object, ...]:
+    """A form field's payload plus, when it is a Struct union (possibly inside ``Annotated``),
+    each member, for the same per-member ModelMeta discovery a ``json`` union gets."""
+    bare = get_args(payload)[0] if get_origin(payload) is Annotated else payload
+    return (payload, *get_args(bare)) if isinstance(bare, UnionType) else (payload,)
+
+
 def _body_payload_types(body: ResponseBody) -> tuple[object, ...]:
     """The types one media type's body contributes to the schema pass: its ``one_of``
     variants, or its model's types (see :func:`_model_payload_types`)."""
@@ -344,28 +351,27 @@ def _response_payload_types(response: ResponseEntry) -> tuple[object, ...]:
     return tuple(payload for body in response.bodies for payload in _body_payload_types(body))
 
 
+def _operation_types(op: OperationInput) -> list[object]:
+    """The types one operation references, in order (see :func:`_collect_types`)."""
+    types: list[object] = [param.struct for param in op.params]
+    if op.body is not None:
+        types += _model_payload_types(op.body.model)
+        for field in op.body.form_fields:
+            if not field.binary:
+                types += _form_payload_types(field.payload)
+    for response in op.responses:
+        types += _response_payload_types(response)
+        types += response.headers
+    return types
+
+
 def _collect_types(operations: tuple[OperationInput, ...]) -> list[object]:
     """Every type referenced anywhere — param/body/response Structs and non-binary form
     field payloads (which may be ``Annotated`` scalars) — de-duplicated in first-seen order.
     One list feeds the ``schema_components`` call. The shared ``Problem`` error schema is
     included automatically: ``core`` points every operation's derived error responses at it,
     so it is collected here like any other response model."""
-    seen: dict[object, None] = {}
-    for op in operations:
-        for param in op.params:
-            seen.setdefault(param.struct, None)
-        if op.body is not None:
-            for payload in _model_payload_types(op.body.model):
-                seen.setdefault(payload, None)
-            for field in op.body.form_fields:
-                if not field.binary:
-                    seen.setdefault(field.payload, None)
-        for response in op.responses:
-            for payload in _response_payload_types(response):
-                seen.setdefault(payload, None)
-            for header_type in response.headers:
-                seen.setdefault(header_type, None)
-    return list(seen)
+    return list(dict.fromkeys(t for op in operations for t in _operation_types(op)))
 
 
 @dataclass(slots=True)

@@ -289,12 +289,13 @@ def test_scoped_constant_headers_cover_only_their_include() -> None:
 
 
 type EchoHeadersAlias = EchoHeaders
+type CallerHeadersAlias = CallerHeaders
 
 
 class AliasedEchoMiddleware:
-    """A response_headers method naming its Struct through a ``type`` alias."""
+    """A response_headers method naming both its Structs through ``type`` aliases."""
 
-    def response_headers(self, request: Request[CallerHeaders]) -> EchoHeadersAlias | None:
+    def response_headers(self, request: Request[CallerHeadersAlias]) -> EchoHeadersAlias | None:
         """Echo the caller header back, or add nothing."""
         if request.headers.x_caller is None:
             return None
@@ -302,8 +303,8 @@ class AliasedEchoMiddleware:
 
 
 def test_headers_method_return_may_be_an_alias() -> None:
-    """``-> HAlias | None`` with ``type HAlias = H`` reads as ``H | None``, the same alias
-    resolution every other union jero reads gets."""
+    """``-> HAlias | None`` with ``type HAlias = H`` reads as ``H | None``, and
+    ``Request[CallerAlias]`` binds the Struct it names, as every other source does."""
     with TestClient(_MiddlewareApp(global_middleware=(AliasedEchoMiddleware(),))) as client:
         echoed = client.get("/ping", headers={"x-caller": "caller"})
     assert echoed.headers["x-echo"] == "caller"

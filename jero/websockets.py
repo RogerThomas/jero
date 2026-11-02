@@ -194,9 +194,14 @@ def compile_websocket(
 ) -> CompiledWebSocket:
     """Compile and validate both directions of a WebSocket protocol."""
     inbound_kind = _payload_kind("WebSocket inbound type", inbound)
+    outbound_kind = _payload_kind("WebSocket outbound type", outbound)
+    if outbound_kind == "json":
+        # The server only encodes outbound frames, but a client must decode them: build (and
+        # discard) the decoder so clashing tags fail here, as they do inbound.
+        json_frame_decoder("WebSocket outbound type", outbound)
     return CompiledWebSocket(
         inbound_kind=inbound_kind,
-        outbound_kind=_payload_kind("WebSocket outbound type", outbound),
+        outbound_kind=outbound_kind,
         decoder=(
             json_frame_decoder("WebSocket inbound type", inbound)
             if inbound_kind == "json"

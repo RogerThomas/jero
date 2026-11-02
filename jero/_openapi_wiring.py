@@ -472,6 +472,7 @@ def _success_entry(
         )
     # kind == "json": a Struct or list[Struct]
     item_ann, is_list = strip_list(annotation)
+    item_ann = unwrap_alias(item_ann)  # ``list[EchoAlias]`` documents as ``list[Echo]``
     if is_struct_type(item_ann):
         return ResponseEntry.single(
             status,

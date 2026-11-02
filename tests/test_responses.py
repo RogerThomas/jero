@@ -715,3 +715,34 @@ def test_str_union_member_dispatches_to_text(text_client: TestClient) -> None:
     assert resp.status_code == 200
     assert resp.text == "maybe-text-body"
     assert resp.headers["content-type"] == "text/plain; charset=utf-8"
+
+
+type EchoAlias = Echo
+
+
+class EchoListEndpoint(Endpoint, path="/echoes"):
+    """Returns a list whose item type is named through a ``type`` alias."""
+
+    async def get(self) -> list[EchoAlias]:
+        """Return one echo."""
+        return [Echo(body="body")]
+
+
+class EchoListApp(BaseApp):
+    """App wiring the aliased list return, with the spec built."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(EchoListEndpoint())
+        self._include_openapi(title="echoes", version="1")
+
+
+def test_list_of_aliased_struct_return() -> None:
+    """``-> list[EchoAlias]`` is ``-> list[Echo]``: it wires, encodes, and documents as an
+    array of the Struct the alias names."""
+    with TestClient(EchoListApp()) as client:
+        resp = client.get("/echoes")
+        spec = client.get("/openapi.json").json()
+    assert resp.status_code == 200
+    assert resp.json() == [{"body": "body"}]
+    schema = spec["paths"]["/echoes"]["get"]["responses"]["200"]["content"]["application/json"]
+    assert schema["schema"] == {"type": "array", "items": {"$ref": "#/components/schemas/Echo"}}

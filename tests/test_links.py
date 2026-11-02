@@ -418,3 +418,32 @@ def test_link_to_unknown_ref_fails_at_resolution() -> None:
         pytest.raises(WiringError, match="no mounted operation"),
     ):
         client.get("/dangling-ref")
+
+
+type JobPathAlias = JobPath
+
+
+class AliasedJobsResource(Resource, path="/aliased-jobs"):
+    """A resource whose item path is named through a ``type`` alias."""
+
+    async def read_one(self, path: JobPathAlias) -> JSONResponse[Job]:
+        """Point back at itself through ``from_operation``."""
+        return JSONResponse(
+            json=Job(id=path.job_id),
+            location=Location.from_operation(AliasedJobsResource.read_one, path=path),
+        )
+
+
+class AliasedJobsApp(BaseApp):
+    """App wiring the aliased-path resource."""
+
+    async def wire(self) -> None:
+        self._include_resource(AliasedJobsResource())
+
+
+def test_from_operation_resolves_an_aliased_path_type() -> None:
+    """A ``path`` named through a ``type`` alias reverse-routes like the Struct it names."""
+    with TestClient(AliasedJobsApp()) as client:
+        resp = client.get("/aliased-jobs/job-id")
+    assert resp.status_code == 200
+    assert resp.headers["location"] == "/aliased-jobs/job-id"
