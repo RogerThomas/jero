@@ -56,7 +56,7 @@ class WidgetHeaders(Struct, omit_defaults=True):
     x_trace_id: str | None = None
 
 
-class TokenAuth(Authenticator, exceptions=(InvalidTokenError,)):
+class TokenAuth(Authenticator, exceptions=[InvalidTokenError]):
     def authenticate(self, headers: Credentials) -> User:
         token = headers.authorization.removeprefix("Bearer ").strip()
         if token != "token":

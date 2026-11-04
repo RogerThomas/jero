@@ -46,10 +46,12 @@ class Authenticator:
     ``TestClient``'s undeclared-error check, so they're declared once instead of on every
     route::
 
-        class SessionAuth(Authenticator, exceptions=(InvalidSessionError,)):
+        class SessionAuth(Authenticator, exceptions=[InvalidSessionError]):
             async def authenticate(self, cookies: SessionCookies) -> User: ...
 
-    A subclass that passes no ``exceptions=`` inherits its parent's. Implement
+    The container type picks the rule, as for ``OperationMeta`` tags: a ``list`` extends
+    the parent's errors, a (non-empty) ``tuple`` replaces them, and passing none inherits
+    them. Implement
     ``authenticate`` as for any of the auth protocols; this base adds no stub, so a sync
     or ``async def`` one lints clean. :class:`BearerAuth` and :class:`BasicAuth` are
     subclasses, so they take the keyword too. Entries are validated as concrete jero error
@@ -66,12 +68,15 @@ class Authenticator:
             # A class-body assignment would skip the validation below.
             raise WiringError(
                 f"{cls.__name__}: declare its errors with the class keyword, "
-                f"`class {cls.__name__}(..., exceptions=(...))`, not an `exceptions` "
+                f"`class {cls.__name__}(..., exceptions=[...])`, not an `exceptions` "
                 f"attribute in the class body",
             )
-        if exceptions is not None:
-            # Validated here, once per class (a subclass inherits the checked tuple).
-            cls.exceptions = validated_error_classes(exceptions, cls.__name__)
+        if not exceptions:
+            return  # nothing declared -> inherit the parent's (the tags rule)
+        # The container type chooses, as for OperationMeta tags: a tuple replaces the
+        # parent's errors, a list extends them. Validated here, once per class.
+        inherited = () if isinstance(exceptions, tuple) else cls.exceptions
+        cls.exceptions = validated_error_classes([*inherited, *exceptions], cls.__name__)
 
 
 class BearerAuth(Authenticator):

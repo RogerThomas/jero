@@ -293,8 +293,9 @@ Always follow the following style guide:
   `authorization` field is a `WiringError` at the mount (`_security_scheme`). An
   authenticator declares the errors it raises once, with the `exceptions=` class keyword
   on the plain `Authenticator` base (`class SessionAuth(Authenticator,
-  exceptions=(InvalidSessionError,))`, statically typed via its `__init_subclass__`; a
-  subclass passing none inherits its parent's). The entries are validated once, at class
+  exceptions=[InvalidSessionError])`, statically typed via its `__init_subclass__`; on a
+  subclass, as for `OperationMeta` tags, a list extends the parent's errors, a non-empty
+  tuple replaces them, and none inherits them). The entries are validated once, at class
   definition (`validated_error_classes` in `_auth`, the same rule `_openapi_wiring` applies
   to a meta's `exceptions=`); a class-body `exceptions` attribute, which would bypass
   that, is a `WiringError` there too. At every mount, WebSocket ones included,

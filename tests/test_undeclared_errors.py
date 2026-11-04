@@ -302,7 +302,7 @@ class UndeclaredAuthError(HTTPError, type="undeclared-auth", title="Undeclared a
     """An authenticator error declared nowhere."""
 
 
-class TokenAuth(BearerAuth, exceptions=(InvalidTokenError, ProviderUnavailableError)):
+class TokenAuth(BearerAuth, exceptions=[InvalidTokenError, ProviderUnavailableError]):
     """Declares the errors it raises once, for every operation it guards."""
 
     def authenticate(self, headers: TokenHeaders) -> Caller:
@@ -320,6 +320,14 @@ class TokenAuth(BearerAuth, exceptions=(InvalidTokenError, ProviderUnavailableEr
 
 class InheritingTokenAuth(TokenAuth):
     """Passes no ``exceptions=``, so it inherits its parent's."""
+
+
+class ExtendingTokenAuth(TokenAuth, exceptions=[UndeclaredAuthError]):
+    """A list extends the parent's errors."""
+
+
+class ReplacingTokenAuth(TokenAuth, exceptions=(UndeclaredAuthError,)):
+    """A tuple replaces the parent's errors."""
 
 
 class ProtectedEndpoint(Endpoint, path="/protected", meta=EndpointMeta(exceptions=[DeclaredError])):
@@ -366,6 +374,25 @@ def test_authenticator_declared_error_passes(
     with TestClient(ProtectedApp(auth)) as client:
         response = client.get("/protected", headers={"authorization": authorization})
     assert response.status_code == status
+
+
+def test_list_extends_the_parent_authenticators_errors() -> None:
+    """A subclass's ``exceptions=[...]`` adds to its parent's: both its own error and the
+    inherited one pass."""
+    with TestClient(ProtectedApp(ExtendingTokenAuth())) as client:
+        undeclared = client.get("/protected", headers={"authorization": "Bearer undeclared"})
+        wrong = client.get("/protected", headers={"authorization": "Bearer wrong"})
+    assert (undeclared.status_code, wrong.status_code) == (403, 401)
+
+
+def test_tuple_replaces_the_parent_authenticators_errors() -> None:
+    """A subclass's ``exceptions=(...)`` replaces its parent's, so an inherited error it
+    no longer lists fails the check."""
+    with (
+        TestClient(ProtectedApp(ReplacingTokenAuth())) as client,
+        pytest.raises(AssertionError, match="GET /protected returned InvalidTokenError"),
+    ):
+        client.get("/protected", headers={"authorization": "Bearer wrong"})
 
 
 def test_authenticator_undeclared_error_fails_the_request() -> None:
@@ -444,7 +471,7 @@ def test_class_body_exceptions_attribute_fails_at_class_definition() -> None:
         new_class(
             "BodyAuth",
             (BearerAuth,),
-            exec_body=lambda namespace: namespace.update(exceptions=(InvalidTokenError,)),
+            exec_body=lambda namespace: namespace.update(exceptions=[InvalidTokenError]),
         )
 
 

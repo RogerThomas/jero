@@ -41,7 +41,7 @@ class TokenLookup:
         return user
 
 
-class TokenAuth(TokenLookup, BearerAuth, exceptions=(InvalidTokenError,)):
+class TokenAuth(TokenLookup, BearerAuth, exceptions=[InvalidTokenError]):
     """Gating authenticator: every route mounted with it requires valid credentials.
 
     Subclassing :class:`~jero.BearerAuth` makes its routes advertise HTTP bearer in the
@@ -57,7 +57,7 @@ class TokenAuth(TokenLookup, BearerAuth, exceptions=(InvalidTokenError,)):
         return user
 
 
-class OptionalTokenAuth(TokenLookup, BearerAuth, exceptions=(InvalidTokenError,)):
+class OptionalTokenAuth(TokenLookup, BearerAuth, exceptions=[InvalidTokenError]):
     """Anonymous-accepting authenticator: returning ``None`` reports that the caller
     presented no credentials, and the route's handlers are invoked with ``user=None``.
 
@@ -71,7 +71,7 @@ class OptionalTokenAuth(TokenLookup, BearerAuth, exceptions=(InvalidTokenError,)
 
 
 @dataclass
-class SessionAuth(Authenticator, exceptions=(InvalidTokenError,)):
+class SessionAuth(Authenticator, exceptions=[InvalidTokenError]):
     """Cookie-based session auth over the same token lookup ``TokenAuth`` uses.
 
     Satisfies ``CookieAuth[SessionCookies, User]`` structurally. Its base is the plain

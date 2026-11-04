@@ -347,7 +347,7 @@ def authenticator_exceptions(auth: object) -> tuple[type[BaseHTTPError], ...]:
     if hasattr(type(auth), "exceptions") or hasattr(auth, "exceptions"):
         raise WiringError(
             f"{owner}: declare its errors with the class keyword, "
-            f"`class {owner}(Authenticator, exceptions=(...))`; an `exceptions` "
+            f"`class {owner}(Authenticator, exceptions=[...])`; an `exceptions` "
             f"attribute on an authenticator outside the Authenticator bases is never read",
         )
     return ()

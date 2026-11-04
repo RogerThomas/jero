@@ -51,7 +51,7 @@ class User(Struct):
 
 
 @dataclass
-class TokenAuth(Authenticator, exceptions=(InvalidTokenError,)):  # the error it raises
+class TokenAuth(Authenticator, exceptions=[InvalidTokenError]):  # the error it raises
     _users: dict[str, User]
 
     async def authenticate(self, headers: Credentials) -> User:
@@ -91,7 +91,7 @@ class User(Struct):
     name: str
 
 
-class TokenAuth(Authenticator, exceptions=(InvalidTokenError,)):
+class TokenAuth(Authenticator, exceptions=[InvalidTokenError]):
     async def authenticate(self, headers: Credentials) -> User:
         if headers.authorization != "Bearer token":
             raise InvalidTokenError()
@@ -208,7 +208,7 @@ class TokenLookup:
         return user
 
 
-class TokenAuth(TokenLookup, BearerAuth, exceptions=(InvalidTokenError,)):
+class TokenAuth(TokenLookup, BearerAuth, exceptions=[InvalidTokenError]):
     async def authenticate(self, headers: Credentials) -> User:            # gates
         user = self._resolve(headers)
         if user is None:
@@ -216,7 +216,7 @@ class TokenAuth(TokenLookup, BearerAuth, exceptions=(InvalidTokenError,)):
         return user
 
 
-class OptionalTokenAuth(TokenLookup, BearerAuth, exceptions=(InvalidTokenError,)):
+class OptionalTokenAuth(TokenLookup, BearerAuth, exceptions=[InvalidTokenError]):
     async def authenticate(self, headers: Credentials) -> User | None:     # serves anonymous
         return self._resolve(headers)
 
@@ -375,7 +375,7 @@ class ProviderUnavailableError(
 
 
 @dataclass
-class TokenAuth(BearerAuth, exceptions=(InvalidTokenError, ProviderUnavailableError)):
+class TokenAuth(BearerAuth, exceptions=[InvalidTokenError, ProviderUnavailableError]):
     _users: dict[str, User] | None  # None: the identity provider couldn't be reached
 
     async def authenticate(self, headers: Credentials) -> User:
@@ -406,8 +406,9 @@ They count as declared for
 [`TestClient`'s check](openapi.md#keeping-the-list-complete) too, so a test that sends a
 bad token to an operation listing its own `exceptions` passes. Nothing else does: an
 authenticator error it doesn't declare fails that check like any other, 401s included.
-The keyword is type-checked, a subclass that passes none inherits its parent's, and the
-entries are checked once, when the class is defined: anything but a jero error class is
+The keyword is type-checked and follows the same container rule as `OperationMeta`
+tags: on a subclass, a list extends the parent's errors, a tuple replaces them, and
+passing none inherits them. The entries are checked once, when the class is defined: anything but a jero error class is
 a `WiringError` right there, as is an `exceptions` attribute in the class body (the
 keyword is the only form). One on an authenticator outside these bases, which jero
 would never read, is a `WiringError` when it's mounted.

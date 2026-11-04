@@ -195,7 +195,7 @@ app = App()
 `authenticate` signature, so any object satisfying the shape structurally works,
 exactly as with header auth. The one reason to add one: an authenticator that raises
 its own errors (an `InvalidSessionError`, say) declares them with
-`class SessionAuth(Authenticator, exceptions=(...))`, so every route it guards documents
+`class SessionAuth(Authenticator, exceptions=[...])`, so every route it guards documents
 them (see [Declaring the authenticator's errors](auth.md#declaring-the-authenticators-errors)).
 Two more shapes follow the same rule:
 
