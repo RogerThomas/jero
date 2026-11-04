@@ -46,8 +46,8 @@ app = App()
 There is no implicit thread pool on purpose, and the main reason is performance.
 Handing every sync handler to a thread would add a thread switch to each request, the
 CPU-light ones that never needed it included. It would also hide which of your code
-runs concurrently. `asyncio.to_thread`
-puts the hand-off in plain sight, on exactly the calls that need it.
+runs concurrently. `asyncio.to_thread` puts the hand-off in plain sight, on exactly the
+calls that need it.
 
 ## Does jero support WebSockets?
 
