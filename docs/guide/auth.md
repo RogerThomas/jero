@@ -30,7 +30,7 @@ from dataclasses import dataclass
 
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, HTTPError
+from jero import Authenticator, BaseApp, Endpoint, HTTPError
 
 
 class InvalidTokenError(
@@ -51,7 +51,7 @@ class User(Struct):
 
 
 @dataclass
-class TokenAuth:
+class TokenAuth(Authenticator, exceptions=[InvalidTokenError]):  # the error it raises
     _users: dict[str, User]
 
     async def authenticate(self, headers: Credentials) -> User:
@@ -71,7 +71,7 @@ stand-in for the one above):
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, HTTPError
+from jero import Authenticator, BaseApp, Endpoint, HTTPError
 
 
 class InvalidTokenError(
@@ -91,7 +91,7 @@ class User(Struct):
     name: str
 
 
-class TokenAuth:
+class TokenAuth(Authenticator, exceptions=[InvalidTokenError]):
     async def authenticate(self, headers: Credentials) -> User:
         if headers.authorization != "Bearer token":
             raise InvalidTokenError()
@@ -208,7 +208,7 @@ class TokenLookup:
         return user
 
 
-class TokenAuth(TokenLookup, BearerAuth):
+class TokenAuth(TokenLookup, BearerAuth, exceptions=[InvalidTokenError]):
     async def authenticate(self, headers: Credentials) -> User:            # gates
         user = self._resolve(headers)
         if user is None:
@@ -216,7 +216,7 @@ class TokenAuth(TokenLookup, BearerAuth):
         return user
 
 
-class OptionalTokenAuth(TokenLookup, BearerAuth):
+class OptionalTokenAuth(TokenLookup, BearerAuth, exceptions=[InvalidTokenError]):
     async def authenticate(self, headers: Credentials) -> User | None:     # serves anonymous
         return self._resolve(headers)
 
@@ -341,3 +341,75 @@ authed route that declares nothing defaults to HTTP bearer. For a token in a hea
 query param, or cookie, set the attribute with `SecurityScheme.api_key(...)`. The value
 must be a `SecurityScheme` (or absent / `None`) — anything else is a `WiringError` at
 startup. See [OpenAPI & docs](openapi.md#security-schemes).
+
+### Declaring the authenticator's errors
+
+An authenticator often raises errors of its own: an invalid token, or a 503 when the
+identity provider can't be reached. Declare them once, with the `exceptions=` class
+keyword on `Authenticator`, and every operation the authenticator guards documents them
+in the spec, with no entry on each route. `BearerAuth` and `BasicAuth` are
+`Authenticator`s, so they take the keyword too:
+
+```python
+from dataclasses import dataclass
+
+from msgspec import Struct
+
+from jero import BaseApp, BearerAuth, Endpoint, HTTPError
+
+
+class Credentials(Struct):
+    authorization: str
+
+
+class User(Struct):
+    user_id: str
+
+
+class InvalidTokenError(HTTPError, type="invalid-token", title="Invalid token", status=401): ...
+
+
+class ProviderUnavailableError(
+    HTTPError, type="provider-unavailable", title="Provider unavailable", status=503
+): ...
+
+
+@dataclass
+class TokenAuth(BearerAuth, exceptions=[InvalidTokenError, ProviderUnavailableError]):
+    _users: dict[str, User] | None  # None: the identity provider couldn't be reached
+
+    async def authenticate(self, headers: Credentials) -> User:
+        if self._users is None:
+            raise ProviderUnavailableError()
+        user = self._users.get(headers.authorization.removeprefix("Bearer "))
+        if user is None:
+            raise InvalidTokenError()
+        return user
+
+
+class MeEndpoint(Endpoint, path="/me"):
+    async def get(self, user: User) -> User:
+        return user
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        auth = TokenAuth({"token": User(user_id="user-id")})
+        self._include_endpoint(MeEndpoint(), auth=auth)
+        self._include_openapi(title="Me API", version="1.0.0")
+
+
+app = App()
+```
+
+They count as declared for
+[`TestClient`'s check](openapi.md#keeping-the-list-complete) too, so a test that sends a
+bad token to an operation listing its own `exceptions` passes. Nothing else does: an
+authenticator error it doesn't declare fails that check like any other, 401s included.
+The keyword is type-checked and follows the same container rule as `OperationMeta`
+tags: on a subclass, a list extends the parent's errors, a tuple replaces them, and
+passing none inherits them. With several `Authenticator` parents, "the parent's" means
+all of theirs combined. The entries are checked once, when the class is defined: anything but a jero error class is
+a `WiringError` right there, as is an `exceptions` attribute in the class body (the
+keyword is the only form). One on an authenticator outside these bases, which jero
+would never read, is a `WiringError` when it's mounted.

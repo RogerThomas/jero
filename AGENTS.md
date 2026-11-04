@@ -290,8 +290,25 @@ Always follow the following style guide:
   reduced to one scheme — `_include_openapi` raises for it, naming the class, but only
   if OpenAPI is ever wired. A *declared* http scheme (bearer/basic names the
   `Authorization` header) on an authenticator whose `headers` Struct binds no
-  `authorization` field is a `WiringError` at the mount (`_security_scheme`).
-  `BearerAuth` / `BasicAuth` are plain bases carrying only `openapi_security`, deliberately
+  `authorization` field is a `WiringError` at the mount (`_security_scheme`). An
+  authenticator declares the errors it raises once, with the `exceptions=` class keyword
+  on the plain `Authenticator` base (`class SessionAuth(Authenticator,
+  exceptions=[InvalidSessionError])`, statically typed via its `__init_subclass__`; on a
+  subclass, as for `OperationMeta` tags, a list extends the parent's errors, a non-empty
+  tuple replaces them, and none inherits them; "the parent's" is every `Authenticator`
+  base's errors combined, not just the first in the MRO). The entries are validated once, at class
+  definition (`validated_error_classes` in `_auth`, the same rule `_openapi_wiring` applies
+  to a meta's `exceptions=`) and stored as `__auth_exceptions__` (the `__model_meta__`
+  precedent), never under the keyword's name, so `@dataclass(slots=True)`'s class rebuild
+  keeps them. Any `exceptions` *attribute* is therefore a mistake and a `WiringError`:
+  from a class body or a mixin at definition, and on any authenticator (instance fields
+  included, base or no base) at every mount, WebSocket ones too, via
+  `authenticator_exceptions` in `_auth`. They
+  ride `OperationSpec.auth_exceptions` into `_response_cascade`, so every guarded
+  operation documents them, in the spec and in `TestClient`'s undeclared-error check.
+  `demo_app`'s three authenticators declare `InvalidTokenError` this way.
+  `BearerAuth` / `BasicAuth` are `Authenticator` subclasses (so they take `exceptions=`)
+  carrying only `openapi_security`, deliberately
   *not* subclasses of `Auth`: with no inherited `authenticate` stub, a sync or `async def`
   override lints clean (pylint W0236 flagged async ones), and conformance is still checked
   structurally at the `auth=` mount and at wiring. `_include_resource` / `_include_endpoint` /
@@ -423,6 +440,9 @@ Always follow the following style guide:
   `Channel[T]` fan-out primitive.
   `jero/_links.py` — `Location` / `Link` and their reverse-routing targets (a leaf module
   `_core` and `_streaming` both import). `jero/_headers.py` — the `RawHeaders` opaque bag.
+  `jero/_auth.py` — the authenticator bases (`Authenticator`, `BearerAuth`, `BasicAuth`);
+  a leaf (`_errors`, `_openapi`, `_wiring_types`), split out of `_core` for the module cap (the protocols
+  stay in `_core`).
   `jero/_content_stream.py` — `ContentStream` and `ClientDisconnectedError` (a leaf
   module `_core` imports).
   `jero/_routing.py` — path templates (`parse_template`, `split_action`, `template_str`) and
@@ -531,9 +551,10 @@ Always follow the following style guide:
   by `documented_errors` in `_openapi_wiring` from `_response_cascade`, the one function
   `operation_input` also builds the spec's error responses from (derived built-ins,
   joined per status by declared ones, then replaced by explicit `ResponseSpec`s), so the
-  check and the spec can't disagree. Any error passes at a `ResponseSpec`-owned status,
-  and at 401 on an authenticated operation (an authenticator's own 401 errors are
-  declared nowhere). The route hands its `DocumentedErrors` to the exception funnel,
+  check and the spec can't disagree. Any error passes at a `ResponseSpec`-owned status.
+  An authenticator's declared `exceptions` are documented on every operation it guards
+  (no blanket allowance for 401s: an authenticator lists its own), but they don't switch
+  the check on for an operation that declares nothing itself. The route hands its `DocumentedErrors` to the exception funnel,
   which checks the error actually *sent* (so a handler's translation into an error class
   counts; an `ExceptionResponse` answer is never checked, since `exceptions=` can't list
   one) only when the scope carries `TestClient`'s `DocumentedErrors.SCOPE_KEY` list —

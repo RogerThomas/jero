@@ -103,6 +103,7 @@ from jero._assets import (
     favicon_payload,
     if_none_match_hit,
 )
+from jero._auth import authenticator_exceptions
 from jero._background import BackgroundTasks
 from jero._codecs import msgspec_encoder
 from jero._content_stream import ClientDisconnectedError, ContentStream
@@ -607,28 +608,6 @@ class HybridAuth[THeaders: Struct, TCookies: Struct, TUser](Protocol):
         docstring); it is never a way to say "these credentials are bad".
         """
         ...  # pylint: disable=unnecessary-ellipsis  # Protocol stub; pyright needs the body
-
-
-class BearerAuth:
-    """A base whose operations advertise HTTP bearer in the OpenAPI spec.
-
-    Sugar over the ``openapi_security`` attribute the spec generator reads — subclass
-    this instead of writing the attribute by hand, and implement ``authenticate`` (sync
-    or ``async def``) as for any :class:`Auth`. Deliberately not a subclass of the
-    protocol: there is no inherited ``authenticate`` stub to override, so either flavor
-    lints clean. ``authenticate`` is checked by the type checker at the ``auth=`` mount and
-    by jero at wiring, which also requires its ``headers`` to bind ``authorization`` (the
-    header the scheme names).
-    """
-
-    openapi_security: ClassVar[SecurityScheme] = SecurityScheme.http_bearer()
-
-
-class BasicAuth:
-    """A base whose operations advertise HTTP basic in the OpenAPI spec; otherwise as
-    :class:`BearerAuth`."""
-
-    openapi_security: ClassVar[SecurityScheme] = SecurityScheme.http_basic()
 
 
 class _StreamResult(Protocol):
@@ -3961,9 +3940,11 @@ class BaseApp[FactoryT = None](ABC):
         compiled_auth = _CompiledAuth(auth) if auth is not None else None
         auth_mode: AuthMode = None
         security_scheme: SecurityScheme | None = None
+        auth_exceptions: tuple[type[BaseHTTPError], ...] = ()
         if compiled_auth is not None:
             auth_mode = "optional" if compiled_auth.reports_absence else "required"
             security_scheme = _security_scheme(auth, compiled_auth)
+            auth_exceptions = authenticator_exceptions(auth)
 
         registered = False
         for name, verb in methods.items():
@@ -3987,6 +3968,7 @@ class BaseApp[FactoryT = None](ABC):
                 op_meta=getattr(cls, f"meta_{name}", None),
                 operation_id_default=f"{cls.__name__}_{_camel(name)}",
                 auth_owner=compiled_auth.owner if compiled_auth is not None else None,
+                auth_exceptions=auth_exceptions,
             )
             handler = _Route(
                 fn,
@@ -4253,6 +4235,9 @@ class BaseApp[FactoryT = None](ABC):
             raise WiringError(f"{cls.__name__} must define handle")
         sources, inbound, outbound = _bind_websocket_sources(cls, fn)
         compiled_auth = _CompiledAuth(auth) if auth is not None else None
+        if auth is not None:
+            # Rejects a stray `exceptions` attribute here too; sockets document no errors.
+            authenticator_exceptions(auth)
         self.__check_user_source(cls, "handle", sources, compiled_auth)
         tail = _RouteTail()
         intercepts: list[_WebSocketInterceptRunner] = []

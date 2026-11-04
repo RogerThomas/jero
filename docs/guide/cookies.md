@@ -193,7 +193,11 @@ app = App()
 
 `SessionAuth` needs no base class — jero's wiring introspects the concrete
 `authenticate` signature, so any object satisfying the shape structurally works,
-exactly as with header auth. Two more shapes follow the same rule:
+exactly as with header auth. The one reason to add one: an authenticator that raises
+its own errors (an `InvalidSessionError`, say) declares them with
+`class SessionAuth(Authenticator, exceptions=[...])`, so every route it guards documents
+them (see [Declaring the authenticator's errors](auth.md#declaring-the-authenticators-errors)).
+Two more shapes follow the same rule:
 
 - `authenticate(self, cookies: TCookies) -> TUser` — session-cookie auth, as above.
 - `authenticate(self, headers: THeaders, cookies: TCookies) -> TUser` — **hybrid**: one

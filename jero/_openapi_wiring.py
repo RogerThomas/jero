@@ -16,6 +16,7 @@ from typing import Any, ClassVar, Generic, Literal, TypeVar, Union, cast, get_ar
 from msgspec import Struct, defstruct
 from msgspec.structs import fields as struct_fields
 
+from jero._auth import validated_error_classes
 from jero._errors import (
     AuthenticationRequiredError,
     BaseHTTPError,
@@ -336,22 +337,10 @@ def _declared_exceptions(spec: OperationSpec, operation_id: str) -> list[type[Ba
     """The declared ``exceptions``: the class-level meta's first, extended by the
     operation's (both remain raiseable — the union, deduped), validated as concrete jero
     error classes."""
-    declared: dict[type[BaseHTTPError], None] = {}
+    entries: list[object] = []
     for meta in (spec.class_meta, spec.op_meta):
-        entries = cast("Sequence[object]", meta.exceptions if meta is not None else ())
-        for entry in entries:
-            concrete = (
-                isinstance(entry, type)
-                and hasattr(entry, "status")
-                and issubclass(entry, (HTTPError, StructHTTPError))
-            )
-            if not concrete:
-                raise WiringError(
-                    f"{operation_id}: 'exceptions' entries must be concrete jero error "
-                    f"classes (HTTPError or StructHTTPError subclasses); got {entry!r}",
-                )
-            declared.setdefault(cast("type[BaseHTTPError]", entry), None)
-    return list(declared)
+        entries += cast("Sequence[object]", meta.exceptions if meta is not None else ())
+    return list(validated_error_classes(entries, operation_id))
 
 
 # Each framework-generated error status maps to the built-in error it is raised as, so a
@@ -414,7 +403,9 @@ def _response_cascade(
     classes an entry describes, or the explicit ``ResponseSpec`` that took the status over.
 
     The cascade, lowest first: the built-ins the framework raises for the operation's
-    sources, then the ``declared`` exceptions, which *join* a built-in at the same status
+    sources, then the authenticator's ``exceptions`` (``spec.auth_exceptions``, documented
+    on every operation it guards) and the ``declared`` ones, which *join* a built-in at
+    the same status
     (the operation can still send both: a declared 422 doesn't stop a malformed body's
     own 422), then explicit ``responses`` (class-level ``meta`` before ``meta_<op>``),
     which replace whatever a status held. Statuses keep their first position. The single
@@ -425,7 +416,7 @@ def _response_cascade(
         status: (_STATUS_ERRORS[status],)
         for status in _error_statuses(spec.sources, authed=spec.auth_mode is not None)
     }
-    for cls in declared:
+    for cls in (*spec.auth_exceptions, *declared):
         errors[cls.status] = tuple(dict.fromkeys((*errors.get(cls.status, ()), cls)))
     cascade: dict[int, tuple[type[BaseHTTPError], ...] | ResponseSpec] = dict(errors)
     for meta in (spec.class_meta, spec.op_meta):
@@ -439,10 +430,10 @@ class DocumentedErrors(Struct, frozen=True):
     that an operation declaring ``exceptions=`` never answers with an error it leaves out.
 
     ``classes`` are the documented error classes (exact classes: a subclass documents its
-    own ``type``, so it is not covered by its parent). ``statuses`` are the statuses any
-    error passes at: one an explicit ``ResponseSpec`` took over (the user's own
-    declaration), and 401 on an authenticated operation (the spec documents a 401 there,
-    and the authenticator may raise its own 401 errors, which no route declares).
+    own ``type``, so it is not covered by its parent); they include the errors the
+    operation's authenticator declares. ``statuses`` are the statuses an explicit
+    ``ResponseSpec`` took over; any error passes at one of those, as the user's own
+    declaration.
 
     A ``TestClient`` request carries a list under ``SCOPE_KEY`` that an undeclared
     error's message is appended to; a real server's scope never does, so production pays
@@ -458,7 +449,9 @@ class DocumentedErrors(Struct, frozen=True):
 
 def documented_errors(spec: OperationSpec) -> DocumentedErrors | None:
     """The errors ``spec``'s OpenAPI responses document, or ``None`` when it declares no
-    ``exceptions`` (the declaration is the switch: nothing declared, nothing checked).
+    ``exceptions`` (the declaration is the switch: nothing declared, nothing checked; an
+    authenticator's ``exceptions`` are documented but don't switch the check on, since
+    they say nothing about the operation's own errors).
 
     Read from :func:`_response_cascade`, the same cascade the spec is built from, so the
     check can never disagree with the spec.
@@ -478,8 +471,7 @@ def documented_errors(spec: OperationSpec) -> DocumentedErrors | None:
         ),
         statuses=frozenset(
             status for status, documented in cascade.items() if isinstance(documented, ResponseSpec)
-        )
-        | (frozenset({401}) if spec.auth_mode is not None else frozenset()),
+        ),
     )
 
 

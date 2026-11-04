@@ -366,3 +366,6 @@ class OperationSpec(Struct):
     # hybrid or multi-field-cookie authenticator with no explicit openapi_security) can
     # name it in the WiringError raised when the document is actually built.
     auth_owner: str | None = None
+    # The authenticator's declared ``exceptions`` (validated at the mount): documented on
+    # every operation it guards, in the spec and for TestClient's undeclared-error check.
+    auth_exceptions: tuple[type[BaseHTTPError], ...] = ()

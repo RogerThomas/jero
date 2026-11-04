@@ -2,16 +2,20 @@
 an error the declaration (and so the OpenAPI spec) leaves out."""
 
 import asyncio
-from collections.abc import AsyncGenerator, Awaitable, Callable, MutableMapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from types import new_class
 from typing import Any, Self, cast
 
 import pytest
 from msgspec import Struct
 
 from jero import (
+    Authenticator,
     BaseApp,
     BaseHTTPError,
+    BearerAuth,
     Endpoint,
     EndpointMeta,
     HTTPError,
@@ -22,6 +26,9 @@ from jero import (
     Request,
     ResponseSpec,
     StructHTTPError,
+    WebSocket,
+    WebSocketEndpoint,
+    WiringError,
 )
 from jero.testing import TestClient
 
@@ -283,39 +290,316 @@ class Caller(Struct):
 
 
 class InvalidTokenError(HTTPError, type="invalid-token", title="Invalid token", status=401):
-    """The authenticator's own 401 error, declared on no operation."""
+    """The authenticator's own 401 error, declared on the authenticator."""
 
 
-class TokenAuth:
-    """Accepts one token and raises its own 401 error for any other."""
+class ProviderUnavailableError(
+    HTTPError, type="provider-unavailable", title="Provider unavailable", status=503
+):
+    """The authenticator's non-401 error, declared on the authenticator."""
+
+
+class UndeclaredAuthError(HTTPError, type="undeclared-auth", title="Undeclared auth", status=403):
+    """An authenticator error declared nowhere."""
+
+
+class TokenAuth(BearerAuth, exceptions=[InvalidTokenError, ProviderUnavailableError]):
+    """Declares the errors it raises once, for every operation it guards."""
 
     def authenticate(self, headers: TokenHeaders) -> Caller:
-        """Authenticate the bearer token."""
-        if headers.authorization != "token":
+        """Authenticate the bearer token, raising the error its value names."""
+        match headers.authorization:
+            case "Bearer token":
+                return Caller(user_id="user-id")
+            case "Bearer down":
+                raise ProviderUnavailableError()
+            case "Bearer undeclared":
+                raise UndeclaredAuthError()
+            case _:
+                raise InvalidTokenError()
+
+
+class InheritingTokenAuth(TokenAuth):
+    """Passes no ``exceptions=``, so it inherits its parent's."""
+
+
+class EmptyTupleTokenAuth(TokenAuth, exceptions=()):
+    """An empty tuple inherits its parent's errors (the tags rule), it doesn't clear them."""
+
+
+class EmptyListTokenAuth(TokenAuth, exceptions=[]):
+    """An empty list inherits its parent's errors too."""
+
+
+@dataclass(slots=True)
+class SlottedTokenAuth(BearerAuth, exceptions=[InvalidTokenError]):
+    """A slotted dataclass authenticator: the decorator rebuilds the class, and its
+    declared errors must survive that."""
+
+    _token: str
+
+    def authenticate(self, headers: TokenHeaders) -> Caller:
+        """Accept only the configured token."""
+        if headers.authorization != self._token:
             raise InvalidTokenError()
         return Caller(user_id="user-id")
 
 
+class SlottedProtectedApp(BaseApp):
+    """App mounting the protected operation behind the slotted authenticator."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(ProtectedEndpoint(), auth=SlottedTokenAuth("Bearer token"))
+
+
+def test_slotted_dataclass_authenticator_keeps_its_errors() -> None:
+    """``@dataclass(slots=True)`` on an authenticator using ``exceptions=`` works, and the
+    declared error still passes."""
+    with TestClient(SlottedProtectedApp()) as client:
+        response = client.get("/protected", headers={"authorization": "Bearer wrong"})
+    assert response.status_code == 401
+
+
+class UndeclaredAuthParent(Authenticator, exceptions=[UndeclaredAuthError]):
+    """A second Authenticator parent with errors of its own."""
+
+
+class TwoParentTokenAuth(TokenAuth, UndeclaredAuthParent):
+    """Inherits from two Authenticator parents, so it gets both parents' errors."""
+
+
+class ExtendingTokenAuth(TokenAuth, exceptions=[UndeclaredAuthError]):
+    """A list extends the parent's errors."""
+
+
+class ReplacingTokenAuth(TokenAuth, exceptions=(UndeclaredAuthError,)):
+    """A tuple replaces the parent's errors."""
+
+
 class ProtectedEndpoint(Endpoint, path="/protected", meta=EndpointMeta(exceptions=[DeclaredError])):
-    """An authenticated operation that declares its errors."""
+    """An authenticated operation that declares its own errors."""
 
     async def get(self, user: Caller) -> Item:
         """Return the caller's item."""
         return Item(item_id=user.user_id)
 
 
+class UncheckedProtectedEndpoint(Endpoint, path="/protected-unchecked"):
+    """An authenticated operation that declares nothing itself."""
+
+    async def get(self, user: Caller) -> Item:
+        """Raise an error no operation declares."""
+        _ = user
+        raise UndeclaredError()
+
+
 class ProtectedApp(BaseApp):
-    """App mounting the protected operation behind the token authenticator."""
+    """App mounting both operations behind the authenticator it's given, with OpenAPI."""
+
+    def __init__(self, auth: TokenAuth | None = None) -> None:
+        super().__init__()
+        self._auth = auth if auth is not None else TokenAuth()
 
     async def wire(self) -> None:
-        self._include_endpoint(ProtectedEndpoint(), auth=TokenAuth())
+        self._include_endpoint(ProtectedEndpoint(), auth=self._auth)
+        self._include_endpoint(UncheckedProtectedEndpoint(), auth=self._auth)
+        self._include_openapi(title="protected", version="1")
 
 
-def test_authenticator_401_passes_on_a_protected_operation() -> None:
-    """An authenticator's own 401 error passes on any operation it protects, though no
-    operation declares it."""
+@pytest.mark.parametrize(
+    "auth", [TokenAuth(), InheritingTokenAuth(), EmptyTupleTokenAuth(), EmptyListTokenAuth()]
+)
+@pytest.mark.parametrize(
+    ("authorization", "status"),
+    [("Bearer wrong", 401), ("Bearer down", 503)],
+)
+def test_authenticator_declared_error_passes(
+    auth: TokenAuth, authorization: str, status: int
+) -> None:
+    """The errors an authenticator declares pass on every operation it guards, though
+    the operation itself doesn't list them: a 401 and a non-401 alike, and through a
+    subclass that inherits the declaration by passing nothing, ``()``, or ``[]``."""
+    with TestClient(ProtectedApp(auth)) as client:
+        response = client.get("/protected", headers={"authorization": authorization})
+    assert response.status_code == status
+
+
+def test_list_extends_the_parent_authenticators_errors() -> None:
+    """A subclass's ``exceptions=[...]`` adds to its parent's: both its own error and the
+    inherited one pass."""
+    with TestClient(ProtectedApp(ExtendingTokenAuth())) as client:
+        undeclared = client.get("/protected", headers={"authorization": "Bearer undeclared"})
+        wrong = client.get("/protected", headers={"authorization": "Bearer wrong"})
+    assert (undeclared.status_code, wrong.status_code) == (403, 401)
+
+
+def test_errors_combine_across_several_authenticator_parents() -> None:
+    """An authenticator with two Authenticator parents documents both parents' errors,
+    not just the first in its MRO."""
+    with TestClient(ProtectedApp(TwoParentTokenAuth())) as client:
+        undeclared = client.get("/protected", headers={"authorization": "Bearer undeclared"})
+        down = client.get("/protected", headers={"authorization": "Bearer down"})
+    assert (undeclared.status_code, down.status_code) == (403, 503)
+
+
+def test_tuple_replaces_the_parent_authenticators_errors() -> None:
+    """A subclass's ``exceptions=(...)`` replaces its parent's, so an inherited error it
+    no longer lists fails the check."""
+    with (
+        TestClient(ProtectedApp(ReplacingTokenAuth())) as client,
+        pytest.raises(AssertionError, match="GET /protected returned InvalidTokenError"),
+    ):
+        client.get("/protected", headers={"authorization": "Bearer wrong"})
+
+
+def test_authenticator_undeclared_error_fails_the_request() -> None:
+    """An authenticator error declared nowhere fails like any other undeclared error
+    (there is no blanket allowance for an authenticated operation's 401s either)."""
+    with (
+        TestClient(ProtectedApp()) as client,
+        pytest.raises(AssertionError, match="GET /protected returned UndeclaredAuthError"),
+    ):
+        client.get("/protected", headers={"authorization": "Bearer undeclared"})
+
+
+def test_authenticator_exceptions_do_not_switch_the_check_on() -> None:
+    """An operation that declares nothing itself stays unchecked, even behind an
+    authenticator that declares its errors."""
     with TestClient(ProtectedApp()) as client:
-        assert client.get("/protected", headers={"authorization": "wrong"}).status_code == 401
+        response = client.get("/protected-unchecked", headers={"authorization": "Bearer token"})
+    assert response.status_code == 410
+
+
+def test_authenticator_exceptions_are_documented_on_guarded_operations() -> None:
+    """Every operation the authenticator guards documents its errors: a 401 joins the
+    framework's own 401, and a non-401 gets its own entry."""
+    with TestClient(ProtectedApp()) as client:
+        paths = client.get("/openapi.json").json()["paths"]
+    for path in ("/protected", "/protected-unchecked"):
+        responses = paths[path]["get"]["responses"]
+        assert responses["401"]["content"]["application/json"]["schema"] == {
+            "anyOf": [
+                {"$ref": "#/components/schemas/AuthenticationRequiredProblem"},
+                {"$ref": "#/components/schemas/InvalidTokenProblem"},
+            ]
+        }
+        assert responses["503"]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/ProviderUnavailableProblem"
+        }
+
+
+class StrayAttributeAuth:
+    """A plain authenticator carrying an ``exceptions`` attribute jero would never read."""
+
+    exceptions = (InvalidTokenError,)
+
+    def authenticate(self, headers: TokenHeaders) -> Caller:
+        """Accept anyone."""
+        _ = headers
+        return Caller(user_id="user-id")
+
+
+class BadAuthApp(BaseApp):
+    """App mounting one operation behind the authenticator it's given."""
+
+    def __init__(self, auth: StrayAttributeAuth) -> None:
+        super().__init__()
+        self._auth = auth
+
+    async def wire(self) -> None:
+        self._include_endpoint(UncheckedProtectedEndpoint(), auth=self._auth)
+
+
+def test_invalid_authenticator_exceptions_fail_at_class_definition() -> None:
+    """The ``exceptions=`` entries must be jero error classes, checked once, when the
+    authenticator class is defined."""
+    with pytest.raises(WiringError, match="NotAnErrorAuth: 'exceptions' entries must be"):
+        new_class(
+            "NotAnErrorAuth",
+            (Authenticator,),
+            {"exceptions": cast(Sequence[type[BaseHTTPError]], (str,))},
+        )
+
+
+def test_class_body_exceptions_attribute_fails_at_class_definition() -> None:
+    """Assigning ``exceptions`` in an Authenticator's class body, which would skip the
+    keyword's validation, fails at once with a pointer to the keyword."""
+    with pytest.raises(WiringError, match="BodyAuth: declare its errors with the class keyword"):
+        new_class(
+            "BodyAuth",
+            (BearerAuth,),
+            exec_body=lambda namespace: namespace.update(exceptions=[InvalidTokenError]),
+        )
+
+
+class ExceptionsMixin:
+    """A mixin that happens to carry an ``exceptions`` attribute."""
+
+    exceptions = (InvalidTokenError,)
+
+
+def test_mixin_exceptions_attribute_fails_at_class_definition() -> None:
+    """An ``exceptions`` attribute an Authenticator picks up from a mixin would bypass the
+    keyword's validation, so it fails at once too."""
+    with pytest.raises(WiringError, match="MixedAuth: declare its errors with the class keyword"):
+        new_class("MixedAuth", (ExceptionsMixin, Authenticator))
+
+
+@dataclass
+class InstanceFieldAuth(Authenticator):
+    """An Authenticator with an ``exceptions`` instance field jero would never read."""
+
+    exceptions: tuple[type[BaseHTTPError], ...]
+
+    def authenticate(self, headers: TokenHeaders) -> Caller:
+        """Accept anyone."""
+        _ = headers
+        return Caller(user_id="user-id")
+
+
+class InstanceFieldApp(BaseApp):
+    """App mounting the operation behind the instance-field authenticator."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(
+            UncheckedProtectedEndpoint(), auth=InstanceFieldAuth((InvalidTokenError,))
+        )
+
+
+def test_instance_exceptions_field_fails_wiring() -> None:
+    """An ``exceptions`` instance field on an Authenticator is a mistake jero catches at
+    the mount, not a declaration it silently ignores."""
+    with pytest.raises(RuntimeError, match="InstanceFieldAuth: declare its errors with"):
+        TestClient(InstanceFieldApp())
+
+
+def test_stray_exceptions_attribute_fails_wiring() -> None:
+    """An ``exceptions`` attribute on an authenticator outside the Authenticator bases
+    fails loud at the mount rather than being ignored."""
+    with pytest.raises(RuntimeError, match="StrayAttributeAuth: declare its errors with"):
+        TestClient(BadAuthApp(StrayAttributeAuth()))
+
+
+class CallerWebSocket(WebSocketEndpoint, path="/ws"):
+    """A socket behind an authenticator; sockets document no errors."""
+
+    async def handle(self, websocket: WebSocket[str, str], user: Caller) -> None:
+        """Greet the caller."""
+        await websocket.send(user.user_id)
+
+
+class BadWebSocketAuthApp(BaseApp):
+    """App mounting only a socket behind an authenticator with a stray attribute."""
+
+    async def wire(self) -> None:
+        self._include_websocket(CallerWebSocket(), auth=StrayAttributeAuth())
+
+
+def test_stray_exceptions_attribute_fails_a_websocket_mount() -> None:
+    """A socket-only authenticator is checked at its mount too, so a stray ``exceptions``
+    attribute fails where the authenticator is used, not at some later HTTP mount."""
+    with pytest.raises(RuntimeError, match="StrayAttributeAuth: declare its errors with"):
+        TestClient(BadWebSocketAuthApp())
 
 
 class BadDeclarationEndpoint(
