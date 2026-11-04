@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0](https://github.com/RogerThomas/jero/compare/0.3.1...0.4.0) (2026-11-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* let an authenticator declare its errors once for every operation it guards ([#98](https://github.com/RogerThomas/jero/issues/98))
+
+### Features
+
+* let an authenticator declare its errors once for every operation it guards ([#98](https://github.com/RogerThomas/jero/issues/98)) ([ce6e027](https://github.com/RogerThomas/jero/commit/ce6e027acbb6a9a74be17e4b7294b53e5803a716))
+
 ## [0.3.1](https://github.com/RogerThomas/jero/compare/0.3.0...0.3.1) (2026-11-04)
 
 
