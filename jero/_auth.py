@@ -62,6 +62,13 @@ class Authenticator:
         cls, *, exceptions: Sequence[type[BaseHTTPError]] | None = None, **kwargs: object
     ) -> None:
         super().__init_subclass__(**kwargs)
+        if "exceptions" in cls.__dict__:
+            # A class-body assignment would skip the validation below.
+            raise WiringError(
+                f"{cls.__name__}: declare its errors with the class keyword, "
+                f"`class {cls.__name__}(..., exceptions=(...))`, not an `exceptions` "
+                f"attribute in the class body",
+            )
         if exceptions is not None:
             # Validated here, once per class (a subclass inherits the checked tuple).
             cls.exceptions = validated_error_classes(exceptions, cls.__name__)

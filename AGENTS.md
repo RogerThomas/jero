@@ -296,7 +296,8 @@ Always follow the following style guide:
   exceptions=(InvalidSessionError,))`, statically typed via its `__init_subclass__`; a
   subclass passing none inherits its parent's). The entries are validated once, at class
   definition (`validated_error_classes` in `_auth`, the same rule `_openapi_wiring` applies
-  to a meta's `exceptions=`). At every mount, WebSocket ones included,
+  to a meta's `exceptions=`); a class-body `exceptions` attribute, which would bypass
+  that, is a `WiringError` there too. At every mount, WebSocket ones included,
   `authenticator_exceptions` in `_openapi_wiring` reads them, and an `exceptions`
   attribute on an authenticator outside the bases is a `WiringError` (never silently
   ignored). They

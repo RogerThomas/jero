@@ -408,5 +408,6 @@ bad token to an operation listing its own `exceptions` passes. Nothing else does
 authenticator error it doesn't declare fails that check like any other, 401s included.
 The keyword is type-checked, a subclass that passes none inherits its parent's, and the
 entries are checked once, when the class is defined: anything but a jero error class is
-a `WiringError` right there. An `exceptions` attribute on an authenticator outside these
-bases, which jero would never read, is a `WiringError` when it's mounted.
+a `WiringError` right there, as is an `exceptions` attribute in the class body (the
+keyword is the only form). One on an authenticator outside these bases, which jero
+would never read, is a `WiringError` when it's mounted.

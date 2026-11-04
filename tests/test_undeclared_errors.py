@@ -437,6 +437,17 @@ def test_invalid_authenticator_exceptions_fail_at_class_definition() -> None:
         )
 
 
+def test_class_body_exceptions_attribute_fails_at_class_definition() -> None:
+    """Assigning ``exceptions`` in an Authenticator's class body, which would skip the
+    keyword's validation, fails at once with a pointer to the keyword."""
+    with pytest.raises(WiringError, match="BodyAuth: declare its errors with the class keyword"):
+        new_class(
+            "BodyAuth",
+            (BearerAuth,),
+            exec_body=lambda namespace: namespace.update(exceptions=(InvalidTokenError,)),
+        )
+
+
 def test_stray_exceptions_attribute_fails_wiring() -> None:
     """An ``exceptions`` attribute on an authenticator outside the Authenticator bases
     fails loud at the mount rather than being ignored."""
