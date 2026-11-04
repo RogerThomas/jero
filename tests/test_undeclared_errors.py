@@ -241,6 +241,32 @@ def test_undeclared_error_message_survives_a_later_crash() -> None:
     assert isinstance(excinfo.value.__context__, RuntimeError)
 
 
+class OutOfStockError(HTTPError, type="out-of-stock", title="Out of stock", status=422):
+    """A declared error at the status the framework uses for a malformed body."""
+
+
+class StockEndpoint(Endpoint, path="/stock", meta=EndpointMeta(exceptions=[OutOfStockError])):
+    """Declares its own 422 next to the framework's."""
+
+    async def post(self, json: Item) -> Item:
+        """Echo the body (a malformed one is the framework's own 422)."""
+        return json
+
+
+class StockApp(BaseApp):
+    """App wiring the endpoint that declares its own 422."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(StockEndpoint())
+
+
+def test_framework_error_sharing_a_declared_status_passes() -> None:
+    """Declaring your own 422 doesn't hide the framework's: a malformed body's 422 is
+    still documented, so it passes."""
+    with TestClient(StockApp()) as client:
+        assert client.post("/stock", json={"wrong": "wrong"}).status_code == 422
+
+
 class BadDeclarationEndpoint(
     Endpoint,
     path="/bad-declaration",

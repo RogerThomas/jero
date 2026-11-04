@@ -274,11 +274,12 @@ sources combine, per status:
 | Source | Class level vs operation level | Precedence per status |
 | :-- | :-- | :-- |
 | explicit `responses` (`ResponseSpec`) | operation **overrides** class | highest — always the last word |
-| declared `exceptions` (error classes) | class **extends** operation (both remain raiseable) | middle |
+| declared `exceptions` (error classes) | class **extends** operation (both remain raiseable) | middle — **joins** a derived entry at its status |
 | derived (from the operation's sources) | — | baseline |
 
-Several declared errors sharing a status merge into one entry with a `oneOf` of their
-bodies. Entries are validated at wiring: anything that isn't a concrete jero error
+Several errors sharing a status merge into one entry with a `oneOf` of their bodies.
+That includes a derived one: declare your own 422 and the entry documents both it and
+the framework's 422 for a malformed body, since the operation can still send either. Entries are validated at wiring: anything that isn't a concrete jero error
 class is a startup `WiringError`.
 
 #### Keeping the list complete
@@ -299,10 +300,9 @@ AssertionError: GET /widgets returned WidgetLockedError (423), which its excepti
   needs its own entry.
 - **Whatever the spec documents passes**: the framework's own errors derived from the
   operation's sources (a malformed body's 422, a missing credential's 401, the generic
-  500), and any error at a status an explicit `ResponseSpec` takes over. The check reads
-  the same cascade the spec is built from, so a declared error that replaces a derived
-  entry (the table above) replaces it here too; declare the built-in as well if both
-  can occur.
+  500, even when you declare your own error at the same status), and any error at a
+  status an explicit `ResponseSpec` takes over. The check reads the same cascade the
+  spec is built from.
 - **The error sent is the one checked**, so an exception handler's translation counts,
   not the exception it translated.
 - Only the error paths your tests exercise are checked.

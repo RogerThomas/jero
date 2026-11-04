@@ -520,16 +520,17 @@ Always follow the following style guide:
   the error class — status, description (`title` / `description`), and body schema
   (per-class Problem model with `type`/`status` consts + params; the Struct family's
   wire model). Class-level entries extend the operation's; same-status entries merge as
-  a `oneOf`; precedence per status is derived < declared exceptions < explicit
-  `ResponseSpec`; non-error entries are a wiring failure (always, OpenAPI wired or not).
+  a `oneOf`, and a declared error *joins* a derived built-in at its status (both can
+  still be sent) rather than replacing it; an explicit `ResponseSpec` replaces
+  whatever a status held; non-error entries are a wiring failure (always, OpenAPI wired or not).
   **`TestClient` enforces the list**: an operation that declares any `exceptions` and
   answers a test request with an error its spec leaves out fails that request with an
   `AssertionError`. The declaration is the switch (no flag; undeclared operations and
   `_include_openapi` change nothing); exact classes only (a subclass documents its own
   `type`); what passes is computed at wiring by `documented_errors` in `_openapi_wiring`
   from `_response_cascade`, the one function `operation_input` also builds the spec's
-  error responses from (derived built-ins, replaced per status by declared ones, then
-  by explicit `ResponseSpec`s), so the check and the spec can't disagree. The route hands its
+  error responses from (derived built-ins, joined per status by declared ones, then
+  replaced by explicit `ResponseSpec`s), so the check and the spec can't disagree. The route hands its
   `DocumentedErrors` to the exception funnel, which checks the error actually *sent*
   (so a handler's translation counts) only when the scope carries `TestClient`'s
   `DocumentedErrors.SCOPE_KEY` list — one scope lookup on the error path in production,

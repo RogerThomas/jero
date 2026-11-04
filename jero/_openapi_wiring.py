@@ -414,19 +414,20 @@ def _response_cascade(
     classes an entry describes, or the explicit ``ResponseSpec`` that took the status over.
 
     The cascade, lowest first: the built-ins the framework raises for the operation's
-    sources, then the ``declared`` exceptions (same-status ones grouped), then explicit
-    ``responses`` (class-level ``meta`` before ``meta_<op>``). Each layer replaces a status
-    in place, so the order is stable. The single source for both :func:`operation_input`
-    (the spec) and :func:`documented_errors` (the test check), so the two can't disagree.
+    sources, then the ``declared`` exceptions, which *join* a built-in at the same status
+    (the operation can still send both: a declared 422 doesn't stop a malformed body's
+    own 422), then explicit ``responses`` (class-level ``meta`` before ``meta_<op>``),
+    which replace whatever a status held. Statuses keep their first position. The single
+    source for both :func:`operation_input` (the spec) and :func:`documented_errors` (the
+    test check), so the two can't disagree.
     """
-    cascade: dict[int, tuple[type[BaseHTTPError], ...] | ResponseSpec] = {
+    errors: dict[int, tuple[type[BaseHTTPError], ...]] = {
         status: (_STATUS_ERRORS[status],)
         for status in _error_statuses(spec.sources, authed=spec.auth_mode is not None)
     }
-    grouped: dict[int, list[type[BaseHTTPError]]] = {}
     for cls in declared:
-        grouped.setdefault(cls.status, []).append(cls)
-    cascade |= {status: tuple(classes) for status, classes in grouped.items()}
+        errors[cls.status] = tuple(dict.fromkeys((*errors.get(cls.status, ()), cls)))
+    cascade: dict[int, tuple[type[BaseHTTPError], ...] | ResponseSpec] = dict(errors)
     for meta in (spec.class_meta, spec.op_meta):
         if meta is not None:
             cascade |= {response.status: response for response in meta.responses}

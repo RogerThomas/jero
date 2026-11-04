@@ -3013,14 +3013,19 @@ def test_declared_errors_sharing_a_status_merge_as_oneof() -> None:
 
 
 def test_error_response_precedence_per_status() -> None:
-    """Declared exceptions beat the derived entry; an explicit ResponseSpec beats both."""
+    """Declared exceptions join the derived entry at their status (the operation can still
+    send both); an explicit ResponseSpec replaces whatever the status held."""
     with TestClient(DeclaredErrorsApp()) as client:
         responses = client.get("/openapi.json").json()["paths"]["/precedence/{item_id}"]["get"][
             "responses"
         ]
-        # the path-derived 404 is replaced by the declared error's precise schema
+        # the declared 404 joins the path-derived one: a bad path value still sends NotFound
+        assert responses["404"]["description"] == "Not found / Missing part"
         assert responses["404"]["content"]["application/json"]["schema"] == {
-            "$ref": "#/components/schemas/MissingPartProblem"
+            "oneOf": [
+                {"$ref": "#/components/schemas/NotFoundProblem"},
+                {"$ref": "#/components/schemas/MissingPartProblem"},
+            ]
         }
         # the declared 429 (QuotaError) is replaced by the explicit ResponseSpec
         assert responses["429"]["description"] == "Slow down"

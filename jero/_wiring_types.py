@@ -257,7 +257,8 @@ class OperationMeta(Struct):
     ``exceptions`` declares jero error classes this operation can raise — status, body
     schema, and description all derive from the class; entries *extend* the class-level
     ``meta``'s (both remain raiseable), several sharing a status document as a ``oneOf``,
-    and an explicit ``responses`` entry for the same status wins.
+    one sharing a framework-derived status joins that entry too (both can be sent), and
+    an explicit ``responses`` entry for the same status wins.
 
     ``tags`` (bare ``str`` names or describing ``Tag``\\ s) cascade from the class-level
     ``meta`` by the *container type*: a ``list`` extends the class tags
