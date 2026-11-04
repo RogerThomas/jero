@@ -407,6 +407,6 @@ They count as declared for
 bad token to an operation listing its own `exceptions` passes. Nothing else does: an
 authenticator error it doesn't declare fails that check like any other, 401s included.
 The keyword is type-checked, a subclass that passes none inherits its parent's, and the
-entries are checked at startup: anything but a jero error class is a `WiringError`. So
-is an `exceptions` attribute on an authenticator outside these bases, which jero would
-never read.
+entries are checked once, when the class is defined: anything but a jero error class is
+a `WiringError` right there. An `exceptions` attribute on an authenticator outside these
+bases, which jero would never read, is a `WiringError` when it's mounted.

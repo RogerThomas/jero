@@ -294,10 +294,12 @@ Always follow the following style guide:
   authenticator declares the errors it raises once, with the `exceptions=` class keyword
   on the plain `Authenticator` base (`class SessionAuth(Authenticator,
   exceptions=(InvalidSessionError,))`, statically typed via its `__init_subclass__`; a
-  subclass passing none inherits its parent's). `authenticator_exceptions` in
-  `_openapi_wiring` validates the entries at every mount (WebSocket ones too, though
-  sockets document nothing), and an `exceptions` attribute on
-  an authenticator outside the bases is a `WiringError` (never silently ignored). They
+  subclass passing none inherits its parent's). The entries are validated once, at class
+  definition (`validated_error_classes` in `_auth`, the same rule `_openapi_wiring` applies
+  to a meta's `exceptions=`). At every mount, WebSocket ones included,
+  `authenticator_exceptions` in `_openapi_wiring` reads them, and an `exceptions`
+  attribute on an authenticator outside the bases is a `WiringError` (never silently
+  ignored). They
   ride `OperationSpec.auth_exceptions` into `_response_cascade`, so every guarded
   operation documents them, in the spec and in `TestClient`'s undeclared-error check.
   `demo_app`'s three authenticators declare `InvalidTokenError` this way.
@@ -435,7 +437,7 @@ Always follow the following style guide:
   `jero/_links.py` — `Location` / `Link` and their reverse-routing targets (a leaf module
   `_core` and `_streaming` both import). `jero/_headers.py` — the `RawHeaders` opaque bag.
   `jero/_auth.py` — the authenticator bases (`Authenticator`, `BearerAuth`, `BasicAuth`);
-  a leaf (`_errors` + `_openapi`), split out of `_core` for the module cap (the protocols
+  a leaf (`_errors`, `_openapi`, `_wiring_types`), split out of `_core` for the module cap (the protocols
   stay in `_core`).
   `jero/_content_stream.py` — `ContentStream` and `ClientDisconnectedError` (a leaf
   module `_core` imports).

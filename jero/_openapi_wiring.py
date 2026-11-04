@@ -16,7 +16,7 @@ from typing import Any, ClassVar, Generic, Literal, TypeVar, Union, cast, get_ar
 from msgspec import Struct, defstruct
 from msgspec.structs import fields as struct_fields
 
-from jero._auth import Authenticator
+from jero._auth import Authenticator, validated_error_classes
 from jero._errors import (
     AuthenticationRequiredError,
     BaseHTTPError,
@@ -333,37 +333,17 @@ def _operation_id(spec: OperationSpec) -> str:
     return spec.operation_id_default
 
 
-def _validated_error_classes(entries: Sequence[object], owner: str) -> list[type[BaseHTTPError]]:
-    """``entries`` validated as concrete jero error classes (``HTTPError`` or
-    ``StructHTTPError`` subclasses), deduped in order; anything else is a ``WiringError``
-    naming ``owner``."""
-    validated: dict[type[BaseHTTPError], None] = {}
-    for entry in entries:
-        concrete = (
-            isinstance(entry, type)
-            and hasattr(entry, "status")
-            and issubclass(entry, (HTTPError, StructHTTPError))
-        )
-        if not concrete:
-            raise WiringError(
-                f"{owner}: 'exceptions' entries must be concrete jero error "
-                f"classes (HTTPError or StructHTTPError subclasses); got {entry!r}",
-            )
-        validated.setdefault(cast("type[BaseHTTPError]", entry), None)
-    return list(validated)
-
-
 def authenticator_exceptions(auth: object) -> tuple[type[BaseHTTPError], ...]:
     """The errors an authenticator declares it raises, with the ``exceptions=`` class
-    keyword on :class:`~jero.Authenticator` (or ``BearerAuth`` / ``BasicAuth``), validated
-    at the mount. Every operation the authenticator guards documents them, in the spec and
-    for ``TestClient``'s undeclared-error check, so they're declared once rather than on
-    every route. An authenticator outside those bases that carries an ``exceptions``
-    attribute anyway is a ``WiringError``, not silently ignored. Un-underscored: ``core``
-    calls it at the mount."""
+    keyword on :class:`~jero.Authenticator` (or ``BearerAuth`` / ``BasicAuth``), already
+    validated once when its class was defined. Every operation the authenticator guards
+    documents them, in the spec and for ``TestClient``'s undeclared-error check, so
+    they're declared once rather than on every route. An authenticator outside those
+    bases that carries an ``exceptions`` attribute anyway is a ``WiringError``, not
+    silently ignored. Un-underscored: ``core`` calls it at the mount."""
     owner = type(auth).__name__
     if isinstance(auth, Authenticator):
-        return tuple(_validated_error_classes(type(auth).exceptions, owner))
+        return type(auth).exceptions  # validated once, when the class was defined
     if hasattr(type(auth), "exceptions") or hasattr(auth, "exceptions"):
         raise WiringError(
             f"{owner}: declare its errors with the class keyword, "
@@ -380,7 +360,7 @@ def _declared_exceptions(spec: OperationSpec, operation_id: str) -> list[type[Ba
     entries: list[object] = []
     for meta in (spec.class_meta, spec.op_meta):
         entries += cast("Sequence[object]", meta.exceptions if meta is not None else ())
-    return _validated_error_classes(entries, operation_id)
+    return list(validated_error_classes(entries, operation_id))
 
 
 # Each framework-generated error status maps to the built-in error it is raised as, so a

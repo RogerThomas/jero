@@ -4240,7 +4240,7 @@ class BaseApp[FactoryT = None](ABC):
         sources, inbound, outbound = _bind_websocket_sources(cls, fn)
         compiled_auth = _CompiledAuth(auth) if auth is not None else None
         if auth is not None:
-            # Validated at every mount, as for HTTP; sockets document no errors.
+            # Rejects a stray `exceptions` attribute here too; sockets document no errors.
             authenticator_exceptions(auth)
         self.__check_user_source(cls, "handle", sources, compiled_auth)
         tail = _RouteTail()

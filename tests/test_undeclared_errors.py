@@ -4,6 +4,7 @@ an error the declaration (and so the OpenAPI spec) leaves out."""
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import asynccontextmanager
+from types import new_class
 from typing import Any, Self, cast
 
 import pytest
@@ -26,6 +27,7 @@ from jero import (
     StructHTTPError,
     WebSocket,
     WebSocketEndpoint,
+    WiringError,
 )
 from jero.testing import TestClient
 
@@ -402,15 +404,6 @@ def test_authenticator_exceptions_are_documented_on_guarded_operations() -> None
         }
 
 
-class NotAnErrorAuth(Authenticator, exceptions=cast(Sequence[type[BaseHTTPError]], (str,))):
-    """Declares a non-error class with the keyword."""
-
-    def authenticate(self, headers: TokenHeaders) -> Caller:
-        """Accept anyone."""
-        _ = headers
-        return Caller(user_id="user-id")
-
-
 class StrayAttributeAuth:
     """A plain authenticator carrying an ``exceptions`` attribute jero would never read."""
 
@@ -425,7 +418,7 @@ class StrayAttributeAuth:
 class BadAuthApp(BaseApp):
     """App mounting one operation behind the authenticator it's given."""
 
-    def __init__(self, auth: NotAnErrorAuth | StrayAttributeAuth) -> None:
+    def __init__(self, auth: StrayAttributeAuth) -> None:
         super().__init__()
         self._auth = auth
 
@@ -433,21 +426,22 @@ class BadAuthApp(BaseApp):
         self._include_endpoint(UncheckedProtectedEndpoint(), auth=self._auth)
 
 
-@pytest.mark.parametrize(
-    ("auth", "message"),
-    [
-        (NotAnErrorAuth(), "NotAnErrorAuth: 'exceptions' entries must be concrete jero error"),
-        (StrayAttributeAuth(), "StrayAttributeAuth: declare its errors with the class keyword"),
-    ],
-)
-def test_invalid_authenticator_exceptions_fail_wiring(
-    auth: NotAnErrorAuth | StrayAttributeAuth, message: str
-) -> None:
-    """An authenticator's errors are declared with ``exceptions=`` on the Authenticator
-    bases, as jero error classes, checked at the mount; an ``exceptions`` attribute
-    anywhere else fails loud rather than being ignored."""
-    with pytest.raises(RuntimeError, match=message):
-        TestClient(BadAuthApp(auth))
+def test_invalid_authenticator_exceptions_fail_at_class_definition() -> None:
+    """The ``exceptions=`` entries must be jero error classes, checked once, when the
+    authenticator class is defined."""
+    with pytest.raises(WiringError, match="NotAnErrorAuth: 'exceptions' entries must be"):
+        new_class(
+            "NotAnErrorAuth",
+            (Authenticator,),
+            {"exceptions": cast(Sequence[type[BaseHTTPError]], (str,))},
+        )
+
+
+def test_stray_exceptions_attribute_fails_wiring() -> None:
+    """An ``exceptions`` attribute on an authenticator outside the Authenticator bases
+    fails loud at the mount rather than being ignored."""
+    with pytest.raises(RuntimeError, match="StrayAttributeAuth: declare its errors with"):
+        TestClient(BadAuthApp(StrayAttributeAuth()))
 
 
 class CallerWebSocket(WebSocketEndpoint, path="/ws"):
@@ -459,16 +453,16 @@ class CallerWebSocket(WebSocketEndpoint, path="/ws"):
 
 
 class BadWebSocketAuthApp(BaseApp):
-    """App mounting only a socket behind an authenticator with a bad declaration."""
+    """App mounting only a socket behind an authenticator with a stray attribute."""
 
     async def wire(self) -> None:
-        self._include_websocket(CallerWebSocket(), auth=NotAnErrorAuth())
+        self._include_websocket(CallerWebSocket(), auth=StrayAttributeAuth())
 
 
-def test_invalid_authenticator_exceptions_fail_a_websocket_mount() -> None:
-    """A socket-only authenticator's ``exceptions=`` is checked at its mount too, so a bad
-    declaration fails where it's made, not at some later HTTP mount."""
-    with pytest.raises(RuntimeError, match="NotAnErrorAuth: 'exceptions' entries must be"):
+def test_stray_exceptions_attribute_fails_a_websocket_mount() -> None:
+    """A socket-only authenticator is checked at its mount too, so a stray ``exceptions``
+    attribute fails where the authenticator is used, not at some later HTTP mount."""
+    with pytest.raises(RuntimeError, match="StrayAttributeAuth: declare its errors with"):
         TestClient(BadWebSocketAuthApp())
 
 
