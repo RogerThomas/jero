@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from msgspec import Struct
 
-from jero import BaseApp, BaseFactory, HTTPError, JSONResponse, Resource
+from jero import Authenticator, BaseApp, BaseFactory, HTTPError, JSONResponse, Resource
 
 
 class InvalidTokenError(
@@ -56,7 +56,7 @@ class WidgetHeaders(Struct, omit_defaults=True):
     x_trace_id: str | None = None
 
 
-class TokenAuth:
+class TokenAuth(Authenticator, exceptions=(InvalidTokenError,)):
     def authenticate(self, headers: Credentials) -> User:
         token = headers.authorization.removeprefix("Bearer ").strip()
         if token != "token":

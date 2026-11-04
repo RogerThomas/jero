@@ -30,7 +30,7 @@ from dataclasses import dataclass
 
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, HTTPError
+from jero import Authenticator, BaseApp, Endpoint, HTTPError
 
 
 class InvalidTokenError(
@@ -51,7 +51,7 @@ class User(Struct):
 
 
 @dataclass
-class TokenAuth:
+class TokenAuth(Authenticator, exceptions=(InvalidTokenError,)):  # the error it raises
     _users: dict[str, User]
 
     async def authenticate(self, headers: Credentials) -> User:
@@ -71,7 +71,7 @@ stand-in for the one above):
 ```python
 from msgspec import Struct
 
-from jero import BaseApp, Endpoint, HTTPError
+from jero import Authenticator, BaseApp, Endpoint, HTTPError
 
 
 class InvalidTokenError(
@@ -91,7 +91,7 @@ class User(Struct):
     name: str
 
 
-class TokenAuth:
+class TokenAuth(Authenticator, exceptions=(InvalidTokenError,)):
     async def authenticate(self, headers: Credentials) -> User:
         if headers.authorization != "Bearer token":
             raise InvalidTokenError()
@@ -208,7 +208,7 @@ class TokenLookup:
         return user
 
 
-class TokenAuth(TokenLookup, BearerAuth):
+class TokenAuth(TokenLookup, BearerAuth, exceptions=(InvalidTokenError,)):
     async def authenticate(self, headers: Credentials) -> User:            # gates
         user = self._resolve(headers)
         if user is None:
@@ -216,7 +216,7 @@ class TokenAuth(TokenLookup, BearerAuth):
         return user
 
 
-class OptionalTokenAuth(TokenLookup, BearerAuth):
+class OptionalTokenAuth(TokenLookup, BearerAuth, exceptions=(InvalidTokenError,)):
     async def authenticate(self, headers: Credentials) -> User | None:     # serves anonymous
         return self._resolve(headers)
 
@@ -345,11 +345,14 @@ startup. See [OpenAPI & docs](openapi.md#security-schemes).
 ### Declaring the authenticator's errors
 
 An authenticator often raises errors of its own: an invalid token, or a 503 when the
-identity provider can't be reached. Declare them once, as an `exceptions` class
-attribute, and every operation the authenticator guards documents them in the spec,
-with no entry on each route:
+identity provider can't be reached. Declare them once, with the `exceptions=` class
+keyword on `Authenticator`, and every operation the authenticator guards documents them
+in the spec, with no entry on each route. `BearerAuth` and `BasicAuth` are
+`Authenticator`s, so they take the keyword too:
 
 ```python
+from dataclasses import dataclass
+
 from msgspec import Struct
 
 from jero import BaseApp, BearerAuth, Endpoint, HTTPError
@@ -371,13 +374,17 @@ class ProviderUnavailableError(
 ): ...
 
 
-class TokenAuth(BearerAuth):
-    exceptions = (InvalidTokenError, ProviderUnavailableError)
+@dataclass
+class TokenAuth(BearerAuth, exceptions=(InvalidTokenError, ProviderUnavailableError)):
+    _users: dict[str, User] | None  # None: the identity provider couldn't be reached
 
     async def authenticate(self, headers: Credentials) -> User:
-        if headers.authorization != "Bearer token":
+        if self._users is None:
+            raise ProviderUnavailableError()
+        user = self._users.get(headers.authorization.removeprefix("Bearer "))
+        if user is None:
             raise InvalidTokenError()
-        return User(user_id="user-id")
+        return user
 
 
 class MeEndpoint(Endpoint, path="/me"):
@@ -387,7 +394,8 @@ class MeEndpoint(Endpoint, path="/me"):
 
 class App(BaseApp):
     async def wire(self) -> None:
-        self._include_endpoint(MeEndpoint(), auth=TokenAuth())
+        auth = TokenAuth({"token": User(user_id="user-id")})
+        self._include_endpoint(MeEndpoint(), auth=auth)
         self._include_openapi(title="Me API", version="1.0.0")
 
 
@@ -398,5 +406,7 @@ They count as declared for
 [`TestClient`'s check](openapi.md#keeping-the-list-complete) too, so a test that sends a
 bad token to an operation listing its own `exceptions` passes. Nothing else does: an
 authenticator error it doesn't declare fails that check like any other, 401s included.
-The value must be a list or tuple of jero error classes, else a `WiringError` at
-startup.
+The keyword is type-checked, a subclass that passes none inherits its parent's, and the
+entries are checked at startup: anything but a jero error class is a `WiringError`. So
+is an `exceptions` attribute on an authenticator outside these bases, which jero would
+never read.

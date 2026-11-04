@@ -87,6 +87,7 @@ The full public surface, grouped by area. Everything here is importable from `je
 ::: jero.Auth
 ::: jero.CookieAuth
 ::: jero.HybridAuth
+::: jero.Authenticator
 ::: jero.BearerAuth
 ::: jero.BasicAuth
 ::: jero.SecurityScheme

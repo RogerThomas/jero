@@ -16,6 +16,7 @@ from typing import Any, ClassVar, Generic, Literal, TypeVar, Union, cast, get_ar
 from msgspec import Struct, defstruct
 from msgspec.structs import fields as struct_fields
 
+from jero._auth import Authenticator
 from jero._errors import (
     AuthenticationRequiredError,
     BaseHTTPError,
@@ -353,19 +354,23 @@ def _validated_error_classes(entries: Sequence[object], owner: str) -> list[type
 
 
 def authenticator_exceptions(auth: object) -> tuple[type[BaseHTTPError], ...]:
-    """The errors an authenticator declares it raises: an optional ``exceptions`` class
-    attribute (a list or tuple of jero error classes, read like ``openapi_security``),
-    validated at the mount. Every operation the authenticator guards documents them, in
-    the spec and for ``TestClient``'s undeclared-error check, so they're declared once
-    rather than on every route. Un-underscored: ``core`` calls it at the mount."""
+    """The errors an authenticator declares it raises, with the ``exceptions=`` class
+    keyword on :class:`~jero.Authenticator` (or ``BearerAuth`` / ``BasicAuth``), validated
+    at the mount. Every operation the authenticator guards documents them, in the spec and
+    for ``TestClient``'s undeclared-error check, so they're declared once rather than on
+    every route. An authenticator outside those bases that carries an ``exceptions``
+    attribute anyway is a ``WiringError``, not silently ignored. Un-underscored: ``core``
+    calls it at the mount."""
     owner = type(auth).__name__
-    declared: object = getattr(type(auth), "exceptions", ())
-    if not isinstance(declared, (list, tuple)):
+    if isinstance(auth, Authenticator):
+        return tuple(_validated_error_classes(type(auth).exceptions, owner))
+    if hasattr(type(auth), "exceptions") or hasattr(auth, "exceptions"):
         raise WiringError(
-            f"{owner}: exceptions must be a list or tuple of jero error classes, "
-            f"got {type(declared).__name__}",
+            f"{owner}: declare its errors with the class keyword, "
+            f"`class {owner}(Authenticator, exceptions=(...))`; an `exceptions` "
+            f"attribute on an authenticator outside the Authenticator bases is never read",
         )
-    return tuple(_validated_error_classes(cast("Sequence[object]", declared), owner))
+    return ()
 
 
 def _declared_exceptions(spec: OperationSpec, operation_id: str) -> list[type[BaseHTTPError]]:

@@ -1,5 +1,6 @@
 """jero — an opinionated, msgspec-first ASGI micro-framework."""
 
+from jero._auth import Authenticator, BasicAuth, BearerAuth
 from jero._background import BackgroundTasks
 from jero._codecs import msgspec_decoder, msgspec_encoder
 from jero._content_stream import ClientDisconnectedError, ContentStream
@@ -9,8 +10,6 @@ from jero._core import (
     Auth,
     BaseApp,
     BaseFactory,
-    BasicAuth,
-    BearerAuth,
     BytesResponse,
     CookieAuth,
     Created,
@@ -62,6 +61,7 @@ __all__ = [
     "Accepted",
     "Auth",
     "AuthenticationRequiredError",
+    "Authenticator",
     "BackgroundTasks",
     "BaseApp",
     "BaseFactory",

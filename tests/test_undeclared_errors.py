@@ -2,7 +2,7 @@
 an error the declaration (and so the OpenAPI spec) leaves out."""
 
 import asyncio
-from collections.abc import AsyncGenerator, Awaitable, Callable, MutableMapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import asynccontextmanager
 from typing import Any, Self, cast
 
@@ -10,6 +10,7 @@ import pytest
 from msgspec import Struct
 
 from jero import (
+    Authenticator,
     BaseApp,
     BaseHTTPError,
     BearerAuth,
@@ -297,20 +298,24 @@ class UndeclaredAuthError(HTTPError, type="undeclared-auth", title="Undeclared a
     """An authenticator error declared nowhere."""
 
 
-class TokenAuth(BearerAuth):
+class TokenAuth(BearerAuth, exceptions=(InvalidTokenError, ProviderUnavailableError)):
     """Declares the errors it raises once, for every operation it guards."""
-
-    exceptions = (InvalidTokenError, ProviderUnavailableError)
 
     def authenticate(self, headers: TokenHeaders) -> Caller:
         """Authenticate the bearer token, raising the error its value names."""
-        errors: dict[str, BaseHTTPError] = {
-            "Bearer down": ProviderUnavailableError(),
-            "Bearer undeclared": UndeclaredAuthError(),
-        }
-        if headers.authorization == "Bearer token":
-            return Caller(user_id="user-id")
-        raise errors.get(headers.authorization, InvalidTokenError())
+        match headers.authorization:
+            case "Bearer token":
+                return Caller(user_id="user-id")
+            case "Bearer down":
+                raise ProviderUnavailableError()
+            case "Bearer undeclared":
+                raise UndeclaredAuthError()
+            case _:
+                raise InvalidTokenError()
+
+
+class InheritingTokenAuth(TokenAuth):
+    """Passes no ``exceptions=``, so it inherits its parent's."""
 
 
 class ProtectedEndpoint(Endpoint, path="/protected", meta=EndpointMeta(exceptions=[DeclaredError])):
@@ -331,22 +336,30 @@ class UncheckedProtectedEndpoint(Endpoint, path="/protected-unchecked"):
 
 
 class ProtectedApp(BaseApp):
-    """App mounting both operations behind the token authenticator, with OpenAPI."""
+    """App mounting both operations behind the authenticator it's given, with OpenAPI."""
+
+    def __init__(self, auth: TokenAuth | None = None) -> None:
+        super().__init__()
+        self._auth = auth if auth is not None else TokenAuth()
 
     async def wire(self) -> None:
-        self._include_endpoint(ProtectedEndpoint(), auth=TokenAuth())
-        self._include_endpoint(UncheckedProtectedEndpoint(), auth=TokenAuth())
+        self._include_endpoint(ProtectedEndpoint(), auth=self._auth)
+        self._include_endpoint(UncheckedProtectedEndpoint(), auth=self._auth)
         self._include_openapi(title="protected", version="1")
 
 
+@pytest.mark.parametrize("auth", [TokenAuth(), InheritingTokenAuth()])
 @pytest.mark.parametrize(
     ("authorization", "status"),
     [("Bearer wrong", 401), ("Bearer down", 503)],
 )
-def test_authenticator_declared_error_passes(authorization: str, status: int) -> None:
+def test_authenticator_declared_error_passes(
+    auth: TokenAuth, authorization: str, status: int
+) -> None:
     """The errors an authenticator declares pass on every operation it guards, though
-    the operation itself doesn't list them: a 401 and a non-401 alike."""
-    with TestClient(ProtectedApp()) as client:
+    the operation itself doesn't list them: a 401 and a non-401 alike, and through a
+    subclass that inherits the declaration."""
+    with TestClient(ProtectedApp(auth)) as client:
         response = client.get("/protected", headers={"authorization": authorization})
     assert response.status_code == status
 
@@ -387,10 +400,8 @@ def test_authenticator_exceptions_are_documented_on_guarded_operations() -> None
         }
 
 
-class NotASequenceAuth:
-    """Declares ``exceptions`` as something other than a list or tuple."""
-
-    exceptions = "exceptions"
+class NotAnErrorAuth(Authenticator, exceptions=cast(Sequence[type[BaseHTTPError]], (str,))):
+    """Declares a non-error class with the keyword."""
 
     def authenticate(self, headers: TokenHeaders) -> Caller:
         """Accept anyone."""
@@ -398,10 +409,10 @@ class NotASequenceAuth:
         return Caller(user_id="user-id")
 
 
-class NotAnErrorAuth:
-    """Declares a non-error class in ``exceptions``."""
+class StrayAttributeAuth:
+    """A plain authenticator carrying an ``exceptions`` attribute jero would never read."""
 
-    exceptions = (str,)
+    exceptions = (InvalidTokenError,)
 
     def authenticate(self, headers: TokenHeaders) -> Caller:
         """Accept anyone."""
@@ -412,7 +423,7 @@ class NotAnErrorAuth:
 class BadAuthApp(BaseApp):
     """App mounting one operation behind the authenticator it's given."""
 
-    def __init__(self, auth: NotASequenceAuth | NotAnErrorAuth) -> None:
+    def __init__(self, auth: NotAnErrorAuth | StrayAttributeAuth) -> None:
         super().__init__()
         self._auth = auth
 
@@ -423,15 +434,16 @@ class BadAuthApp(BaseApp):
 @pytest.mark.parametrize(
     ("auth", "message"),
     [
-        (NotASequenceAuth(), "NotASequenceAuth: exceptions must be a list or tuple"),
         (NotAnErrorAuth(), "NotAnErrorAuth: 'exceptions' entries must be concrete jero error"),
+        (StrayAttributeAuth(), "StrayAttributeAuth: declare its errors with the class keyword"),
     ],
 )
 def test_invalid_authenticator_exceptions_fail_wiring(
-    auth: NotASequenceAuth | NotAnErrorAuth, message: str
+    auth: NotAnErrorAuth | StrayAttributeAuth, message: str
 ) -> None:
-    """An authenticator's ``exceptions`` must be a list or tuple of jero error classes,
-    checked at the mount."""
+    """An authenticator's errors are declared with ``exceptions=`` on the Authenticator
+    bases, as jero error classes, checked at the mount; an ``exceptions`` attribute
+    anywhere else fails loud rather than being ignored."""
     with pytest.raises(RuntimeError, match=message):
         TestClient(BadAuthApp(auth))
 

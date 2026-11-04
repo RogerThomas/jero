@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 from demo_app.errors import InvalidTokenError
 from demo_app.models import Credentials, SessionCookies, User
-from jero import AuthenticationRequiredError, BearerAuth
+from jero import AuthenticationRequiredError, Authenticator, BearerAuth
 
 
 @dataclass
@@ -41,15 +41,13 @@ class TokenLookup:
         return user
 
 
-class TokenAuth(TokenLookup, BearerAuth):
+class TokenAuth(TokenLookup, BearerAuth, exceptions=(InvalidTokenError,)):
     """Gating authenticator: every route mounted with it requires valid credentials.
 
     Subclassing :class:`~jero.BearerAuth` makes its routes advertise HTTP bearer in the
-    generated OpenAPI spec, and ``exceptions`` documents the error it raises on every
+    generated OpenAPI spec, and ``exceptions=`` documents the error it raises on every
     route it guards.
     """
-
-    exceptions = (InvalidTokenError,)
 
     async def authenticate(self, headers: Credentials) -> User:
         """Resolve the bearer token to a user, or raise 401."""
@@ -59,7 +57,7 @@ class TokenAuth(TokenLookup, BearerAuth):
         return user
 
 
-class OptionalTokenAuth(TokenLookup, BearerAuth):
+class OptionalTokenAuth(TokenLookup, BearerAuth, exceptions=(InvalidTokenError,)):
     """Anonymous-accepting authenticator: returning ``None`` reports that the caller
     presented no credentials, and the route's handlers are invoked with ``user=None``.
 
@@ -67,24 +65,21 @@ class OptionalTokenAuth(TokenLookup, BearerAuth):
     these routes must declare ``user: User | None``; jero checks that at startup.
     """
 
-    exceptions = (InvalidTokenError,)
-
     async def authenticate(self, headers: Credentials) -> User | None:
         """Resolve the bearer token to a user, ``None`` if none was presented, or raise 401."""
         return self._resolve(headers)
 
 
 @dataclass
-class SessionAuth:
+class SessionAuth(Authenticator, exceptions=(InvalidTokenError,)):
     """Cookie-based session auth over the same token lookup ``TokenAuth`` uses.
 
-    Satisfies ``CookieAuth[SessionCookies, User]`` structurally — no base class needed:
-    unlike :class:`BearerAuth`/:class:`BasicAuth`, there is no cookie sugar class, because
-    the OpenAPI apiKey-in-cookie scheme derives automatically from ``SessionCookies``
-    having exactly one field and nothing declared on ``openapi_security``.
+    Satisfies ``CookieAuth[SessionCookies, User]`` structurally. Its base is the plain
+    :class:`~jero.Authenticator`, only to declare the error it raises: unlike
+    :class:`BearerAuth`/:class:`BasicAuth`, there is no cookie sugar class, because the
+    OpenAPI apiKey-in-cookie scheme derives automatically from ``SessionCookies`` having
+    exactly one field and nothing declared on ``openapi_security``.
     """
-
-    exceptions = (InvalidTokenError,)
 
     _users: dict[str, User]
 

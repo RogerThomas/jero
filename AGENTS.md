@@ -291,14 +291,17 @@ Always follow the following style guide:
   if OpenAPI is ever wired. A *declared* http scheme (bearer/basic names the
   `Authorization` header) on an authenticator whose `headers` Struct binds no
   `authorization` field is a `WiringError` at the mount (`_security_scheme`). An
-  authenticator declares the errors it raises once, as an optional `exceptions` class
-  attribute (a list/tuple of jero error classes, read like `openapi_security` and
-  validated at the mount by `authenticator_exceptions` in `_openapi_wiring`); they ride `OperationSpec.auth_exceptions`
-  into `_response_cascade`, so every guarded operation documents them, in the spec and in
-  `TestClient`'s undeclared-error check. `demo_app`'s authenticators declare
-  `InvalidTokenError` this way.
-  `BearerAuth` / `BasicAuth` are plain bases carrying only `openapi_security` (and an empty
-  `exceptions` default), deliberately
+  authenticator declares the errors it raises once, with the `exceptions=` class keyword
+  on the plain `Authenticator` base (`class SessionAuth(Authenticator,
+  exceptions=(InvalidSessionError,))`, statically typed via its `__init_subclass__`; a
+  subclass passing none inherits its parent's). `authenticator_exceptions` in
+  `_openapi_wiring` validates the entries at the mount, and an `exceptions` attribute on
+  an authenticator outside the bases is a `WiringError` (never silently ignored). They
+  ride `OperationSpec.auth_exceptions` into `_response_cascade`, so every guarded
+  operation documents them, in the spec and in `TestClient`'s undeclared-error check.
+  `demo_app`'s three authenticators declare `InvalidTokenError` this way.
+  `BearerAuth` / `BasicAuth` are `Authenticator` subclasses (so they take `exceptions=`)
+  carrying only `openapi_security`, deliberately
   *not* subclasses of `Auth`: with no inherited `authenticate` stub, a sync or `async def`
   override lints clean (pylint W0236 flagged async ones), and conformance is still checked
   structurally at the `auth=` mount and at wiring. `_include_resource` / `_include_endpoint` /
@@ -430,6 +433,9 @@ Always follow the following style guide:
   `Channel[T]` fan-out primitive.
   `jero/_links.py` — `Location` / `Link` and their reverse-routing targets (a leaf module
   `_core` and `_streaming` both import). `jero/_headers.py` — the `RawHeaders` opaque bag.
+  `jero/_auth.py` — the authenticator bases (`Authenticator`, `BearerAuth`, `BasicAuth`);
+  a leaf (`_errors` + `_openapi`), split out of `_core` for the module cap (the protocols
+  stay in `_core`).
   `jero/_content_stream.py` — `ContentStream` and `ClientDisconnectedError` (a leaf
   module `_core` imports).
   `jero/_routing.py` — path templates (`parse_template`, `split_action`, `template_str`) and
