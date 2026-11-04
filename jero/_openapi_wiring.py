@@ -399,12 +399,12 @@ def _error_entry(
     documents its real body: the RFC 9457 Problem shape (with ``detail`` + ``params`` for a
     parameterized error), a ``StructHTTPError``'s wire model, or, with an error body adapter
     registered, the adapter's per-status body. Several classes merge into one entry whose
-    body is a ``oneOf`` of their schemas, with their descriptions joined."""
+    body is an ``anyOf`` of their schemas, with their descriptions joined."""
     description = " / ".join(dict.fromkeys(_error_description(cls) for cls in classes))
     models = tuple(dict.fromkeys(_exception_docs_model(cls, adapter) for cls in classes))
     if len(models) == 1:
         return ResponseEntry.single(status, description, "application/json", model=models[0])
-    return ResponseEntry.single(status, description, "application/json", one_of=models)
+    return ResponseEntry.single(status, description, "application/json", any_of=models)
 
 
 def _response_cascade(

@@ -277,10 +277,11 @@ sources combine, per status:
 | declared `exceptions` (error classes) | class **extends** operation (both remain raiseable) | middle — **joins** a derived entry at its status |
 | derived (from the operation's sources) | — | baseline |
 
-Several errors sharing a status merge into one entry with a `oneOf` of their bodies.
+Several errors sharing a status merge into one entry with an `anyOf` of their bodies.
 That includes a derived one: declare your own 422 and the entry documents both it and
-the framework's 422 for a malformed body, since the operation can still send either. Entries are validated at wiring: anything that isn't a concrete jero error
-class is a startup `WiringError`.
+the framework's 422 for a malformed body, since the operation can still send either.
+Entries are validated at wiring: anything that isn't a concrete jero error class is a
+startup `WiringError`.
 
 #### Keeping the list complete
 

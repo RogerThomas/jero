@@ -2920,7 +2920,7 @@ class MergedStatusEndpoint(
     path="/merged",
     meta_get=OperationMeta(exceptions=[NotFoundError, MissingPartError]),
 ):
-    """Two declared errors share a status: the entry must merge as a oneOf."""
+    """Two declared errors share a status: the entry must merge as an anyOf."""
 
     async def get(self) -> Item:
         """Get an item."""
@@ -2999,13 +2999,13 @@ def test_declared_parameterized_error_documents_params() -> None:
         assert missing["properties"]["params"] == {"$ref": "#/components/schemas/MissingPartParams"}
 
 
-def test_declared_errors_sharing_a_status_merge_as_oneof() -> None:
-    """Same-status declarations merge into one entry with a oneOf and joined description."""
+def test_declared_errors_sharing_a_status_merge_as_anyof() -> None:
+    """Same-status declarations merge into one entry with an anyOf and joined description."""
     with TestClient(DeclaredErrorsApp()) as client:
         entry = client.get("/openapi.json").json()["paths"]["/merged"]["get"]["responses"]["404"]
         assert entry["description"] == "Not found / Missing part"
         assert entry["content"]["application/json"]["schema"] == {
-            "oneOf": [
+            "anyOf": [
                 {"$ref": "#/components/schemas/NotFoundProblem"},
                 {"$ref": "#/components/schemas/MissingPartProblem"},
             ]
@@ -3022,7 +3022,7 @@ def test_error_response_precedence_per_status() -> None:
         # the declared 404 joins the path-derived one: a bad path value still sends NotFound
         assert responses["404"]["description"] == "Not found / Missing part"
         assert responses["404"]["content"]["application/json"]["schema"] == {
-            "oneOf": [
+            "anyOf": [
                 {"$ref": "#/components/schemas/NotFoundProblem"},
                 {"$ref": "#/components/schemas/MissingPartProblem"},
             ]

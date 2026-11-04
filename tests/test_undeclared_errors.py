@@ -230,14 +230,17 @@ class CrashAfterResponseApp(UndeclaredErrorsApp):
             raise RuntimeError("crash-after-response")
 
 
-def test_undeclared_error_message_survives_a_later_crash() -> None:
-    """A streaming request still fails with the undeclared-error message when the app
-    raises after sending the error response; that crash rides along as its context."""
+@pytest.mark.parametrize("send_get", [TestClient.get, TestClient.stream_get])
+def test_undeclared_error_message_survives_a_later_crash(
+    send_get: Callable[[TestClient, str], object],
+) -> None:
+    """A request, streaming or not, still fails with the undeclared-error message when the
+    app raises after sending the error response; that crash rides along as its context."""
     with (
         TestClient(CrashAfterResponseApp()) as client,
         pytest.raises(AssertionError, match="GET /stream returned UndeclaredError") as excinfo,
     ):
-        client.stream_get("/stream")
+        send_get(client, "/stream")
     assert isinstance(excinfo.value.__context__, RuntimeError)
 
 

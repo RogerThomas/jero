@@ -256,7 +256,7 @@ class OperationMeta(Struct):
     ``responses`` declares extra responses or overrides a derived one by reusing its status.
     ``exceptions`` declares jero error classes this operation can raise — status, body
     schema, and description all derive from the class; entries *extend* the class-level
-    ``meta``'s (both remain raiseable), several sharing a status document as a ``oneOf``,
+    ``meta``'s (both remain raiseable), several sharing a status document as an ``anyOf``,
     one sharing a framework-derived status joins that entry too (both can be sent), and
     an explicit ``responses`` entry for the same status wins.
 

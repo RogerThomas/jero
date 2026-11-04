@@ -659,8 +659,12 @@ class TestClient:
         }
 
         cycle = _RequestCycle(body)
-        await self._app(scope, cycle.receive, cycle.send)
-        self._fail_undeclared(undeclared)
+        try:
+            await self._app(scope, cycle.receive, cycle.send)
+        finally:
+            # Fail with the undeclared error even if the app raises after answering
+            # (that exception stays attached as the AssertionError's context).
+            self._fail_undeclared(undeclared)
         self._apply_response_cookies(cycle.multi_headers)
         return TestResponse(
             status_code=cycle.status,
