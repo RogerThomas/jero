@@ -1,7 +1,10 @@
 """``TestClient`` fails a request whose operation declares ``exceptions=`` but answers with
 an error the declaration (and so the OpenAPI spec) leaves out."""
 
-from typing import cast
+import asyncio
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from typing import Any, cast
 
 import pytest
 from msgspec import Struct
@@ -202,3 +205,47 @@ def test_invalid_declaration_fails_wiring_without_openapi() -> None:
     the check reads the declaration on every app."""
     with pytest.raises(RuntimeError, match="'exceptions' entries must be concrete jero error"):
         TestClient(BadDeclarationApp())
+
+
+class _CollectSend:
+    """ASGI send that records every message."""
+
+    def __init__(self) -> None:
+        self.messages: list[dict[str, Any]] = []
+
+    async def __call__(self, message: dict[str, Any]) -> None:
+        self.messages.append(message)
+
+
+@asynccontextmanager
+async def _lifespan(app: BaseApp) -> AsyncGenerator[None]:
+    """Drive ``app`` through ASGI lifespan startup/shutdown, as a real server does."""
+    to_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    from_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    task = asyncio.create_task(app({"type": "lifespan"}, to_app.get, from_app.put))
+    await to_app.put({"type": "lifespan.startup"})
+    assert (await from_app.get())["type"] == "lifespan.startup.complete"
+    try:
+        yield
+    finally:
+        await to_app.put({"type": "lifespan.shutdown"})
+        await from_app.get()
+        await task
+
+
+@pytest.mark.asyncio
+async def test_real_server_request_is_never_checked() -> None:
+    """A real server's scope carries no check list, so outside ``TestClient`` an
+    undeclared error is answered as usual: the check never affects production."""
+    app = UndeclaredErrorsApp()
+    send = _CollectSend()
+    scope: dict[str, Any] = {
+        "type": "http",
+        "method": "GET",
+        "path": "/checked",
+        "query_string": b"mode=undeclared",
+        "headers": [],
+    }
+    async with _lifespan(app):
+        await app(scope, asyncio.Queue[dict[str, Any]]().get, send)
+    assert send.messages[0]["status"] == 410
