@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/RogerThomas/jero/compare/0.3.0...0.3.1) (2026-11-04)
+
+
+### Features
+
+* TestClient fails on errors an operation doesn't declare ([#95](https://github.com/RogerThomas/jero/issues/95)) ([21b6778](https://github.com/RogerThomas/jero/commit/21b67782d41ca999d53e532ddc133e0afa6f850c))
+
 ## [0.3.0](https://github.com/RogerThomas/jero/compare/0.2.0...0.3.0) (2026-11-02)
 
 
