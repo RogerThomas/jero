@@ -2,7 +2,7 @@
 an error the declaration (and so the OpenAPI spec) leaves out."""
 
 import asyncio
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable, MutableMapping
 from contextlib import asynccontextmanager
 from typing import Any, Self, cast
 
@@ -205,6 +205,31 @@ def test_undeclared_error_fails_a_streaming_request(path: str) -> None:
         pytest.raises(AssertionError, match=f"GET {path} returned UndeclaredError"),
     ):
         client.stream_get(path)
+
+
+class CrashAfterResponseApp(UndeclaredErrorsApp):
+    """The same app, but it crashes after every HTTP response has been sent."""
+
+    async def __call__(
+        self,
+        scope: MutableMapping[str, Any],
+        receive: Callable[[], Awaitable[MutableMapping[str, Any]]],
+        send: Callable[[dict[str, Any]], Awaitable[None]],
+    ) -> None:
+        await super().__call__(scope, receive, send)
+        if scope["type"] == "http":
+            raise RuntimeError("crash-after-response")
+
+
+def test_undeclared_error_message_survives_a_later_crash() -> None:
+    """A streaming request still fails with the undeclared-error message when the app
+    raises after sending the error response; that crash rides along as its context."""
+    with (
+        TestClient(CrashAfterResponseApp()) as client,
+        pytest.raises(AssertionError, match="GET /stream returned UndeclaredError") as excinfo,
+    ):
+        client.stream_get("/stream")
+    assert isinstance(excinfo.value.__context__, RuntimeError)
 
 
 class BadDeclarationEndpoint(

@@ -716,9 +716,13 @@ class TestClient:
             message = await asyncio.to_thread(cycle.chunks.get)
             if message["type"] == "http.response.start":
                 if undeclared:
-                    # An error response is complete once it starts; let the app finish.
-                    await task
-                    self._fail_undeclared(undeclared)
+                    # An error response is complete once it starts; let the app finish,
+                    # but fail with the undeclared error even if finishing raises (that
+                    # exception stays attached as the AssertionError's context).
+                    try:
+                        await task
+                    finally:
+                        self._fail_undeclared(undeclared)
                 headers = {k.decode("latin-1"): v.decode("latin-1") for k, v in message["headers"]}
                 return _StreamSession(self._submit, cycle, task, message["status"], headers)
             cycle.chunks.put(message)
