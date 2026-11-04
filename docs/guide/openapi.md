@@ -300,8 +300,10 @@ AssertionError: GET /widgets returned WidgetLockedError (423), which its excepti
   needs its own entry.
 - **Whatever the spec documents passes**: the framework's own errors derived from the
   operation's sources (a malformed body's 422, a missing credential's 401, the generic
-  500, even when you declare your own error at the same status), and any error at a
-  status an explicit `ResponseSpec` takes over. The check reads the same cascade the
+  500, even when you declare your own error at the same status), any 401 on an
+  authenticated operation (so your authenticator's own errors, like an
+  `InvalidTokenError`, need no entry on every route), and any error at a status an
+  explicit `ResponseSpec` takes over. The check reads the same cascade the
   spec is built from.
 - **The error sent is the one checked**, so an exception handler's translation counts,
   not the exception it translated.

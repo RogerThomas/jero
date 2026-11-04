@@ -530,7 +530,9 @@ Always follow the following style guide:
   `type`); what passes is computed at wiring by `documented_errors` in `_openapi_wiring`
   from `_response_cascade`, the one function `operation_input` also builds the spec's
   error responses from (derived built-ins, joined per status by declared ones, then
-  replaced by explicit `ResponseSpec`s), so the check and the spec can't disagree. The route hands its
+  replaced by explicit `ResponseSpec`s), so the check and the spec can't disagree. Any
+  error passes at a `ResponseSpec`-owned status, and at 401 on an authenticated
+  operation (an authenticator's own 401 errors are declared nowhere). The route hands its
   `DocumentedErrors` to the exception funnel, which checks the error actually *sent*
   (so a handler's translation counts) only when the scope carries `TestClient`'s
   `DocumentedErrors.SCOPE_KEY` list — one scope lookup on the error path in production,

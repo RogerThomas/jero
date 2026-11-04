@@ -267,6 +267,54 @@ def test_framework_error_sharing_a_declared_status_passes() -> None:
         assert client.post("/stock", json={"wrong": "wrong"}).status_code == 422
 
 
+class TokenHeaders(Struct):
+    """The bearer credential."""
+
+    authorization: str
+
+
+class Caller(Struct):
+    """The authenticated user."""
+
+    user_id: str
+
+
+class InvalidTokenError(HTTPError, type="invalid-token", title="Invalid token", status=401):
+    """The authenticator's own 401 error, declared on no operation."""
+
+
+class TokenAuth:
+    """Accepts one token and raises its own 401 error for any other."""
+
+    def authenticate(self, headers: TokenHeaders) -> Caller:
+        """Authenticate the bearer token."""
+        if headers.authorization != "token":
+            raise InvalidTokenError()
+        return Caller(user_id="user-id")
+
+
+class ProtectedEndpoint(Endpoint, path="/protected", meta=EndpointMeta(exceptions=[DeclaredError])):
+    """An authenticated operation that declares its errors."""
+
+    async def get(self, user: Caller) -> Item:
+        """Return the caller's item."""
+        return Item(item_id=user.user_id)
+
+
+class ProtectedApp(BaseApp):
+    """App mounting the protected operation behind the token authenticator."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(ProtectedEndpoint(), auth=TokenAuth())
+
+
+def test_authenticator_401_passes_on_a_protected_operation() -> None:
+    """An authenticator's own 401 error passes on any operation it protects, though no
+    operation declares it."""
+    with TestClient(ProtectedApp()) as client:
+        assert client.get("/protected", headers={"authorization": "wrong"}).status_code == 401
+
+
 class BadDeclarationEndpoint(
     Endpoint,
     path="/bad-declaration",

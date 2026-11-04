@@ -439,11 +439,14 @@ class DocumentedErrors(Struct, frozen=True):
     that an operation declaring ``exceptions=`` never answers with an error it leaves out.
 
     ``classes`` are the documented error classes (exact classes: a subclass documents its
-    own ``type``, so it is not covered by its parent). ``statuses`` are the statuses an
-    explicit ``ResponseSpec`` took over; any error at one of those is the user's own
-    declaration. A ``TestClient`` request carries a list under ``SCOPE_KEY`` that an
-    undeclared error's message is appended to; a real server's scope never does, so
-    production pays one scope lookup on the error path and nothing else.
+    own ``type``, so it is not covered by its parent). ``statuses`` are the statuses any
+    error passes at: one an explicit ``ResponseSpec`` took over (the user's own
+    declaration), and 401 on an authenticated operation (the spec documents a 401 there,
+    and the authenticator may raise its own 401 errors, which no route declares).
+
+    A ``TestClient`` request carries a list under ``SCOPE_KEY`` that an undeclared
+    error's message is appended to; a real server's scope never does, so production pays
+    one scope lookup on the error path and nothing else.
     """
 
     SCOPE_KEY: ClassVar[str] = "jero.undeclared_errors"
@@ -475,7 +478,8 @@ def documented_errors(spec: OperationSpec) -> DocumentedErrors | None:
         ),
         statuses=frozenset(
             status for status, documented in cascade.items() if isinstance(documented, ResponseSpec)
-        ),
+        )
+        | (frozenset({401}) if spec.auth_mode is not None else frozenset()),
     )
 
 
