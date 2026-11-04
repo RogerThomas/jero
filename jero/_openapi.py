@@ -241,14 +241,14 @@ class BodySpec:
 @dataclass(slots=True)
 class ResponseBody:
     """One media type's body within a response: a ``model`` ($ref, or msgspec's ``anyOf``
-    for a union of Structs), a ``list`` of it, a ``one_of`` of several variants, or a
+    for a union of Structs), a ``list`` of it, an ``any_of`` of several variants, or a
     verbatim ``schema``."""
 
     content_type: str
     model: type[Struct] | UnionType | None = None
     is_list: bool = False
     schema: dict[str, Any] | None = None
-    one_of: tuple[type[Struct], ...] = ()
+    any_of: tuple[type[Struct], ...] = ()
 
 
 @dataclass(slots=True)
@@ -283,11 +283,11 @@ class ResponseEntry:
         model: type[Struct] | UnionType | None = None,
         is_list: bool = False,
         schema: dict[str, Any] | None = None,
-        one_of: tuple[type[Struct], ...] = (),
+        any_of: tuple[type[Struct], ...] = (),
         headers: tuple[type[Struct], ...] = (),
     ) -> "ResponseEntry":
         """A response documenting one media type — every response but a merged union return."""
-        body = ResponseBody(content_type, model, is_list, schema, one_of)
+        body = ResponseBody(content_type, model, is_list, schema, any_of)
         return cls(status, description, (body,), headers)
 
 
@@ -332,10 +332,10 @@ def _model_payload_types(model: type[Struct] | UnionType | None) -> tuple[object
 
 
 def _body_payload_types(body: ResponseBody) -> tuple[object, ...]:
-    """The types one media type's body contributes to the schema pass: its ``one_of``
+    """The types one media type's body contributes to the schema pass: its ``any_of``
     variants, or its model's types (see :func:`_model_payload_types`)."""
-    if body.one_of:
-        return body.one_of
+    if body.any_of:
+        return body.any_of
     return _model_payload_types(body.model)
 
 
@@ -676,9 +676,11 @@ def _response_body(body: ResponseBody, schemas: _Schemas) -> dict[str, dict[str,
     examples = None
     if body.schema is not None:
         schema = body.schema
-    elif body.one_of:
-        # several declared errors share this status: alternatives, not an open union
-        schema = {"oneOf": [schemas.ref(variant) for variant in body.one_of]}
+    elif body.any_of:
+        # several errors share this status. anyOf, not oneOf: their schemas may overlap
+        # (an adapter's body beside a StructHTTPError's), and a body matching two
+        # alternatives must still validate. The same reason union returns merge as anyOf.
+        schema = {"anyOf": [schemas.ref(variant) for variant in body.any_of]}
     elif isinstance(body.model, UnionType):
         # a union of Structs: msgspec's anyOf (+ discriminator when the members are tagged)
         schema = schemas.schema_for(body.model)

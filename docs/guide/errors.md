@@ -118,6 +118,37 @@ The response includes both `"detail": "Widget widget-id not found"` and
 `"params": {"widgetId": "widget-id"}`. `detail` and `params` cannot appear separately.
 An optional `docs="https://..."` class option adds documentation for either error form.
 
+`ParameterizedHTTPError` is the same error without the dataclass layer: the error class
+declares no fields, and the raise site passes the params Struct itself.
+
+```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
+from msgspec import Struct
+
+from jero import ParameterizedHTTPError
+
+
+class WidgetNotFoundParams(Struct, rename="camel"):
+    widget_id: str
+
+
+class WidgetNotFoundError(
+    ParameterizedHTTPError[WidgetNotFoundParams],
+    type="widget-not-found",
+    title="Widget not found",
+    status=404,
+    detail_template="Widget {widget_id} not found",
+): ...
+
+
+raise WidgetNotFoundError(WidgetNotFoundParams(widget_id="widget-id"))
+```
+
+The response and the OpenAPI schema are identical to the dataclass form. The trade-off
+is where you pay: `ParameterizedHTTPError` declares each field once but builds the
+params Struct at every raise site, while `DataclassHTTPError` repeats the fields and a
+`__post_init__` on the class to give every raise site plain keyword arguments.
+
 Any other uncaught exception becomes the static `internal-server-error` problem; server
 internals never leak to the client.
 

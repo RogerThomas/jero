@@ -274,12 +274,43 @@ sources combine, per status:
 | Source | Class level vs operation level | Precedence per status |
 | :-- | :-- | :-- |
 | explicit `responses` (`ResponseSpec`) | operation **overrides** class | highest — always the last word |
-| declared `exceptions` (error classes) | class **extends** operation (both remain raiseable) | middle |
+| declared `exceptions` (error classes) | class **extends** operation (both remain raiseable) | middle — **joins** a derived entry at its status |
 | derived (from the operation's sources) | — | baseline |
 
-Several declared errors sharing a status merge into one entry with a `oneOf` of their
-bodies. Entries are validated at wiring: anything that isn't a concrete jero error
-class is a startup `WiringError`.
+Several errors sharing a status merge into one entry with an `anyOf` of their bodies.
+That includes a derived one: declare your own 422 and the entry documents both it and
+the framework's 422 for a malformed body, since the operation can still send either.
+Entries are validated at wiring: anything that isn't a concrete jero error class is a
+startup `WiringError`.
+
+#### Keeping the list complete
+
+Python can't say which errors a function raises, so `exceptions` is the one part of the
+spec you maintain by hand, and a new `raise` deep in a service can leave it behind.
+[`TestClient`](testing.md) checks it for you. Once an operation declares `exceptions`
+(at either level), any test request to it that answers with an error the spec leaves
+out fails:
+
+```text
+AssertionError: GET /widgets returned WidgetLockedError (423), which its exceptions=[...] does not declare
+```
+
+- **The declaration is the switch.** An operation that declares no `exceptions` isn't
+  checked, and wiring `_include_openapi` or not changes nothing.
+- **Exact classes.** A subclass of a declared error documents its own `type`, so it
+  needs its own entry.
+- **Whatever the spec documents passes**: the framework's own errors derived from the
+  operation's sources (a malformed body's 422, a missing credential's 401, the generic
+  500, even when you declare your own error at the same status), any 401 on an
+  authenticated operation (so your authenticator's own errors, like an
+  `InvalidTokenError`, need no entry on every route), and any error at a status an
+  explicit `ResponseSpec` takes over. The check reads the same cascade the
+  spec is built from.
+- **The error sent is the one checked.** When an exception handler translates an
+  exception into an error class, that error class is checked, not the exception. A
+  handler that answers with an `ExceptionResponse` isn't checked, since an
+  `ExceptionResponse` can't be listed in `exceptions`.
+- Only the error paths your tests exercise are checked.
 
 **Tags** are the groups an operation belongs to. A `meta` tag entry is either a bare
 `str` (the tag name — this is the OpenAPI operation-tag shape) or a `Tag` to define that

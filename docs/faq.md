@@ -6,6 +6,49 @@ Yes. Handlers, `authenticate`, and middleware hooks may all be `def` or `async d
 jero detects which at wiring. Use sync for pure CPU-light work; anything that does I/O
 should be async.
 
+A `def` handler runs directly on the event loop, not in a thread pool. This is the
+opposite of FastAPI, which moves every `def` handler onto a thread pool so that
+blocking code there is safe. jero doesn't, for performance (see below). While a `def`
+handler runs, every other request on that worker waits, so a blocking call inside one
+(a sync SDK, a `time.sleep`, a large file read) stalls the whole server. Keep the
+handler `async def` and hand the blocking call to a thread yourself, or use an async
+client instead:
+
+```python
+import asyncio
+import time
+
+from jero import BaseApp, Endpoint, Struct
+
+
+class Report(Struct):
+    rows: int
+
+
+def build_report() -> Report:
+    time.sleep(0.01)  # stands in for any blocking call
+    return Report(rows=1)
+
+
+class ReportsEndpoint(Endpoint, path="/reports"):
+    async def get(self) -> Report:
+        return await asyncio.to_thread(build_report)
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        self._include_endpoint(ReportsEndpoint())
+
+
+app = App()
+```
+
+There is no implicit thread pool on purpose, and the main reason is performance.
+Handing every sync handler to a thread would add a thread switch to each request, the
+CPU-light ones that never needed it included. It would also hide which of your code
+runs concurrently. `asyncio.to_thread` puts the hand-off in plain sight, on exactly the
+calls that need it.
+
 ## Does jero support WebSockets?
 
 Yes—jero provides typed bidirectional [WebSockets](guide/websockets.md) and an

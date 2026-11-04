@@ -520,8 +520,28 @@ Always follow the following style guide:
   the error class — status, description (`title` / `description`), and body schema
   (per-class Problem model with `type`/`status` consts + params; the Struct family's
   wire model). Class-level entries extend the operation's; same-status entries merge as
-  a `oneOf`; precedence per status is derived < declared exceptions < explicit
-  `ResponseSpec`; non-error entries are a wiring failure.
+  an `anyOf` (not `oneOf`: the bodies may overlap), and a declared error *joins* a
+  derived built-in at its status (both can still be sent) rather than replacing it; an
+  explicit `ResponseSpec` replaces whatever a status held; non-error entries are a
+  wiring failure (always, OpenAPI wired or not). **`TestClient` enforces the list**: an
+  operation that declares any `exceptions` and answers a test request with an error its
+  spec leaves out fails that request with an `AssertionError`. The declaration is the
+  switch (no flag; undeclared operations and `_include_openapi` change nothing); exact
+  classes only (a subclass documents its own `type`); what passes is computed at wiring
+  by `documented_errors` in `_openapi_wiring` from `_response_cascade`, the one function
+  `operation_input` also builds the spec's error responses from (derived built-ins,
+  joined per status by declared ones, then replaced by explicit `ResponseSpec`s), so the
+  check and the spec can't disagree. Any error passes at a `ResponseSpec`-owned status,
+  and at 401 on an authenticated operation (an authenticator's own 401 errors are
+  declared nowhere). The route hands its `DocumentedErrors` to the exception funnel,
+  which checks the error actually *sent* (so a handler's translation into an error class
+  counts; an `ExceptionResponse` answer is never checked, since `exceptions=` can't list
+  one) only when the scope carries `TestClient`'s `DocumentedErrors.SCOPE_KEY` list —
+  one scope lookup on the error path in production, nothing on success. Covers errors
+  from binding, the handler, response-header assembly (the three `_Route` funnel sites),
+  and a stream failing before its first item (`_result_sender` hands `documented` to the
+  streaming senders only: they alone funnel their own setup errors, and only a route
+  builds them). WebSockets and middleware intercepts are out of scope.
 - **Union returns (dynamic success status)**: a return annotation may be a union of
   response types (`Widget | NoContent`), so one handler answers with different,
   statically-typed success statuses, each documented as its own response entry. Any
