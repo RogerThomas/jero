@@ -143,10 +143,11 @@ def test_anonymous_accepting_auth_advertises_the_unauthenticated_alternative(
     client: TestClient,
 ) -> None:
     """An anonymous-accepting operation lists the scheme *and* an empty requirement — the spec's
-    idiom for "credentials are accepted but not required" — and still documents its 401."""
+    idiom for "credentials are accepted but not required" — and still documents its 401,
+    joined by the error the authenticator declares it raises."""
     get = client.get("/openapi.json").json()["paths"]["/spotlight"]["get"]
     assert get["security"] == [{"bearerAuth": []}, {}]
-    assert get["responses"]["401"]["description"] == "Authentication required"
+    assert get["responses"]["401"]["description"] == "Authentication required / Invalid token"
 
 
 def test_msgspec_meta_constraints_appear_in_schema(client: TestClient) -> None:

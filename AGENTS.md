@@ -290,8 +290,15 @@ Always follow the following style guide:
   reduced to one scheme — `_include_openapi` raises for it, naming the class, but only
   if OpenAPI is ever wired. A *declared* http scheme (bearer/basic names the
   `Authorization` header) on an authenticator whose `headers` Struct binds no
-  `authorization` field is a `WiringError` at the mount (`_security_scheme`).
-  `BearerAuth` / `BasicAuth` are plain bases carrying only `openapi_security`, deliberately
+  `authorization` field is a `WiringError` at the mount (`_security_scheme`). An
+  authenticator declares the errors it raises once, as an optional `exceptions` class
+  attribute (a list/tuple of jero error classes, read like `openapi_security` and
+  validated at the mount by `authenticator_exceptions` in `_openapi_wiring`); they ride `OperationSpec.auth_exceptions`
+  into `_response_cascade`, so every guarded operation documents them, in the spec and in
+  `TestClient`'s undeclared-error check. `demo_app`'s authenticators declare
+  `InvalidTokenError` this way.
+  `BearerAuth` / `BasicAuth` are plain bases carrying only `openapi_security` (and an empty
+  `exceptions` default), deliberately
   *not* subclasses of `Auth`: with no inherited `authenticate` stub, a sync or `async def`
   override lints clean (pylint W0236 flagged async ones), and conformance is still checked
   structurally at the `auth=` mount and at wiring. `_include_resource` / `_include_endpoint` /
@@ -531,9 +538,10 @@ Always follow the following style guide:
   by `documented_errors` in `_openapi_wiring` from `_response_cascade`, the one function
   `operation_input` also builds the spec's error responses from (derived built-ins,
   joined per status by declared ones, then replaced by explicit `ResponseSpec`s), so the
-  check and the spec can't disagree. Any error passes at a `ResponseSpec`-owned status,
-  and at 401 on an authenticated operation (an authenticator's own 401 errors are
-  declared nowhere). The route hands its `DocumentedErrors` to the exception funnel,
+  check and the spec can't disagree. Any error passes at a `ResponseSpec`-owned status.
+  An authenticator's declared `exceptions` are documented on every operation it guards
+  (no blanket allowance for 401s: an authenticator lists its own), but they don't switch
+  the check on for an operation that declares nothing itself. The route hands its `DocumentedErrors` to the exception funnel,
   which checks the error actually *sent* (so a handler's translation into an error class
   counts; an `ExceptionResponse` answer is never checked, since `exceptions=` can't list
   one) only when the scope carries `TestClient`'s `DocumentedErrors.SCOPE_KEY` list —

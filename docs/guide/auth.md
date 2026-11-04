@@ -341,3 +341,62 @@ authed route that declares nothing defaults to HTTP bearer. For a token in a hea
 query param, or cookie, set the attribute with `SecurityScheme.api_key(...)`. The value
 must be a `SecurityScheme` (or absent / `None`) — anything else is a `WiringError` at
 startup. See [OpenAPI & docs](openapi.md#security-schemes).
+
+### Declaring the authenticator's errors
+
+An authenticator often raises errors of its own: an invalid token, or a 503 when the
+identity provider can't be reached. Declare them once, as an `exceptions` class
+attribute, and every operation the authenticator guards documents them in the spec,
+with no entry on each route:
+
+```python
+from msgspec import Struct
+
+from jero import BaseApp, BearerAuth, Endpoint, HTTPError
+
+
+class Credentials(Struct):
+    authorization: str
+
+
+class User(Struct):
+    user_id: str
+
+
+class InvalidTokenError(HTTPError, type="invalid-token", title="Invalid token", status=401): ...
+
+
+class ProviderUnavailableError(
+    HTTPError, type="provider-unavailable", title="Provider unavailable", status=503
+): ...
+
+
+class TokenAuth(BearerAuth):
+    exceptions = (InvalidTokenError, ProviderUnavailableError)
+
+    async def authenticate(self, headers: Credentials) -> User:
+        if headers.authorization != "Bearer token":
+            raise InvalidTokenError()
+        return User(user_id="user-id")
+
+
+class MeEndpoint(Endpoint, path="/me"):
+    async def get(self, user: User) -> User:
+        return user
+
+
+class App(BaseApp):
+    async def wire(self) -> None:
+        self._include_endpoint(MeEndpoint(), auth=TokenAuth())
+        self._include_openapi(title="Me API", version="1.0.0")
+
+
+app = App()
+```
+
+They count as declared for
+[`TestClient`'s check](openapi.md#keeping-the-list-complete) too, so a test that sends a
+bad token to an operation listing its own `exceptions` passes. Nothing else does: an
+authenticator error it doesn't declare fails that check like any other, 401s included.
+The value must be a list or tuple of jero error classes, else a `WiringError` at
+startup.

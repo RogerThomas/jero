@@ -157,7 +157,12 @@ from jero._openapi import (
     Tag,
     build_openapi,
 )
-from jero._openapi_wiring import DocumentedErrors, documented_errors, operation_input
+from jero._openapi_wiring import (
+    DocumentedErrors,
+    authenticator_exceptions,
+    documented_errors,
+    operation_input,
+)
 from jero._routing import (
     Pattern,
     Segment,
@@ -622,6 +627,7 @@ class BearerAuth:
     """
 
     openapi_security: ClassVar[SecurityScheme] = SecurityScheme.http_bearer()
+    exceptions: ClassVar[Sequence[type[BaseHTTPError]]] = ()  # see authenticator_exceptions
 
 
 class BasicAuth:
@@ -629,6 +635,7 @@ class BasicAuth:
     :class:`BearerAuth`."""
 
     openapi_security: ClassVar[SecurityScheme] = SecurityScheme.http_basic()
+    exceptions: ClassVar[Sequence[type[BaseHTTPError]]] = ()
 
 
 class _StreamResult(Protocol):
@@ -3961,9 +3968,11 @@ class BaseApp[FactoryT = None](ABC):
         compiled_auth = _CompiledAuth(auth) if auth is not None else None
         auth_mode: AuthMode = None
         security_scheme: SecurityScheme | None = None
+        auth_exceptions: tuple[type[BaseHTTPError], ...] = ()
         if compiled_auth is not None:
             auth_mode = "optional" if compiled_auth.reports_absence else "required"
             security_scheme = _security_scheme(auth, compiled_auth)
+            auth_exceptions = authenticator_exceptions(auth)
 
         registered = False
         for name, verb in methods.items():
@@ -3987,6 +3996,7 @@ class BaseApp[FactoryT = None](ABC):
                 op_meta=getattr(cls, f"meta_{name}", None),
                 operation_id_default=f"{cls.__name__}_{_camel(name)}",
                 auth_owner=compiled_auth.owner if compiled_auth is not None else None,
+                auth_exceptions=auth_exceptions,
             )
             handler = _Route(
                 fn,

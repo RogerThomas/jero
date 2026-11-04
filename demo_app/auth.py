@@ -45,8 +45,11 @@ class TokenAuth(TokenLookup, BearerAuth):
     """Gating authenticator: every route mounted with it requires valid credentials.
 
     Subclassing :class:`~jero.BearerAuth` makes its routes advertise HTTP bearer in the
-    generated OpenAPI spec.
+    generated OpenAPI spec, and ``exceptions`` documents the error it raises on every
+    route it guards.
     """
+
+    exceptions = (InvalidTokenError,)
 
     async def authenticate(self, headers: Credentials) -> User:
         """Resolve the bearer token to a user, or raise 401."""
@@ -64,6 +67,8 @@ class OptionalTokenAuth(TokenLookup, BearerAuth):
     these routes must declare ``user: User | None``; jero checks that at startup.
     """
 
+    exceptions = (InvalidTokenError,)
+
     async def authenticate(self, headers: Credentials) -> User | None:
         """Resolve the bearer token to a user, ``None`` if none was presented, or raise 401."""
         return self._resolve(headers)
@@ -78,6 +83,8 @@ class SessionAuth:
     the OpenAPI apiKey-in-cookie scheme derives automatically from ``SessionCookies``
     having exactly one field and nothing declared on ``openapi_security``.
     """
+
+    exceptions = (InvalidTokenError,)
 
     _users: dict[str, User]
 
