@@ -295,7 +295,8 @@ Always follow the following style guide:
   on the plain `Authenticator` base (`class SessionAuth(Authenticator,
   exceptions=(InvalidSessionError,))`, statically typed via its `__init_subclass__`; a
   subclass passing none inherits its parent's). `authenticator_exceptions` in
-  `_openapi_wiring` validates the entries at the mount, and an `exceptions` attribute on
+  `_openapi_wiring` validates the entries at every mount (WebSocket ones too, though
+  sockets document nothing), and an `exceptions` attribute on
   an authenticator outside the bases is a `WiringError` (never silently ignored). They
   ride `OperationSpec.auth_exceptions` into `_response_cascade`, so every guarded
   operation documents them, in the spec and in `TestClient`'s undeclared-error check.

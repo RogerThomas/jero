@@ -24,6 +24,8 @@ from jero import (
     Request,
     ResponseSpec,
     StructHTTPError,
+    WebSocket,
+    WebSocketEndpoint,
 )
 from jero.testing import TestClient
 
@@ -446,6 +448,28 @@ def test_invalid_authenticator_exceptions_fail_wiring(
     anywhere else fails loud rather than being ignored."""
     with pytest.raises(RuntimeError, match=message):
         TestClient(BadAuthApp(auth))
+
+
+class CallerWebSocket(WebSocketEndpoint, path="/ws"):
+    """A socket behind an authenticator; sockets document no errors."""
+
+    async def handle(self, websocket: WebSocket[str, str], user: Caller) -> None:
+        """Greet the caller."""
+        await websocket.send(user.user_id)
+
+
+class BadWebSocketAuthApp(BaseApp):
+    """App mounting only a socket behind an authenticator with a bad declaration."""
+
+    async def wire(self) -> None:
+        self._include_websocket(CallerWebSocket(), auth=NotAnErrorAuth())
+
+
+def test_invalid_authenticator_exceptions_fail_a_websocket_mount() -> None:
+    """A socket-only authenticator's ``exceptions=`` is checked at its mount too, so a bad
+    declaration fails where it's made, not at some later HTTP mount."""
+    with pytest.raises(RuntimeError, match="NotAnErrorAuth: 'exceptions' entries must be"):
+        TestClient(BadWebSocketAuthApp())
 
 
 class BadDeclarationEndpoint(
