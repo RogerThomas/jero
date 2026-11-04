@@ -2799,6 +2799,8 @@ class _StreamSender:
     _reverser: _Reverser
     _exceptions: _ExceptionHandlers
     _tail: _RouteTail
+    # The route's documented errors (see _Route), so a setup failure is checked too.
+    _documented: DocumentedErrors | None
 
     def _chunk(self, item: object) -> bytes:
         if not isinstance(item, bytes):
@@ -2812,7 +2814,7 @@ class _StreamSender:
         # Route through the exception registry: a custom handler or a raised HTTPError becomes
         # its Problem response, and an unexpected setup failure is logged and mapped to a 500
         # (the logging lives in _ExceptionHandlers, the single funnel for both paths).
-        await self._exceptions.send(scope, send, exc, self._tail)
+        await self._exceptions.send(scope, send, exc, self._tail, self._documented)
 
     def _response_start(
         self, scope: Scope, result: _StreamResult
@@ -2988,7 +2990,11 @@ def _result_sender(
     reverser: _Reverser,
     exceptions: _ExceptionHandlers,
     tail: _RouteTail,
+    documented: DocumentedErrors | None = None,
 ) -> _Sender:
+    """The sender for one return kind. ``documented`` reaches only the streaming senders:
+    they are the only kinds that funnel their own setup errors, and only a route builds
+    them (streams can't be union members or intercept responses)."""
     if kind == "bytes":
         return _BytesSender(status, tail)
     if kind == "text":
@@ -3000,11 +3006,17 @@ def _result_sender(
     if kind == "no-content":
         return _NoContentSender(status, reverser, tail)
     if kind == "stream-bytes":
-        return _StreamSender(status, b"application/octet-stream", reverser, exceptions, tail)
+        return _StreamSender(
+            status, b"application/octet-stream", reverser, exceptions, tail, documented
+        )
     if kind == "stream-ndjson":
-        return _NDJSONStreamSender(status, b"application/x-ndjson", reverser, exceptions, tail)
+        return _NDJSONStreamSender(
+            status, b"application/x-ndjson", reverser, exceptions, tail, documented
+        )
     if kind == "stream-sse":
-        return _SSEStreamSender(status, b"text/event-stream", reverser, exceptions, tail)
+        return _SSEStreamSender(
+            status, b"text/event-stream", reverser, exceptions, tail, documented
+        )
     return _JSONSender(status, tail)
 
 
@@ -3117,7 +3129,7 @@ class _Route:
         self._send_result = (
             _union_sender(sources.return_members, reverser, exceptions, tail)
             if sources.return_kind == "union"
-            else _result_sender(sources.return_kind, status, reverser, exceptions, tail)
+            else _result_sender(sources.return_kind, status, reverser, exceptions, tail, documented)
         )
         self._exceptions = exceptions
         # The errors this operation documents, when it declares exceptions= (else None,

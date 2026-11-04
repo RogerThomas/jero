@@ -532,9 +532,11 @@ Always follow the following style guide:
   `DocumentedErrors` to the exception funnel, which checks the error actually *sent*
   (so a handler's translation counts) only when the scope carries `TestClient`'s
   `DocumentedErrors.SCOPE_KEY` list — one scope lookup on the error path in production,
-  nothing on success. Covers errors from binding, the handler, and response-header
-  assembly (the three `_Route` funnel sites); a streaming sender's own setup errors,
-  WebSockets, and middleware intercepts are out of scope.
+  nothing on success. Covers errors from binding, the handler, response-header
+  assembly (the three `_Route` funnel sites), and a stream failing before its first
+  item (`_result_sender` hands `documented` to the streaming senders only: they alone
+  funnel their own setup errors, and only a route builds them). WebSockets and
+  middleware intercepts are out of scope.
 - **Union returns (dynamic success status)**: a return annotation may be a union of
   response types (`Widget | NoContent`), so one handler answers with different,
   statically-typed success statuses, each documented as its own response entry. Any

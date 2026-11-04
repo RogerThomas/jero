@@ -4,7 +4,7 @@ an error the declaration (and so the OpenAPI spec) leaves out."""
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any, cast
+from typing import Any, Self, cast
 
 import pytest
 from msgspec import Struct
@@ -120,6 +120,26 @@ class StreamEndpoint(Endpoint, path="/stream", meta=EndpointMeta(exceptions=[Dec
         raise UndeclaredError()
 
 
+class FailingStream:
+    """A stream that raises an error no operation declares before its first item."""
+
+    def __aiter__(self) -> Self:
+        return self
+
+    async def __anext__(self) -> Item:
+        raise UndeclaredError()
+
+
+class StreamItemsEndpoint(
+    Endpoint, path="/stream-items", meta=EndpointMeta(exceptions=[DeclaredError])
+):
+    """A streaming operation whose stream fails before its first item."""
+
+    async def get(self) -> NDJSONStreamingResponse[Item]:
+        """Return the failing stream."""
+        return NDJSONStreamingResponse(stream=FailingStream())
+
+
 class UndeclaredErrorsApp(BaseApp):
     """App wiring the checked, unchecked, and streaming operations (no OpenAPI)."""
 
@@ -128,6 +148,7 @@ class UndeclaredErrorsApp(BaseApp):
         self._include_endpoint(CheckedEndpoint())
         self._include_endpoint(UncheckedEndpoint())
         self._include_endpoint(StreamEndpoint())
+        self._include_endpoint(StreamItemsEndpoint())
 
 
 @pytest.mark.parametrize(
@@ -172,13 +193,15 @@ def test_operation_declaring_nothing_is_not_checked() -> None:
         assert client.get("/unchecked").status_code == 410
 
 
-def test_undeclared_error_fails_a_streaming_request() -> None:
-    """A streaming operation that fails before streaming is checked the same way."""
+@pytest.mark.parametrize("path", ["/stream", "/stream-items"])
+def test_undeclared_error_fails_a_streaming_request(path: str) -> None:
+    """A streaming operation is checked the same way, whether the handler raises before
+    returning the stream or the stream raises before its first item."""
     with (
         TestClient(UndeclaredErrorsApp()) as client,
-        pytest.raises(AssertionError, match="GET /stream returned UndeclaredError"),
+        pytest.raises(AssertionError, match=f"GET {path} returned UndeclaredError"),
     ):
-        client.stream_get("/stream")
+        client.stream_get(path)
 
 
 class BadDeclarationEndpoint(
