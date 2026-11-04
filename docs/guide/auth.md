@@ -408,7 +408,8 @@ bad token to an operation listing its own `exceptions` passes. Nothing else does
 authenticator error it doesn't declare fails that check like any other, 401s included.
 The keyword is type-checked and follows the same container rule as `OperationMeta`
 tags: on a subclass, a list extends the parent's errors, a tuple replaces them, and
-passing none inherits them. The entries are checked once, when the class is defined: anything but a jero error class is
+passing none inherits them. With several `Authenticator` parents, "the parent's" means
+all of theirs combined. The entries are checked once, when the class is defined: anything but a jero error class is
 a `WiringError` right there, as is an `exceptions` attribute in the class body (the
 keyword is the only form). One on an authenticator outside these bases, which jero
 would never read, is a `WiringError` when it's mounted.

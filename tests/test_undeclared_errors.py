@@ -352,6 +352,14 @@ def test_slotted_dataclass_authenticator_keeps_its_errors() -> None:
     assert response.status_code == 401
 
 
+class UndeclaredAuthParent(Authenticator, exceptions=[UndeclaredAuthError]):
+    """A second Authenticator parent with errors of its own."""
+
+
+class TwoParentTokenAuth(TokenAuth, UndeclaredAuthParent):
+    """Inherits from two Authenticator parents, so it gets both parents' errors."""
+
+
 class ExtendingTokenAuth(TokenAuth, exceptions=[UndeclaredAuthError]):
     """A list extends the parent's errors."""
 
@@ -413,6 +421,15 @@ def test_list_extends_the_parent_authenticators_errors() -> None:
         undeclared = client.get("/protected", headers={"authorization": "Bearer undeclared"})
         wrong = client.get("/protected", headers={"authorization": "Bearer wrong"})
     assert (undeclared.status_code, wrong.status_code) == (403, 401)
+
+
+def test_errors_combine_across_several_authenticator_parents() -> None:
+    """An authenticator with two Authenticator parents documents both parents' errors,
+    not just the first in its MRO."""
+    with TestClient(ProtectedApp(TwoParentTokenAuth())) as client:
+        undeclared = client.get("/protected", headers={"authorization": "Bearer undeclared"})
+        down = client.get("/protected", headers={"authorization": "Bearer down"})
+    assert (undeclared.status_code, down.status_code) == (403, 503)
 
 
 def test_tuple_replaces_the_parent_authenticators_errors() -> None:

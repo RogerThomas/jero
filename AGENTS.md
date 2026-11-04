@@ -295,7 +295,8 @@ Always follow the following style guide:
   on the plain `Authenticator` base (`class SessionAuth(Authenticator,
   exceptions=[InvalidSessionError])`, statically typed via its `__init_subclass__`; on a
   subclass, as for `OperationMeta` tags, a list extends the parent's errors, a non-empty
-  tuple replaces them, and none inherits them). The entries are validated once, at class
+  tuple replaces them, and none inherits them; "the parent's" is every `Authenticator`
+  base's errors combined, not just the first in the MRO). The entries are validated once, at class
   definition (`validated_error_classes` in `_auth`, the same rule `_openapi_wiring` applies
   to a meta's `exceptions=`) and stored as `__auth_exceptions__` (the `__model_meta__`
   precedent), never under the keyword's name, so `@dataclass(slots=True)`'s class rebuild

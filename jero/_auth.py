@@ -59,8 +59,8 @@ class Authenticator:
             async def authenticate(self, cookies: SessionCookies) -> User: ...
 
     The container type picks the rule, as for ``OperationMeta`` tags: a ``list`` extends
-    the parent's errors, a (non-empty) ``tuple`` replaces them, and passing none inherits
-    them. Implement
+    the parents' errors (every ``Authenticator`` base's, combined), a (non-empty)
+    ``tuple`` replaces them, and passing none inherits them. Implement
     ``authenticate`` as for any of the auth protocols; this base adds no stub, so a sync
     or ``async def`` one lints clean. :class:`BearerAuth` and :class:`BasicAuth` are
     subclasses, so they take the keyword too. Entries are validated as concrete jero error
@@ -79,15 +79,27 @@ class Authenticator:
         if hasattr(cls, "exceptions"):
             # From the class body or a mixin: it would bypass the validation below.
             raise _stray_exceptions_error(cls.__name__)
-        if not exceptions:
-            # Nothing declared -> inherit the parent's (the tags rule). Also the path a
-            # rebuilt class takes (@dataclass(slots=True)): the validated errors ride
-            # its copied namespace.
+        if "__auth_exceptions__" in cls.__dict__:
+            # A rebuilt class (@dataclass(slots=True)) carries its validated errors in
+            # its copied namespace; recomputing from the bases would drop its own.
             return
-        # The container type chooses, as for OperationMeta tags: a tuple replaces the
-        # parent's errors, a list extends them. Validated here, once per class.
-        inherited = () if isinstance(exceptions, tuple) else cls.__auth_exceptions__
-        cls.__auth_exceptions__ = validated_error_classes([*inherited, *exceptions], cls.__name__)
+        # Every Authenticator parent's errors, not just the first in the MRO's.
+        inherited = tuple(
+            dict.fromkeys(
+                error
+                for base in cls.__bases__
+                if issubclass(base, Authenticator)
+                for error in base.__auth_exceptions__
+            )
+        )
+        # The container type chooses, as for OperationMeta tags: nothing declared
+        # inherits, a tuple replaces the parents' errors, a list extends them.
+        # Validated here, once per class.
+        if not exceptions:
+            cls.__auth_exceptions__ = inherited
+            return
+        base_errors = () if isinstance(exceptions, tuple) else inherited
+        cls.__auth_exceptions__ = validated_error_classes([*base_errors, *exceptions], cls.__name__)
 
 
 class BearerAuth(Authenticator):
