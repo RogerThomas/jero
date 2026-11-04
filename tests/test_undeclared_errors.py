@@ -15,8 +15,11 @@ from jero import (
     Endpoint,
     EndpointMeta,
     HTTPError,
+    JSONResponse,
     NDJSONStreamingResponse,
+    NoContent,
     OperationMeta,
+    Request,
     ResponseSpec,
     StructHTTPError,
 )
@@ -272,3 +275,64 @@ async def test_real_server_request_is_never_checked() -> None:
     async with _lifespan(app):
         await app(scope, asyncio.Queue[dict[str, Any]]().get, send)
     assert send.messages[0]["status"] == 410
+
+
+class EchoHeaders(Struct):
+    """The response header a failing middleware hook would add."""
+
+    x_echo: str
+
+
+class FailingHeadersMiddleware:
+    """A dynamic ``response_headers`` hook that raises an error no operation declares."""
+
+    def response_headers(self, request: Request) -> EchoHeaders | None:
+        """Fail while the response's headers are assembled."""
+        _ = request
+        raise UndeclaredError()
+
+
+class PlainHeadersEndpoint(Endpoint, path="/plain", meta=EndpointMeta(exceptions=[DeclaredError])):
+    """Returns a plain Struct (the inlined fast path)."""
+
+    async def get(self) -> Item:
+        """Return an item."""
+        return Item(item_id="item-id")
+
+
+class WrappedHeadersEndpoint(
+    Endpoint, path="/wrapped", meta=EndpointMeta(exceptions=[DeclaredError])
+):
+    """Returns a response wrapper (the sender path)."""
+
+    async def get(self) -> JSONResponse[Item]:
+        """Return a wrapped item."""
+        return JSONResponse(json=Item(item_id="item-id"))
+
+
+class EmptyHeadersEndpoint(Endpoint, path="/empty", meta=EndpointMeta(exceptions=[DeclaredError])):
+    """Returns a fixed-status wrapper with no body."""
+
+    async def get(self) -> NoContent:
+        """Return no content."""
+        return NoContent()
+
+
+class FailingHeadersApp(BaseApp):
+    """App scoping the failing hook onto each return shape."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(PlainHeadersEndpoint(), middleware=[FailingHeadersMiddleware()])
+        self._include_endpoint(WrappedHeadersEndpoint(), middleware=[FailingHeadersMiddleware()])
+        self._include_endpoint(EmptyHeadersEndpoint(), middleware=[FailingHeadersMiddleware()])
+
+
+@pytest.mark.parametrize("path", ["/plain", "/wrapped", "/empty"])
+def test_undeclared_error_from_a_header_hook_fails_the_request(path: str) -> None:
+    """A middleware header hook raising an undeclared error is checked whatever the
+    operation returns: a plain Struct, a response wrapper, or a bodiless wrapper."""
+    with (
+        TestClient(FailingHeadersApp()) as client,
+        pytest.raises(AssertionError, match=f"GET {path} returned UndeclaredError"),
+    ):
+        client.get(path)
