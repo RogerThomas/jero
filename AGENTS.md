@@ -521,7 +521,20 @@ Always follow the following style guide:
   (per-class Problem model with `type`/`status` consts + params; the Struct family's
   wire model). Class-level entries extend the operation's; same-status entries merge as
   a `oneOf`; precedence per status is derived < declared exceptions < explicit
-  `ResponseSpec`; non-error entries are a wiring failure.
+  `ResponseSpec`; non-error entries are a wiring failure (always, OpenAPI wired or not).
+  **`TestClient` enforces the list**: an operation that declares any `exceptions` and
+  answers a test request with an error its spec leaves out fails that request with an
+  `AssertionError`. The declaration is the switch (no flag; undeclared operations and
+  `_include_openapi` change nothing); exact classes only (a subclass documents its own
+  `type`); what passes is computed at wiring by `documented_errors` in `_openapi_wiring`
+  from the same cascade as the spec (derived built-ins, replaced per status by declared
+  ones, plus any status an explicit `ResponseSpec` takes over). The route hands its
+  `DocumentedErrors` to the exception funnel, which checks the error actually *sent*
+  (so a handler's translation counts) only when the scope carries `TestClient`'s
+  `DocumentedErrors.SCOPE_KEY` list — one scope lookup on the error path in production,
+  nothing on success. Covers errors from binding, the handler, and response-header
+  assembly (the three `_Route` funnel sites); a streaming sender's own setup errors,
+  WebSockets, and middleware intercepts are out of scope.
 - **Union returns (dynamic success status)**: a return annotation may be a union of
   response types (`Widget | NoContent`), so one handler answers with different,
   statically-typed success statuses, each documented as its own response entry. Any

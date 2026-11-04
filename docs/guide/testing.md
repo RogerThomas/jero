@@ -63,6 +63,15 @@ with TestClient(App()) as client:
         # leaving the block disconnects; lifecycle teardown runs
 ```
 
+## Undeclared errors
+
+When an operation declares its errors with `exceptions=[...]`, every `TestClient`
+request checks the answer against that list: an error the OpenAPI spec doesn't document
+fails the request with an `AssertionError` naming the operation and the error class.
+There is nothing to turn on. See
+[Keeping the list complete](openapi.md#keeping-the-list-complete) for exactly what
+counts as documented.
+
 ## Mocking dependencies
 
 Inject a stand-in factory through the `factory=` seam so the real I/O services are

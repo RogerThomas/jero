@@ -32,6 +32,7 @@ from typing_extensions import TypeForm
 
 from jero._codecs import msgspec_decoder, msgspec_encoder
 from jero._core import BaseApp, BaseFactory
+from jero._openapi_wiring import DocumentedErrors
 from jero._websockets import _payload_kind
 
 type _DataValue = str | bytes
@@ -589,6 +590,14 @@ class TestClient:
         chunks.append(f"--{boundary}--\r\n".encode())
         return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
 
+    @staticmethod
+    def _fail_undeclared(undeclared: list[str]) -> None:
+        """Fail the request when its operation answered with an error its
+        ``exceptions=[...]`` leaves out of the OpenAPI spec. The app recorded each one in
+        the list this client put in the request's scope (see ``DocumentedErrors``)."""
+        if undeclared:
+            raise AssertionError("; ".join(undeclared))
+
     async def _start_lifespan(self) -> None:
         self._lifespan_task = asyncio.create_task(
             self._app({"type": "lifespan"}, self._to_app.get, self._from_app.put)
@@ -634,6 +643,7 @@ class TestClient:
             body = (multipart,)
             wire_headers.setdefault("content-type", content_type)
 
+        undeclared: list[str] = []
         scope: dict[str, Any] = {
             "type": "http",
             "method": method,
@@ -645,10 +655,12 @@ class TestClient:
             "headers": [
                 (k.encode("latin-1"), v.encode("latin-1")) for k, v in wire_headers.items()
             ],
+            DocumentedErrors.SCOPE_KEY: undeclared,
         }
 
         cycle = _RequestCycle(body)
         await self._app(scope, cycle.receive, cycle.send)
+        self._fail_undeclared(undeclared)
         self._apply_response_cookies(cycle.multi_headers)
         return TestResponse(
             status_code=cycle.status,
@@ -684,6 +696,7 @@ class TestClient:
             body = (multipart,)
             wire_headers.setdefault("content-type", content_type)
 
+        undeclared: list[str] = []
         scope: dict[str, Any] = {
             "type": "http",
             "method": method,
@@ -695,12 +708,17 @@ class TestClient:
             "headers": [
                 (k.encode("latin-1"), v.encode("latin-1")) for k, v in wire_headers.items()
             ],
+            DocumentedErrors.SCOPE_KEY: undeclared,
         }
         cycle = _StreamCycle(body)
         task = asyncio.create_task(self._app(scope, cycle.receive, cycle.send))
         while True:
             message = await asyncio.to_thread(cycle.chunks.get)
             if message["type"] == "http.response.start":
+                if undeclared:
+                    # An error response is complete once it starts; let the app finish.
+                    await task
+                    self._fail_undeclared(undeclared)
                 headers = {k.decode("latin-1"): v.decode("latin-1") for k, v in message["headers"]}
                 return _StreamSession(self._submit, cycle, task, message["status"], headers)
             cycle.chunks.put(message)

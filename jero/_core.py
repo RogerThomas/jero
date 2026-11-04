@@ -157,7 +157,7 @@ from jero._openapi import (
     Tag,
     build_openapi,
 )
-from jero._openapi_wiring import operation_input
+from jero._openapi_wiring import DocumentedErrors, documented_errors, operation_input
 from jero._routing import (
     Pattern,
     Segment,
@@ -2556,11 +2556,34 @@ class _ExceptionHandlers:
             exc_info=exception,
         )
 
+    @staticmethod
+    def _record_undeclared(
+        scope: Scope, error: BaseHTTPError, documented: DocumentedErrors
+    ) -> None:
+        # Only a TestClient request carries the list (a real server's scope never does),
+        # so outside tests this is one lookup on the error path and nothing more.
+        undeclared = scope.get(DocumentedErrors.SCOPE_KEY)
+        if undeclared is None:
+            return
+        if type(error) in documented.classes or error.status in documented.statuses:
+            return
+        cast("list[str]", undeclared).append(
+            f"{documented.operation} returned {type(error).__name__} ({error.status}), "
+            "which its exceptions=[...] does not declare"
+        )
+
     async def _send_default(
-        self, scope: Scope, send: Send, exception: Exception, tail: _RouteTail
+        self,
+        scope: Scope,
+        send: Send,
+        exception: Exception,
+        tail: _RouteTail,
+        documented: DocumentedErrors | None,
     ) -> None:
         extra = tail.contained_extra(scope)
         if isinstance(exception, BaseHTTPError):
+            if documented is not None:
+                self._record_undeclared(scope, exception, documented)
             await _send_json(send, exception.status, self.encode_error(exception), extra)
             return
         self._log_unexpected(scope, exception)
@@ -2585,19 +2608,30 @@ class _ExceptionHandlers:
         self._handlers[compiled.exception_type] = compiled
         self._resolved.clear()
 
-    async def send(self, scope: Scope, send: Send, exception: Exception, tail: _RouteTail) -> None:
+    async def send(
+        self,
+        scope: Scope,
+        send: Send,
+        exception: Exception,
+        tail: _RouteTail,
+        documented: DocumentedErrors | None = None,
+    ) -> None:
         """Run the nearest handler, then send its response or the default problem.
 
         ``tail`` is the failing route's response-header tail (CORS pairs, middleware
         headers) — an error body a browser page must be able to *read* still needs the
         route's CORS pairs on it. Dynamic hooks are contained here (logged, skipped on
         failure), since this funnel is already sending the error response. A client that
-        disconnected mid-body (``content_stream``) is answered with nothing: it's gone."""
+        disconnected mid-body (``content_stream``) is answered with nothing: it's gone.
+
+        ``documented`` is the failing operation's documented errors, passed by a route
+        whose operation declares ``exceptions=``; the error actually sent is checked
+        against it for ``TestClient`` (see :class:`DocumentedErrors`)."""
         if isinstance(exception, ClientDisconnectedError):
             return
         handler = self._resolve(type(exception))
         if handler is None:
-            await self._send_default(scope, send, exception, tail)
+            await self._send_default(scope, send, exception, tail, documented)
             return
         # A user handler is an isolation boundary: its own ordinary failure must not
         # escape the app or recursively dispatch through the registry. gather's
@@ -2619,16 +2653,16 @@ class _ExceptionHandlers:
                 exc_info=outcome,
             )
             self._log_unexpected(scope, exception)
-            await self._send_default(scope, send, InternalServerError(), tail)
+            await self._send_default(scope, send, InternalServerError(), tail, documented)
             return
         if isinstance(outcome, BaseException):
             raise outcome
         result = outcome.value
         if result is None:
-            await self._send_default(scope, send, exception, tail)
+            await self._send_default(scope, send, exception, tail, documented)
             return
         if isinstance(result, BaseHTTPError):
-            await self._send_default(scope, send, result, tail)
+            await self._send_default(scope, send, result, tail, documented)
             return
         if not isinstance(result, ExceptionResponse):
             # The handler returned a value outside its declared contract (its return is
@@ -2643,7 +2677,7 @@ class _ExceptionHandlers:
                 scope["path"],
             )
             self._log_unexpected(scope, exception)
-            await self._send_default(scope, send, InternalServerError(), tail)
+            await self._send_default(scope, send, InternalServerError(), tail, documented)
             return
         await self._send_response(
             scope,
@@ -3049,6 +3083,7 @@ class _Route:
         "_bind",
         "_bind_awaits_only_body",
         "_bind_is_sync",
+        "_documented",
         "_exceptions",
         "_fn",
         "_is_async",
@@ -3068,6 +3103,7 @@ class _Route:
         reverser: _Reverser,
         exceptions: _ExceptionHandlers,
         tail: _RouteTail,
+        documented: DocumentedErrors | None,
     ) -> None:
         self._fn = fn
         self._is_async = inspect.iscoroutinefunction(fn)
@@ -3084,6 +3120,9 @@ class _Route:
             else _result_sender(sources.return_kind, status, reverser, exceptions, tail)
         )
         self._exceptions = exceptions
+        # The errors this operation documents, when it declares exceptions= (else None,
+        # and nothing is checked): handed to the funnel on this route's error paths.
+        self._documented = documented
         self._arity = sources.arity
         self._tail = tail
 
@@ -3109,7 +3148,7 @@ class _Route:
         except WiringError:
             raise
         except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-            await self._exceptions.send(scope, send, exc, self._tail)
+            await self._exceptions.send(scope, send, exc, self._tail, self._documented)
 
     async def __call__(
         self, scope: Scope, receive: Receive, send: Send, path_values: dict[str, str]
@@ -3142,7 +3181,7 @@ class _Route:
             else:
                 result = await self._fn() if self._is_async else self._fn()
         except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-            await self._exceptions.send(scope, send, exc, self._tail)
+            await self._exceptions.send(scope, send, exc, self._tail, self._documented)
             return
         if self._json_status is not None:
             # Inlines _JSONSender (kept for _result_sender completeness) to save a
@@ -3163,7 +3202,7 @@ class _Route:
                 except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
                     # A dynamic header hook raised: nothing sent yet, same funnel as a
                     # handler failure.
-                    await self._exceptions.send(scope, send, exc, self._tail)
+                    await self._exceptions.send(scope, send, exc, self._tail, self._documented)
                     return
             await send(
                 {
@@ -3924,6 +3963,18 @@ class BaseApp[FactoryT = None](ABC):
             # A NoContent/Created/Accepted return fixes its own status regardless of the
             # verb's default (204/201/202); a union's members carry their own already.
             status = _effective_status(sources.return_kind, verb.success_status)
+            operation = OperationSpec(
+                path=template_str(segments) + action,
+                method=verb.method.lower(),
+                success_status=status,
+                sources=sources,
+                auth_mode=auth_mode,
+                security_scheme=security_scheme,
+                class_meta=cls.meta,
+                op_meta=getattr(cls, f"meta_{name}", None),
+                operation_id_default=f"{cls.__name__}_{_camel(name)}",
+                auth_owner=compiled_auth.owner if compiled_auth is not None else None,
+            )
             handler = _Route(
                 fn,
                 status,
@@ -3932,25 +3983,13 @@ class BaseApp[FactoryT = None](ABC):
                 reverser=self.__reverser,
                 exceptions=self.__exceptions,
                 tail=tail,
+                documented=documented_errors(operation),
             )
             self.__register(verb.method, segments, handler, action)
             record.routes.append((verb.method, handler))
             route_ref = _RouteRef(tuple(segments), sources.path, action)
             self.__reverser.register(fn.__func__, cls.ref, name, route_ref)
-            self.__operations.append(
-                OperationSpec(
-                    path=template_str(segments) + action,
-                    method=verb.method.lower(),
-                    success_status=status,
-                    sources=sources,
-                    auth_mode=auth_mode,
-                    security_scheme=security_scheme,
-                    class_meta=cls.meta,
-                    op_meta=getattr(cls, f"meta_{name}", None),
-                    operation_id_default=f"{cls.__name__}_{_camel(name)}",
-                    auth_owner=compiled_auth.owner if compiled_auth is not None else None,
-                )
-            )
+            self.__operations.append(operation)
             registered = True
 
         if not registered:

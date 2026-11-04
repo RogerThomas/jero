@@ -281,6 +281,32 @@ Several declared errors sharing a status merge into one entry with a `oneOf` of 
 bodies. Entries are validated at wiring: anything that isn't a concrete jero error
 class is a startup `WiringError`.
 
+#### Keeping the list complete
+
+Python can't say which errors a function raises, so `exceptions` is the one part of the
+spec you maintain by hand, and a new `raise` deep in a service can leave it behind.
+[`TestClient`](testing.md) checks it for you. Once an operation declares `exceptions`
+(at either level), any test request to it that answers with an error the spec leaves
+out fails:
+
+```text
+AssertionError: GET /widgets returned WidgetLockedError (423), which its exceptions=[...] does not declare
+```
+
+- **The declaration is the switch.** An operation that declares no `exceptions` isn't
+  checked, and wiring `_include_openapi` or not changes nothing.
+- **Exact classes.** A subclass of a declared error documents its own `type`, so it
+  needs its own entry.
+- **Whatever the spec documents passes**: the framework's own errors derived from the
+  operation's sources (a malformed body's 422, a missing credential's 401, the generic
+  500), and any error at a status an explicit `ResponseSpec` takes over. The check reads
+  the same cascade the spec is built from, so a declared error that replaces a derived
+  entry (the table above) replaces it here too; declare the built-in as well if both
+  can occur.
+- **The error sent is the one checked**, so an exception handler's translation counts,
+  not the exception it translated.
+- Only the error paths your tests exercise are checked.
+
 **Tags** are the groups an operation belongs to. A `meta` tag entry is either a bare
 `str` (the tag name — this is the OpenAPI operation-tag shape) or a `Tag` to define that
 name *with a description* inline. They cascade by *container type*: a class-level `meta`

@@ -11,7 +11,7 @@ dependency graph stays acyclic (``core`` imports *this* module, never the revers
 from collections.abc import Mapping, Sequence
 from functools import cache
 from types import UnionType, get_original_bases
-from typing import Any, Generic, Literal, TypeVar, Union, cast, get_args, get_origin
+from typing import Any, ClassVar, Generic, Literal, TypeVar, Union, cast, get_args, get_origin
 
 from msgspec import Struct, defstruct
 from msgspec.structs import fields as struct_fields
@@ -324,13 +324,18 @@ def _error_description(cls: type[BaseHTTPError]) -> str:
     return cast("type[HTTPError]", cls).title
 
 
-def _exception_entries(
-    spec: OperationSpec, adapter: ErrorBodyAdapter[Any] | None, operation_id: str
-) -> list[ResponseEntry]:
-    """Response entries derived from the declared ``exceptions``: the class-level meta's
-    first, extended by the operation's (both remain raiseable — the union, deduped),
-    validated as concrete jero error classes and grouped by status. Several errors sharing
-    a status merge into one entry whose body is a ``oneOf`` of their schemas."""
+def _operation_id(spec: OperationSpec) -> str:
+    """The operation's id: ``OperationMeta.operation_id`` when declared, else the default."""
+    op_meta = spec.op_meta
+    if op_meta is not None and op_meta.operation_id is not None:
+        return op_meta.operation_id
+    return spec.operation_id_default
+
+
+def _declared_exceptions(spec: OperationSpec, operation_id: str) -> list[type[BaseHTTPError]]:
+    """The declared ``exceptions``: the class-level meta's first, extended by the
+    operation's (both remain raiseable — the union, deduped), validated as concrete jero
+    error classes."""
     declared: dict[type[BaseHTTPError], None] = {}
     for meta in (spec.class_meta, spec.op_meta):
         entries = cast("Sequence[object]", meta.exceptions if meta is not None else ())
@@ -346,8 +351,17 @@ def _exception_entries(
                     f"classes (HTTPError or StructHTTPError subclasses); got {entry!r}",
                 )
             declared.setdefault(cast("type[BaseHTTPError]", entry), None)
+    return list(declared)
+
+
+def _exception_entries(
+    spec: OperationSpec, adapter: ErrorBodyAdapter[Any] | None, operation_id: str
+) -> list[ResponseEntry]:
+    """Response entries derived from the declared ``exceptions``, grouped by status.
+    Several errors sharing a status merge into one entry whose body is a ``oneOf`` of
+    their schemas."""
     by_status: dict[int, list[type[BaseHTTPError]]] = {}
-    for cls in declared:
+    for cls in _declared_exceptions(spec, operation_id):
         by_status.setdefault(cls.status, []).append(cls)
     responses: list[ResponseEntry] = []
     for status, classes in by_status.items():
@@ -378,13 +392,9 @@ _STATUS_ERRORS: dict[int, type[BaseHTTPError]] = {
 }
 
 
-def _error_responses(
-    sources: Sources, *, authed: bool, adapter: ErrorBodyAdapter[Any] | None
-) -> list[ResponseEntry]:
-    """The error responses a handler can actually produce, derived from its sources. Each
-    documents the built-in error it is raised as: the RFC 9457 Problem body — with
-    ``detail`` + ``params`` for the parameterized 400/422 — or, when an error body adapter
-    is registered, the adapter's per-status body (what the wire really carries)."""
+def _error_statuses(sources: Sources, *, authed: bool) -> list[int]:
+    """The error statuses the framework itself can answer a handler's request with,
+    derived from its sources (each raised as its ``_STATUS_ERRORS`` built-in)."""
     has_body = sources.json_decoder is not None or sources.form is not None
     statuses: list[int] = []
     if (
@@ -403,6 +413,16 @@ def _error_responses(
     if authed:
         statuses.append(401)
     statuses.append(500)
+    return statuses
+
+
+def _error_responses(
+    sources: Sources, *, authed: bool, adapter: ErrorBodyAdapter[Any] | None
+) -> list[ResponseEntry]:
+    """The error responses a handler can actually produce, derived from its sources. Each
+    documents the built-in error it is raised as: the RFC 9457 Problem body — with
+    ``detail`` + ``params`` for the parameterized 400/422 — or, when an error body adapter
+    is registered, the adapter's per-status body (what the wire really carries)."""
     return [
         ResponseEntry.single(
             status,
@@ -410,8 +430,62 @@ def _error_responses(
             "application/json",
             model=_exception_docs_model(_STATUS_ERRORS[status], adapter),
         )
-        for status in statuses
+        for status in _error_statuses(sources, authed=authed)
     ]
+
+
+class DocumentedErrors(Struct, frozen=True):
+    """The errors an operation's OpenAPI responses document, for ``TestClient``'s check
+    that an operation declaring ``exceptions=`` never answers with an error it leaves out.
+
+    ``classes`` are the documented error classes (exact classes: a subclass documents its
+    own ``type``, so it is not covered by its parent). ``statuses`` are the statuses an
+    explicit ``ResponseSpec`` took over; any error at one of those is the user's own
+    declaration. A ``TestClient`` request carries a list under ``SCOPE_KEY`` that an
+    undeclared error's message is appended to; a real server's scope never does, so
+    production pays one scope lookup on the error path and nothing else.
+    """
+
+    SCOPE_KEY: ClassVar[str] = "jero.undeclared_errors"
+
+    operation: str
+    classes: frozenset[type[BaseHTTPError]]
+    statuses: frozenset[int]
+
+
+def documented_errors(spec: OperationSpec) -> DocumentedErrors | None:
+    """The errors ``spec``'s OpenAPI responses document, or ``None`` when it declares no
+    ``exceptions`` (the declaration is the switch: nothing declared, nothing checked).
+
+    Built with the same cascade as :func:`operation_input`, so the check can never disagree
+    with the spec: the derived built-ins, replaced status by status by the declared
+    exceptions, with any status an explicit ``ResponseSpec`` takes over set aside.
+    Un-underscored: it crosses the ``core`` / ``openapi`` boundary.
+    """
+    declared = _declared_exceptions(spec, _operation_id(spec))
+    if not declared:
+        return None
+    by_status: dict[int, set[type[BaseHTTPError]]] = {
+        status: {_STATUS_ERRORS[status]}
+        for status in _error_statuses(spec.sources, authed=spec.auth_mode is not None)
+    }
+    grouped: dict[int, set[type[BaseHTTPError]]] = {}
+    for cls in declared:
+        grouped.setdefault(cls.status, set()).add(cls)
+    by_status |= grouped
+    explicit = frozenset(
+        response.status
+        for meta in (spec.class_meta, spec.op_meta)
+        if meta is not None
+        for response in meta.responses
+    )
+    return DocumentedErrors(
+        operation=f"{spec.method.upper()} {spec.path}",
+        classes=frozenset(
+            cls for status, group in by_status.items() if status not in explicit for cls in group
+        ),
+        statuses=explicit,
+    )
 
 
 def _entry_from_spec(spec: ResponseSpec) -> ResponseEntry:
@@ -592,17 +666,14 @@ def operation_input(
     """Translate a captured operation into the builder's input record.
 
     Un-underscored: it crosses the ``core`` / ``openapi`` boundary (``core`` imports it).
-    Everything else in this module is a private helper to this function.
+    Everything else in this module is a private helper to this function or to
+    :func:`documented_errors`.
     """
     op_meta = spec.op_meta
     # Summary/description are explicit (OperationMeta) — never inferred from the docstring.
     summary = op_meta.summary if op_meta is not None else None
     description = op_meta.description if op_meta is not None else None
-    operation_id = (
-        op_meta.operation_id
-        if op_meta is not None and op_meta.operation_id is not None
-        else spec.operation_id_default
-    )
+    operation_id = _operation_id(spec)
     # An authed route whose scheme couldn't be derived (a hybrid or multi-field-cookie
     # authenticator) documents nothing about auth unless caught here — and this only runs
     # for an app that actually calls _include_openapi, so apps that don't never pay.
