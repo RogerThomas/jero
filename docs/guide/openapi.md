@@ -305,8 +305,10 @@ AssertionError: GET /widgets returned WidgetLockedError (423), which its excepti
   `InvalidTokenError`, need no entry on every route), and any error at a status an
   explicit `ResponseSpec` takes over. The check reads the same cascade the
   spec is built from.
-- **The error sent is the one checked**, so an exception handler's translation counts,
-  not the exception it translated.
+- **The error sent is the one checked.** When an exception handler translates an
+  exception into an error class, that error class is checked, not the exception. A
+  handler that answers with an `ExceptionResponse` isn't checked, since an
+  `ExceptionResponse` can't be listed in `exceptions`.
 - Only the error paths your tests exercise are checked.
 
 **Tags** are the groups an operation belongs to. A `meta` tag entry is either a bare

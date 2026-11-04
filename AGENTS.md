@@ -534,7 +534,8 @@ Always follow the following style guide:
   error passes at a `ResponseSpec`-owned status, and at 401 on an authenticated
   operation (an authenticator's own 401 errors are declared nowhere). The route hands its
   `DocumentedErrors` to the exception funnel, which checks the error actually *sent*
-  (so a handler's translation counts) only when the scope carries `TestClient`'s
+  (so a handler's translation into an error class counts; an `ExceptionResponse` answer
+  is never checked, since `exceptions=` can't list one) only when the scope carries `TestClient`'s
   `DocumentedErrors.SCOPE_KEY` list — one scope lookup on the error path in production,
   nothing on success. Covers errors from binding, the handler, response-header
   assembly (the three `_Route` funnel sites), and a stream failing before its first
