@@ -527,8 +527,9 @@ Always follow the following style guide:
   `AssertionError`. The declaration is the switch (no flag; undeclared operations and
   `_include_openapi` change nothing); exact classes only (a subclass documents its own
   `type`); what passes is computed at wiring by `documented_errors` in `_openapi_wiring`
-  from the same cascade as the spec (derived built-ins, replaced per status by declared
-  ones, plus any status an explicit `ResponseSpec` takes over). The route hands its
+  from `_response_cascade`, the one function `operation_input` also builds the spec's
+  error responses from (derived built-ins, replaced per status by declared ones, then
+  by explicit `ResponseSpec`s), so the check and the spec can't disagree. The route hands its
   `DocumentedErrors` to the exception funnel, which checks the error actually *sent*
   (so a handler's translation counts) only when the scope carries `TestClient`'s
   `DocumentedErrors.SCOPE_KEY` list — one scope lookup on the error path in production,

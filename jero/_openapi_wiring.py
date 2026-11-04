@@ -354,30 +354,6 @@ def _declared_exceptions(spec: OperationSpec, operation_id: str) -> list[type[Ba
     return list(declared)
 
 
-def _exception_entries(
-    spec: OperationSpec, adapter: ErrorBodyAdapter[Any] | None, operation_id: str
-) -> list[ResponseEntry]:
-    """Response entries derived from the declared ``exceptions``, grouped by status.
-    Several errors sharing a status merge into one entry whose body is a ``oneOf`` of
-    their schemas."""
-    by_status: dict[int, list[type[BaseHTTPError]]] = {}
-    for cls in _declared_exceptions(spec, operation_id):
-        by_status.setdefault(cls.status, []).append(cls)
-    responses: list[ResponseEntry] = []
-    for status, classes in by_status.items():
-        description = " / ".join(dict.fromkeys(_error_description(cls) for cls in classes))
-        models = tuple(dict.fromkeys(_exception_docs_model(cls, adapter) for cls in classes))
-        if len(models) == 1:
-            responses.append(
-                ResponseEntry.single(status, description, "application/json", model=models[0])
-            )
-        else:
-            responses.append(
-                ResponseEntry.single(status, description, "application/json", one_of=models)
-            )
-    return responses
-
-
 # Each framework-generated error status maps to the built-in error it is raised as, so a
 # derived response documents that error's real body — parameterized errors (400/422)
 # contribute their ``detail`` + ``params`` schema — and stays consistent with the
@@ -416,22 +392,45 @@ def _error_statuses(sources: Sources, *, authed: bool) -> list[int]:
     return statuses
 
 
-def _error_responses(
-    sources: Sources, *, authed: bool, adapter: ErrorBodyAdapter[Any] | None
-) -> list[ResponseEntry]:
-    """The error responses a handler can actually produce, derived from its sources. Each
-    documents the built-in error it is raised as: the RFC 9457 Problem body — with
-    ``detail`` + ``params`` for the parameterized 400/422 — or, when an error body adapter
-    is registered, the adapter's per-status body (what the wire really carries)."""
-    return [
-        ResponseEntry.single(
-            status,
-            _error_description(_STATUS_ERRORS[status]),
-            "application/json",
-            model=_exception_docs_model(_STATUS_ERRORS[status], adapter),
-        )
-        for status in _error_statuses(sources, authed=authed)
-    ]
+def _error_entry(
+    status: int, classes: tuple[type[BaseHTTPError], ...], adapter: ErrorBodyAdapter[Any] | None
+) -> ResponseEntry:
+    """The documented response for the error classes one status can carry. Each class
+    documents its real body: the RFC 9457 Problem shape (with ``detail`` + ``params`` for a
+    parameterized error), a ``StructHTTPError``'s wire model, or, with an error body adapter
+    registered, the adapter's per-status body. Several classes merge into one entry whose
+    body is a ``oneOf`` of their schemas, with their descriptions joined."""
+    description = " / ".join(dict.fromkeys(_error_description(cls) for cls in classes))
+    models = tuple(dict.fromkeys(_exception_docs_model(cls, adapter) for cls in classes))
+    if len(models) == 1:
+        return ResponseEntry.single(status, description, "application/json", model=models[0])
+    return ResponseEntry.single(status, description, "application/json", one_of=models)
+
+
+def _response_cascade(
+    spec: OperationSpec, declared: Sequence[type[BaseHTTPError]]
+) -> dict[int, tuple[type[BaseHTTPError], ...] | ResponseSpec]:
+    """What an operation documents beyond its success responses, per status: the error
+    classes an entry describes, or the explicit ``ResponseSpec`` that took the status over.
+
+    The cascade, lowest first: the built-ins the framework raises for the operation's
+    sources, then the ``declared`` exceptions (same-status ones grouped), then explicit
+    ``responses`` (class-level ``meta`` before ``meta_<op>``). Each layer replaces a status
+    in place, so the order is stable. The single source for both :func:`operation_input`
+    (the spec) and :func:`documented_errors` (the test check), so the two can't disagree.
+    """
+    cascade: dict[int, tuple[type[BaseHTTPError], ...] | ResponseSpec] = {
+        status: (_STATUS_ERRORS[status],)
+        for status in _error_statuses(spec.sources, authed=spec.auth_mode is not None)
+    }
+    grouped: dict[int, list[type[BaseHTTPError]]] = {}
+    for cls in declared:
+        grouped.setdefault(cls.status, []).append(cls)
+    cascade |= {status: tuple(classes) for status, classes in grouped.items()}
+    for meta in (spec.class_meta, spec.op_meta):
+        if meta is not None:
+            cascade |= {response.status: response for response in meta.responses}
+    return cascade
 
 
 class DocumentedErrors(Struct, frozen=True):
@@ -457,34 +456,25 @@ def documented_errors(spec: OperationSpec) -> DocumentedErrors | None:
     """The errors ``spec``'s OpenAPI responses document, or ``None`` when it declares no
     ``exceptions`` (the declaration is the switch: nothing declared, nothing checked).
 
-    Built with the same cascade as :func:`operation_input`, so the check can never disagree
-    with the spec: the derived built-ins, replaced status by status by the declared
-    exceptions, with any status an explicit ``ResponseSpec`` takes over set aside.
+    Read from :func:`_response_cascade`, the same cascade the spec is built from, so the
+    check can never disagree with the spec.
     Un-underscored: it crosses the ``core`` / ``openapi`` boundary.
     """
     declared = _declared_exceptions(spec, _operation_id(spec))
     if not declared:
         return None
-    by_status: dict[int, set[type[BaseHTTPError]]] = {
-        status: {_STATUS_ERRORS[status]}
-        for status in _error_statuses(spec.sources, authed=spec.auth_mode is not None)
-    }
-    grouped: dict[int, set[type[BaseHTTPError]]] = {}
-    for cls in declared:
-        grouped.setdefault(cls.status, set()).add(cls)
-    by_status |= grouped
-    explicit = frozenset(
-        response.status
-        for meta in (spec.class_meta, spec.op_meta)
-        if meta is not None
-        for response in meta.responses
-    )
+    cascade = _response_cascade(spec, declared)
     return DocumentedErrors(
         path=spec.path,
         classes=frozenset(
-            cls for status, group in by_status.items() if status not in explicit for cls in group
+            cls
+            for documented in cascade.values()
+            if not isinstance(documented, ResponseSpec)
+            for cls in documented
         ),
-        statuses=explicit,
+        statuses=frozenset(
+            status for status, documented in cascade.items() if isinstance(documented, ResponseSpec)
+        ),
     )
 
 
@@ -682,21 +672,18 @@ def operation_input(
             f"{operation_id}: no OpenAPI security scheme could be derived for "
             f"{spec.auth_owner} — declare `openapi_security` on {spec.auth_owner}",
         )
-    # Responses cascade by status: derived (lowest), then declared exceptions, then
-    # explicit ResponseSpecs — class-meta before op-meta within each layer.
+    # The success entries, then the shared cascade (an explicit ResponseSpec may also
+    # override a success status, which keeps its position).
     responses: dict[int, ResponseEntry] = {}
     for entry in _success_entries(spec.success_status, spec.sources, operation_id):
         responses[entry.status] = entry
-    for entry in _error_responses(spec.sources, authed=spec.auth_mode is not None, adapter=adapter):
-        responses[entry.status] = entry
-    for entry in _exception_entries(spec, adapter, operation_id):
-        responses[entry.status] = entry
-    if spec.class_meta is not None:
-        for declared in spec.class_meta.responses:
-            responses[declared.status] = _entry_from_spec(declared)
-    if op_meta is not None:
-        for declared in op_meta.responses:
-            responses[declared.status] = _entry_from_spec(declared)
+    cascade = _response_cascade(spec, _declared_exceptions(spec, operation_id))
+    for status, documented in cascade.items():
+        responses[status] = (
+            _entry_from_spec(documented)
+            if isinstance(documented, ResponseSpec)
+            else _error_entry(status, documented, adapter)
+        )
     return OperationInput(
         method=spec.method,
         path=spec.path,
