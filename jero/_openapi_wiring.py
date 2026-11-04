@@ -448,7 +448,7 @@ class DocumentedErrors(Struct, frozen=True):
 
     SCOPE_KEY: ClassVar[str] = "jero.undeclared_errors"
 
-    operation: str
+    path: str  # the operation's path template, for the failure message
     classes: frozenset[type[BaseHTTPError]]
     statuses: frozenset[int]
 
@@ -480,7 +480,7 @@ def documented_errors(spec: OperationSpec) -> DocumentedErrors | None:
         for response in meta.responses
     )
     return DocumentedErrors(
-        operation=f"{spec.method.upper()} {spec.path}",
+        path=spec.path,
         classes=frozenset(
             cls for status, group in by_status.items() if status not in explicit for cls in group
         ),

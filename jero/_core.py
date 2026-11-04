@@ -2568,8 +2568,9 @@ class _ExceptionHandlers:
         if type(error) in documented.classes or error.status in documented.statuses:
             return
         cast("list[str]", undeclared).append(
-            f"{documented.operation} returned {type(error).__name__} ({error.status}), "
-            "which its exceptions=[...] does not declare"
+            # The wire method, not the operation's verb: an auto-HEAD runs the GET handler.
+            f"{scope['method']} {documented.path} returned {type(error).__name__} "
+            f"({error.status}), which its exceptions=[...] does not declare"
         )
 
     async def _send_default(

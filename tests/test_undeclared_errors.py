@@ -173,6 +173,15 @@ def test_undeclared_error_fails_the_request(mode: str, error: str, status: int) 
     )
 
 
+def test_head_request_is_reported_as_head() -> None:
+    """The automatic HEAD route runs the GET handler, but its failure names HEAD."""
+    with (
+        TestClient(UndeclaredErrorsApp()) as client,
+        pytest.raises(AssertionError, match=r"^HEAD /checked returned UndeclaredError"),
+    ):
+        client.head("/checked", params={"mode": "undeclared"})
+
+
 @pytest.mark.parametrize(
     ("mode", "status"),
     [("declared", 409), ("taken-over", 429), ("crash", 500)],
