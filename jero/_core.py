@@ -103,6 +103,7 @@ from jero._assets import (
     favicon_payload,
     if_none_match_hit,
 )
+from jero._auth import authenticator_exceptions
 from jero._background import BackgroundTasks
 from jero._codecs import msgspec_encoder
 from jero._content_stream import ClientDisconnectedError, ContentStream
@@ -157,12 +158,7 @@ from jero._openapi import (
     Tag,
     build_openapi,
 )
-from jero._openapi_wiring import (
-    DocumentedErrors,
-    authenticator_exceptions,
-    documented_errors,
-    operation_input,
-)
+from jero._openapi_wiring import DocumentedErrors, documented_errors, operation_input
 from jero._routing import (
     Pattern,
     Segment,

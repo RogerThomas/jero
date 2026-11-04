@@ -297,11 +297,12 @@ Always follow the following style guide:
   subclass, as for `OperationMeta` tags, a list extends the parent's errors, a non-empty
   tuple replaces them, and none inherits them). The entries are validated once, at class
   definition (`validated_error_classes` in `_auth`, the same rule `_openapi_wiring` applies
-  to a meta's `exceptions=`); a class-body `exceptions` attribute, which would bypass
-  that, is a `WiringError` there too. At every mount, WebSocket ones included,
-  `authenticator_exceptions` in `_openapi_wiring` reads them, and an `exceptions`
-  attribute on an authenticator outside the bases is a `WiringError` (never silently
-  ignored). They
+  to a meta's `exceptions=`) and stored as `__auth_exceptions__` (the `__model_meta__`
+  precedent), never under the keyword's name, so `@dataclass(slots=True)`'s class rebuild
+  keeps them. Any `exceptions` *attribute* is therefore a mistake and a `WiringError`:
+  from a class body or a mixin at definition, and on any authenticator (instance fields
+  included, base or no base) at every mount, WebSocket ones too, via
+  `authenticator_exceptions` in `_auth`. They
   ride `OperationSpec.auth_exceptions` into `_response_cascade`, so every guarded
   operation documents them, in the spec and in `TestClient`'s undeclared-error check.
   `demo_app`'s three authenticators declare `InvalidTokenError` this way.

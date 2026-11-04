@@ -38,6 +38,15 @@ def validated_error_classes(
     return tuple(validated)
 
 
+def _stray_exceptions_error(owner: str) -> WiringError:
+    """The error for an ``exceptions`` attribute anywhere on an authenticator: the class
+    keyword is the only way to declare its errors, and jero never reads the attribute."""
+    return WiringError(
+        f"{owner}: declare its errors with the class keyword, "
+        f"`class {owner}(Authenticator, exceptions=[...])`, not an `exceptions` attribute",
+    )
+
+
 class Authenticator:
     """The base for an authenticator that declares the errors it raises.
 
@@ -56,27 +65,29 @@ class Authenticator:
     or ``async def`` one lints clean. :class:`BearerAuth` and :class:`BasicAuth` are
     subclasses, so they take the keyword too. Entries are validated as concrete jero error
     classes once, when the class is defined: anything else is a ``WiringError`` there.
+    The validated errors are stored as ``__auth_exceptions__`` (as ``jero.Struct`` stores
+    ``__model_meta__``), never under the keyword's own name, so an ``exceptions``
+    attribute on the class, from its body or a mixin, is always a mistake and fails loud.
     """
 
-    exceptions: ClassVar[tuple[type[BaseHTTPError], ...]] = ()
+    __auth_exceptions__: ClassVar[tuple[type[BaseHTTPError], ...]] = ()
 
     def __init_subclass__(
         cls, *, exceptions: Sequence[type[BaseHTTPError]] | None = None, **kwargs: object
     ) -> None:
         super().__init_subclass__(**kwargs)
-        if "exceptions" in cls.__dict__:
-            # A class-body assignment would skip the validation below.
-            raise WiringError(
-                f"{cls.__name__}: declare its errors with the class keyword, "
-                f"`class {cls.__name__}(..., exceptions=[...])`, not an `exceptions` "
-                f"attribute in the class body",
-            )
+        if hasattr(cls, "exceptions"):
+            # From the class body or a mixin: it would bypass the validation below.
+            raise _stray_exceptions_error(cls.__name__)
         if not exceptions:
-            return  # nothing declared -> inherit the parent's (the tags rule)
+            # Nothing declared -> inherit the parent's (the tags rule). Also the path a
+            # rebuilt class takes (@dataclass(slots=True)): the validated errors ride
+            # its copied namespace.
+            return
         # The container type chooses, as for OperationMeta tags: a tuple replaces the
         # parent's errors, a list extends them. Validated here, once per class.
-        inherited = () if isinstance(exceptions, tuple) else cls.exceptions
-        cls.exceptions = validated_error_classes([*inherited, *exceptions], cls.__name__)
+        inherited = () if isinstance(exceptions, tuple) else cls.__auth_exceptions__
+        cls.__auth_exceptions__ = validated_error_classes([*inherited, *exceptions], cls.__name__)
 
 
 class BearerAuth(Authenticator):
@@ -99,3 +110,17 @@ class BasicAuth(Authenticator):
     :class:`BearerAuth`."""
 
     openapi_security: ClassVar[SecurityScheme] = SecurityScheme.http_basic()
+
+
+def authenticator_exceptions(auth: object) -> tuple[type[BaseHTTPError], ...]:
+    """The errors an authenticator declares it raises, with the ``exceptions=`` class
+    keyword (already validated once, when its class was defined), for every operation it
+    guards to document, in the spec and for ``TestClient``'s undeclared-error check. An
+    ``exceptions`` attribute on any authenticator, an instance field included, is a
+    ``WiringError`` rather than silently ignored. Un-underscored: ``core`` calls it at
+    every mount, WebSocket ones included."""
+    if hasattr(auth, "exceptions"):
+        raise _stray_exceptions_error(type(auth).__name__)
+    if isinstance(auth, Authenticator):
+        return type(auth).__auth_exceptions__
+    return ()

@@ -4,6 +4,7 @@ an error the declaration (and so the OpenAPI spec) leaves out."""
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from types import new_class
 from typing import Any, Self, cast
 
@@ -322,6 +323,35 @@ class InheritingTokenAuth(TokenAuth):
     """Passes no ``exceptions=``, so it inherits its parent's."""
 
 
+@dataclass(slots=True)
+class SlottedTokenAuth(BearerAuth, exceptions=[InvalidTokenError]):
+    """A slotted dataclass authenticator: the decorator rebuilds the class, and its
+    declared errors must survive that."""
+
+    _token: str
+
+    def authenticate(self, headers: TokenHeaders) -> Caller:
+        """Accept only the configured token."""
+        if headers.authorization != self._token:
+            raise InvalidTokenError()
+        return Caller(user_id="user-id")
+
+
+class SlottedProtectedApp(BaseApp):
+    """App mounting the protected operation behind the slotted authenticator."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(ProtectedEndpoint(), auth=SlottedTokenAuth("Bearer token"))
+
+
+def test_slotted_dataclass_authenticator_keeps_its_errors() -> None:
+    """``@dataclass(slots=True)`` on an authenticator using ``exceptions=`` works, and the
+    declared error still passes."""
+    with TestClient(SlottedProtectedApp()) as client:
+        response = client.get("/protected", headers={"authorization": "Bearer wrong"})
+    assert response.status_code == 401
+
+
 class ExtendingTokenAuth(TokenAuth, exceptions=[UndeclaredAuthError]):
     """A list extends the parent's errors."""
 
@@ -473,6 +503,47 @@ def test_class_body_exceptions_attribute_fails_at_class_definition() -> None:
             (BearerAuth,),
             exec_body=lambda namespace: namespace.update(exceptions=[InvalidTokenError]),
         )
+
+
+class ExceptionsMixin:
+    """A mixin that happens to carry an ``exceptions`` attribute."""
+
+    exceptions = (InvalidTokenError,)
+
+
+def test_mixin_exceptions_attribute_fails_at_class_definition() -> None:
+    """An ``exceptions`` attribute an Authenticator picks up from a mixin would bypass the
+    keyword's validation, so it fails at once too."""
+    with pytest.raises(WiringError, match="MixedAuth: declare its errors with the class keyword"):
+        new_class("MixedAuth", (ExceptionsMixin, Authenticator))
+
+
+@dataclass
+class InstanceFieldAuth(Authenticator):
+    """An Authenticator with an ``exceptions`` instance field jero would never read."""
+
+    exceptions: tuple[type[BaseHTTPError], ...]
+
+    def authenticate(self, headers: TokenHeaders) -> Caller:
+        """Accept anyone."""
+        _ = headers
+        return Caller(user_id="user-id")
+
+
+class InstanceFieldApp(BaseApp):
+    """App mounting the operation behind the instance-field authenticator."""
+
+    async def wire(self) -> None:
+        self._include_endpoint(
+            UncheckedProtectedEndpoint(), auth=InstanceFieldAuth((InvalidTokenError,))
+        )
+
+
+def test_instance_exceptions_field_fails_wiring() -> None:
+    """An ``exceptions`` instance field on an Authenticator is a mistake jero catches at
+    the mount, not a declaration it silently ignores."""
+    with pytest.raises(RuntimeError, match="InstanceFieldAuth: declare its errors with"):
+        TestClient(InstanceFieldApp())
 
 
 def test_stray_exceptions_attribute_fails_wiring() -> None:
