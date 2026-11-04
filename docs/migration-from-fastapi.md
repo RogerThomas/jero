@@ -86,6 +86,11 @@ formats.
   constructors — [Wiring & lifecycle](guide/wiring.md) is the whole story.
 - **`request.state`.** Middleware can't pass state to handlers. Bind the header you
   need in the handler, or carry it on the auth `user`.
+- **A thread pool for `def` handlers.** FastAPI runs a `def` handler in a thread pool,
+  so a blocking call there leaves the event loop free. jero runs it on the event loop,
+  so the same blocking call makes every other request wait. Port blocking handlers to
+  `async def` and `await asyncio.to_thread(...)` the blocking call, or switch to an
+  async client; see [Can handlers be sync?](faq.md#can-handlers-be-sync).
 - **Returning `dict`s.** A JSON body is a `Struct` — a `dict` return is a startup
   error, and that's what buys validation, schema, and speed.
 - **Body-rewriting middleware.** Compression, caching, and ETags belong in your
