@@ -323,6 +323,14 @@ class InheritingTokenAuth(TokenAuth):
     """Passes no ``exceptions=``, so it inherits its parent's."""
 
 
+class EmptyTupleTokenAuth(TokenAuth, exceptions=()):
+    """An empty tuple inherits its parent's errors (the tags rule), it doesn't clear them."""
+
+
+class EmptyListTokenAuth(TokenAuth, exceptions=[]):
+    """An empty list inherits its parent's errors too."""
+
+
 @dataclass(slots=True)
 class SlottedTokenAuth(BearerAuth, exceptions=[InvalidTokenError]):
     """A slotted dataclass authenticator: the decorator rebuilds the class, and its
@@ -398,7 +406,9 @@ class ProtectedApp(BaseApp):
         self._include_openapi(title="protected", version="1")
 
 
-@pytest.mark.parametrize("auth", [TokenAuth(), InheritingTokenAuth()])
+@pytest.mark.parametrize(
+    "auth", [TokenAuth(), InheritingTokenAuth(), EmptyTupleTokenAuth(), EmptyListTokenAuth()]
+)
 @pytest.mark.parametrize(
     ("authorization", "status"),
     [("Bearer wrong", 401), ("Bearer down", 503)],
@@ -408,7 +418,7 @@ def test_authenticator_declared_error_passes(
 ) -> None:
     """The errors an authenticator declares pass on every operation it guards, though
     the operation itself doesn't list them: a 401 and a non-401 alike, and through a
-    subclass that inherits the declaration."""
+    subclass that inherits the declaration by passing nothing, ``()``, or ``[]``."""
     with TestClient(ProtectedApp(auth)) as client:
         response = client.get("/protected", headers={"authorization": authorization})
     assert response.status_code == status
