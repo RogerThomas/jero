@@ -581,13 +581,13 @@ Always follow the following style guide:
   item-type checks they fire under `_include_openapi`. Dispatch is an `isinstance` chain
   built at wiring, most-derived-first; a result matching no member goes through the
   exception handlers as a logged 500.
-- **Performance (validated, run `20261025T073117`, all ten frameworks)**: wrk, 128
+- **Performance (validated, run `20261113T094529`, all ten frameworks)**: wrk, 128
   connections, 1 dedicated core, peregrine+uvloop, Python 3.14, EC2 spot, one framework
-  at a time. Fastest Python framework on all four scenarios: 1.03–1.34× Django Bolt
-  (closest on `POST /movies`, JWT + body validation with no I/O, 83k req/s) and
-  1.4–4.5× blacksheep, litestar, and FastAPI. Per core, beats Gin on three of four (trails it by 9% on the proxy) and
-  is the fastest of all ten on the DB scenario.
-  Python apps share lothc (HTTP), fastpg (DB), and ryjwt (JWT). Docs grid:
+  at a time. Fastest Python framework on all four scenarios: 1.03–1.27× Django Bolt
+  (closest on `POST /movies`, JWT + body validation with no I/O, 84k req/s) and
+  1.35–4.8× blacksheep, litestar, and FastAPI. Per core, beats Gin on all four and is
+  the fastest of all ten on three (only Elysia is faster, on `GET /info`).
+  Python apps share lothc (HTTP, native transport), fastpg (DB), and ryjwt (JWT). Docs grid:
   `scripts/gen_bench_grid.py <run> [<context run>]`. (The benchmark harness lives in a
   separate repo.)
 - **Unbuilt**: absolute (vs relative) reverse-routed URLs are a deliberate follow-up.
