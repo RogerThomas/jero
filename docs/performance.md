@@ -5,9 +5,9 @@ harness, and the full methodology are public at
 [api-benchmarks](https://github.com/RogerThomas/api-benchmarks).
 
 **TL;DR:** jero is the fastest Python framework on all four workloads, by 1.03× to
-1.34× over Django Bolt and 1.4× to 4.5× over Blacksheep, Litestar, and FastAPI. Per
-core, it beats Go's Gin on three of the four and is the fastest of all ten on the
-database path.
+1.27× over Django Bolt and 1.35× to 4.8× over Blacksheep, Litestar, and FastAPI. Per
+core, it beats Go's Gin on all four and is the fastest of all ten on three of them;
+only Bun's Elysia is faster, on the pure framework path.
 
 <p align="center">
   <img src="assets/bench-grid.svg" alt="Benchmark results: jero is the fastest Python framework across all four workloads" width="820">
@@ -30,11 +30,11 @@ Each panel is scaled to its own fastest framework; the labels show absolute thro
 | Best-of-N       | 3 attempts, highest throughput kept                               |
 | Python          | 3.14.9 (uv's standalone CPython, every Python framework)          |
 | Python server   | [peregrine](https://pypi.org/project/peregrine-server/) 1.2.0 + uvloop (Flask via peregrine WSGI; Robyn and Django Bolt ship their own Rust servers) |
-| Outbound client | lothc 0.2.1 (over pyreqwest) for every Python framework           |
+| Outbound client | lothc 0.3.0 (native transport) for every Python framework         |
 | Database driver | fastpg for the async Python fleet; psycopg for sync Flask         |
 | Pools           | 64 connections per framework, database and outbound HTTP alike    |
-| Versions        | jero 0.1.7, Django Bolt 0.13.0, FastAPI 0.162.0                   |
-| Run             | `20261025T073117`, all ten frameworks, api-benchmarks commit `469c5ac` |
+| Versions        | jero 0.4.0, Django Bolt 0.13.0, FastAPI 0.162.5                   |
+| Run             | `20261113T094529`, all ten frameworks, api-benchmarks commit `da79feb` |
 
 - **Correctness first.** Every framework passed a 100-request body check before load
   and returned 100% expected statuses under it.
@@ -58,16 +58,16 @@ Route, build a typed JSON response with a custom header, encode. No I/O.
 
 | Framework            | req/s      | mean       | p99        | vs jero   |
 | :------------------- | :--------- | :--------- | :--------- | :-------- |
-| elysia *(Bun)*       | 156.8k     | 0.82ms     | 1.46ms     | 1.55×     |
-| **jero**             | **101.2k** | **1.26ms** | **1.30ms** | **1.00×** |
-| django-bolt          | 90.5k      | 1.41ms     | 1.45ms     | 0.89×     |
-| gin *(Go)*           | 89.3k      | 1.44ms     | 3.25ms     | 0.88×     |
-| blacksheep           | 73.4k      | 1.73ms     | 1.78ms     | 0.73×     |
-| litestar             | 49.6k      | 2.56ms     | 2.62ms     | 0.49×     |
-| robyn                | 43.8k      | 2.92ms     | 3.02ms     | 0.43×     |
-| spring-boot *(Java)* | 42.4k      | 3.01ms     | 4.81ms     | 0.42×     |
-| fastapi              | 30.5k      | 4.18ms     | 4.24ms     | 0.30×     |
-| flask                | 27.3k      | 4.68ms     | 4.79ms     | 0.27×     |
+| elysia *(Bun)*       | 144.2k     | 0.89ms     | 1.86ms     | 1.44×     |
+| **jero**             | **99.9k**  | **1.27ms** | **1.32ms** | **1.00×** |
+| django-bolt          | 91.2k      | 1.40ms     | 1.43ms     | 0.91×     |
+| gin *(Go)*           | 88.1k      | 1.46ms     | 3.28ms     | 0.88×     |
+| blacksheep           | 74.2k      | 1.72ms     | 1.77ms     | 0.74×     |
+| litestar             | 49.2k      | 2.59ms     | 2.64ms     | 0.49×     |
+| robyn                | 43.6k      | 2.93ms     | 3.04ms     | 0.44×     |
+| spring-boot *(Java)* | 41.7k      | 3.06ms     | 4.86ms     | 0.42×     |
+| fastapi              | 29.5k      | 4.32ms     | 4.45ms     | 0.30×     |
+| flask                | 26.9k      | 4.74ms     | 4.86ms     | 0.27×     |
 
 ### 2. `POST /movies`: JWT auth and body validation
 
@@ -75,16 +75,16 @@ JWT auth, decode and validate a five-field body, return it with a new id, `201`.
 
 | Framework            | req/s      | mean       | p99        | vs jero   |
 | :------------------- | :--------- | :--------- | :--------- | :-------- |
-| **jero**             | **82.9k**  | **1.53ms** | **1.58ms** | **1.00×** |
-| django-bolt          | 80.6k      | 1.59ms     | 1.62ms     | 0.97×     |
-| gin *(Go)*           | 54.6k      | 2.35ms     | 5.01ms     | 0.66×     |
-| elysia *(Bun)*       | 53.7k      | 2.38ms     | 4.26ms     | 0.65×     |
-| blacksheep           | 32.9k      | 3.88ms     | 3.95ms     | 0.40×     |
-| litestar             | 30.0k      | 4.25ms     | 4.32ms     | 0.36×     |
-| spring-boot *(Java)* | 27.2k      | 4.70ms     | 7.24ms     | 0.33×     |
-| robyn                | 26.3k      | 4.86ms     | 4.93ms     | 0.32×     |
-| flask                | 20.1k      | 6.35ms     | 6.48ms     | 0.24×     |
-| fastapi              | 18.5k      | 6.91ms     | 6.98ms     | 0.22×     |
+| **jero**             | **84.0k**  | **1.51ms** | **1.57ms** | **1.00×** |
+| django-bolt          | 81.8k      | 1.56ms     | 1.59ms     | 0.97×     |
+| gin *(Go)*           | 53.7k      | 2.39ms     | 5.07ms     | 0.64×     |
+| elysia *(Bun)*       | 40.7k      | 3.14ms     | 6.06ms     | 0.48×     |
+| blacksheep           | 33.6k      | 3.78ms     | 3.84ms     | 0.40×     |
+| litestar             | 30.3k      | 4.20ms     | 4.27ms     | 0.36×     |
+| spring-boot *(Java)* | 26.8k      | 4.77ms     | 7.31ms     | 0.32×     |
+| robyn                | 26.7k      | 4.78ms     | 4.86ms     | 0.32×     |
+| flask                | 20.1k      | 6.35ms     | 6.49ms     | 0.24×     |
+| fastapi              | 17.6k      | 7.26ms     | 7.44ms     | 0.21×     |
 
 ### 3. `GET /catalog`: the outbound hop
 
@@ -92,16 +92,16 @@ An authenticated call to a Rust upstream, decoded into a typed model and returne
 
 | Framework            | req/s      | mean       | p99        | vs jero   |
 | :------------------- | :--------- | :--------- | :--------- | :-------- |
-| elysia *(Bun)*       | 55.4k      | 2.31ms     | 3.79ms     | 1.82×     |
-| gin *(Go)*           | 33.1k      | 3.87ms     | 7.05ms     | 1.09×     |
-| **jero**             | **30.4k**  | **4.21ms** | **7.13ms** | **1.00×** |
-| django-bolt          | 22.7k      | 5.66ms     | 11.98ms    | 0.75×     |
-| blacksheep           | 20.6k      | 6.20ms     | 11.55ms    | 0.68×     |
-| spring-boot *(Java)* | 20.3k      | 6.29ms     | 9.33ms     | 0.67×     |
-| litestar             | 18.6k      | 6.89ms     | 14.05ms    | 0.61×     |
-| robyn                | 18.0k      | 7.12ms     | 10.82ms    | 0.59×     |
-| fastapi              | 12.3k      | 10.42ms    | 20.05ms    | 0.40×     |
-| flask                | 11.4k      | 11.24ms    | 11.88ms    | 0.37×     |
+| **jero**             | **51.8k**  | **2.46ms** | **2.65ms** | **1.00×** |
+| elysia *(Bun)*       | 44.8k      | 2.85ms     | 4.81ms     | 0.87×     |
+| django-bolt          | 41.9k      | 3.05ms     | 4.03ms     | 0.81×     |
+| gin *(Go)*           | 32.7k      | 3.91ms     | 7.14ms     | 0.63×     |
+| blacksheep           | 31.8k      | 4.01ms     | 4.29ms     | 0.62×     |
+| litestar             | 26.6k      | 4.82ms     | 7.65ms     | 0.51×     |
+| robyn                | 23.1k      | 5.54ms     | 8.41ms     | 0.45×     |
+| spring-boot *(Java)* | 20.0k      | 6.40ms     | 9.80ms     | 0.39×     |
+| flask                | 16.7k      | 7.64ms     | 7.96ms     | 0.32×     |
+| fastapi              | 11.7k      | 11.07ms    | 28.19ms    | 0.23×     |
 
 Elysia relays the upstream JSON without decoding it into a typed model.
 
@@ -112,23 +112,23 @@ their native drivers.
 
 | Framework            | req/s      | mean       | p99        | vs jero   |
 | :------------------- | :--------- | :--------- | :--------- | :-------- |
-| **jero**             | **46.7k**  | **2.73ms** | **3.28ms** | **1.00×** |
-| gin *(Go)*           | 38.9k      | 3.29ms     | 6.87ms     | 0.83×     |
-| elysia *(Bun)*       | 36.3k      | 3.52ms     | 6.78ms     | 0.78×     |
-| django-bolt          | 35.9k      | 3.55ms     | 4.36ms     | 0.77×     |
-| blacksheep           | 28.2k      | 4.54ms     | 5.80ms     | 0.60×     |
-| robyn                | 22.5k      | 5.70ms     | 8.53ms     | 0.48×     |
-| litestar             | 22.0k      | 5.81ms     | 7.63ms     | 0.47×     |
-| spring-boot *(Java)* | 21.0k      | 6.08ms     | 9.49ms     | 0.45×     |
-| fastapi              | 14.0k      | 9.12ms     | 18.14ms    | 0.30×     |
-| flask                | 8.9k       | 14.37ms    | 15.87ms    | 0.19×     |
+| **jero**             | **46.2k**  | **2.76ms** | **3.33ms** | **1.00×** |
+| gin *(Go)*           | 37.8k      | 3.39ms     | 7.14ms     | 0.82×     |
+| django-bolt          | 36.3k      | 3.52ms     | 4.35ms     | 0.79×     |
+| blacksheep           | 29.7k      | 4.31ms     | 5.39ms     | 0.64×     |
+| elysia *(Bun)*       | 26.5k      | 4.82ms     | 9.34ms     | 0.57×     |
+| robyn                | 22.1k      | 5.79ms     | 8.62ms     | 0.48×     |
+| litestar             | 22.0k      | 5.83ms     | 8.44ms     | 0.48×     |
+| spring-boot *(Java)* | 20.2k      | 6.33ms     | 10.29ms    | 0.44×     |
+| fastapi              | 10.0k      | 12.93ms    | 30.44ms    | 0.22×     |
+| flask                | 9.0k       | 14.26ms    | 15.79ms    | 0.19×     |
 
 ## Caveats
 
 - **Only one core was measured.** Go and the JVM scale across cores inside one
-  process; Python and Bun add processes, each with its own memory (~39–93M per Python
+  process; Python and Bun add processes, each with its own memory (~40–83M per Python
   worker here, against Gin's ~10–28M).
-- **Spring Boot ran on JVM defaults** at ~612–676M resident; a tuned footprint was not
+- **Spring Boot ran on JVM defaults** at ~615–673M resident; a tuned footprint was not
   measured.
 - **A benchmark is not your app.** Fixed payloads on an idle host. Measure the workload
   you care about.

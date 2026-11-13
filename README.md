@@ -206,9 +206,9 @@ app = App()
 
 Four workloads, ten frameworks, one worker on one dedicated core each: Python (Django
 Bolt, Blacksheep, Litestar, Robyn, FastAPI, Flask), Go (Gin), Bun (Elysia), and Java
-(Spring Boot). **jero is the fastest Python framework on all four**, by 1.03× to 1.34×
-over Django Bolt and 1.4× to 4.5× over Blacksheep, Litestar, and FastAPI. Per core, it
-beats Gin on three of the four and is the fastest of all ten on the database workload.
+(Spring Boot). **jero is the fastest Python framework on all four**, by 1.03× to 1.27×
+over Django Bolt and 1.35× to 4.8× over Blacksheep, Litestar, and FastAPI. Per core, it
+beats Gin on all four and is the fastest of all ten on three of them.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/RogerThomas/jero/main/docs/assets/bench-grid.svg" alt="Benchmark results: jero is the fastest Python framework across all four workloads" width="820">
@@ -218,16 +218,16 @@ On the pure framework path (a typed JSON `GET`):
 
 | Framework            | `GET /info` req/s | vs jero   |
 | :------------------- | :---------------- | :-------- |
-| elysia *(Bun)*       | 156.8k            | 1.55×     |
-| **jero**             | **101.2k**        | **1.00×** |
-| django-bolt          | 90.5k             | 0.89×     |
-| gin *(Go)*           | 89.3k             | 0.88×     |
-| blacksheep           | 73.4k             | 0.73×     |
-| litestar             | 49.6k             | 0.49×     |
-| robyn                | 43.8k             | 0.43×     |
-| spring-boot *(Java)* | 42.4k             | 0.42×     |
-| fastapi              | 30.5k             | 0.30×     |
-| flask                | 27.3k             | 0.27×     |
+| elysia *(Bun)*       | 144.2k            | 1.44×     |
+| **jero**             | **99.9k**         | **1.00×** |
+| django-bolt          | 91.2k             | 0.91×     |
+| gin *(Go)*           | 88.1k             | 0.88×     |
+| blacksheep           | 74.2k             | 0.74×     |
+| litestar             | 49.2k             | 0.49×     |
+| robyn                | 43.6k             | 0.44×     |
+| spring-boot *(Java)* | 41.7k             | 0.42×     |
+| fastapi              | 29.5k             | 0.30×     |
+| flask                | 26.9k             | 0.27×     |
 
 All four workloads, the setup, and the caveats are in the
 **[Performance / Benchmarks docs](https://RogerThomas.github.io/jero/performance/)**;
