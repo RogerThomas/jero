@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/RogerThomas/jero/compare/0.4.0...0.4.1) (2026-11-13)
+
+
+### Documentation
+
+* update benchmarks to run 20261113T094529 ([#100](https://github.com/RogerThomas/jero/issues/100)) ([f53b74f](https://github.com/RogerThomas/jero/commit/f53b74f14251dce8ebcbad7783cc1b729e620bf5))
+
 ## [0.4.0](https://github.com/RogerThomas/jero/compare/0.3.1...0.4.0) (2026-11-04)
 
 
