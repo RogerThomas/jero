@@ -1,11 +1,11 @@
 # REST semantics
 
-jero follows REST/HTTP semantics out of the box — the status codes, `HEAD`, and
-`OPTIONS` are handled for you, consistently, so you don't hand-roll them per route.
+jero applies REST/HTTP semantics for you: status codes, `HEAD`, and `OPTIONS` are
+handled the same way on every route. The mapping is fixed, not configurable.
 
-Failures are typed errors you raise — that whole story (Problem Details, your own
-error classes, custom body formats, exception handlers) lives in [Errors](errors.md).
-This page covers the semantics the framework applies on its own.
+This page covers what the framework does on its own. Failures you raise yourself
+(Problem Details, your own error classes, custom body formats, exception handlers) are
+in [Errors](errors.md).
 
 ## Status codes
 
@@ -22,13 +22,17 @@ This page covers the semantics the framework applies on its own.
 | `create` success                                     | 201    |
 | Other success                                        | 200    |
 
-The split between **400** (malformed — can't even parse) and **422** (well-formed but
-fails validation) follows the binding source: a body that isn't valid JSON is 400;
-valid JSON that doesn't match the `Struct` is 422. A bad *path* value is 404, because a
-segment that doesn't convert doesn't identify a resource.
+How 400, 422, and 404 divide:
 
-These framework decode/validation errors don't just report *that* something failed —
-they surface msgspec's own message as the human `detail`, with the same string available,
+- **400: the request couldn't be read.** Malformed JSON, a malformed multipart body, or
+  a query or header value that doesn't convert to its field type.
+- **422: it was read, but breaks the schema.** A successfully parsed body or form part
+  whose content doesn't match its declared `Struct`. So a bad value in the query string
+  is a 400, and the same bad value inside a JSON body is a 422.
+- **404: a bad path value.** A segment that doesn't convert to its field type doesn't
+  identify a resource.
+
+These errors carry msgspec's own message as the human `detail`, and the same string,
 typed, under `params.reason`:
 
 ```json
@@ -39,10 +43,11 @@ typed, under `params.reason`:
 }
 ```
 
-The message names the failing field and its JSON path, never the submitted value, so it
-is safe to return; it is for humans and logs, so keep dispatching on `type`, not on
-parsing `detail`. msgspec stops at the first invalid field, so a response reports one
-failure at a time rather than a collected list.
+- The message names the failing field and its JSON path, never the submitted value, so
+  it is safe to return.
+- It is for humans and logs. Dispatch on `type`, not on parsing `detail`.
+- msgspec stops at the first invalid field, so a response reports one failure at a time,
+  not a collected list.
 
 ## HEAD and OPTIONS
 
@@ -56,12 +61,8 @@ These are synthesized; you never write them:
 
 ## Custom status
 
-Override the default success status per response with `status_code` on a response
-wrapper — see [Responses & headers](responses.md#status-codes).
+Two ways to answer with a different success status, both on
+[Responses & headers](responses.md#status-codes):
 
-## Why this is fixed, not configurable
-
-These semantics are part of jero being opinionated: there's one correct mapping, the
-framework encodes it, and "what status should this return?" never reaches code review.
-Everything here is resolved at startup or by fixed rules — nothing adds work to the
-request path.
+- Return a `NoContent` (204), `Created` (201), or `Accepted` (202) wrapper.
+- Set `status_code` on any response wrapper for any other status.

@@ -99,10 +99,9 @@ The one policy knob controls what happens to queued work at shutdown:
 
 There's no "wait forever," so shutdown can't hang.
 
-## Ordering: enter the queue last
+## Ordering: create the queue last
 
 Handlers run during the drain, and they use the services you built in `wire` (a DB pool,
-an HTTP client) — which are torn down at shutdown in reverse order. So **enter the queue
-after the resources its handlers use**, so the drain finishes before those resources
-close. This falls out naturally: `register` needs the handler, which needs its service,
-so the service is created (and entered) first.
+an HTTP client). Shutdown tears everything down in reverse order, so **call
+`_create_background_tasks` after building the services its handlers use**. The queue
+then drains before those services close.

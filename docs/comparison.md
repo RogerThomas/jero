@@ -30,7 +30,7 @@ typed handler signatures mainstream, brought excellent OpenAPI generation to eve
 Python services, and set a high bar for developer experience.
 
 jero differs most sharply in how much freedom it allows. The same two operations, side
-by side — FastAPI's decorators and `Depends`:
+by side. FastAPI's decorators and `Depends`:
 
 ```python
 class WidgetIn(BaseModel):
@@ -87,9 +87,9 @@ class App(BaseApp):
 ```
 
 The deeper difference shows up when something is wrong. Rename FastAPI's `widget_id`
-parameter and the framework silently reinterprets it as a required *query* parameter —
+parameter and the framework silently reinterprets it as a required *query* parameter,
 discovered when the route is first called. In jero, a `path` Struct whose fields don't
-match the template — or a handler returning a raw `dict` — is a `WiringError`: the app
+match the template (or a handler returning a raw `dict`) is a `WiringError`: the app
 refuses to boot.
 
 FastAPI also has a powerful dependency system. jero does not. In jero,
@@ -112,10 +112,11 @@ validation, and 3.4× to 4.8× FastAPI's throughput on the same workloads (see
 BlackSheep is one of the frameworks jero looks up to on performance. It has shown that
 Python ASGI frameworks can be extremely fast while still feeling productive.
 
-jero's difference is not simply "faster" or "slower"; benchmark numbers depend on the
-workload. The bigger difference is philosophy. jero narrows the API surface around
-typed `Struct` contracts, class-based resources, no container, and startup validation.
-It gives up some flexibility to make the framework style harder to miss.
+jero reaches 1.35× to 2.5× BlackSheep's throughput on the same workloads (see
+[Performance / Benchmarks](performance.md)). The bigger difference is philosophy. jero
+narrows the API surface around typed `Struct` contracts, class-based resources, no
+container, and startup validation. It gives up some flexibility to make the framework
+style harder to miss.
 
 Choose BlackSheep when you want a mature, high-performance ASGI framework with a
 broader application model. Choose jero when you want a narrower REST/JSON framework
@@ -126,9 +127,12 @@ where the type contract drives almost everything.
 Litestar is a capable, structured framework with a large feature surface. It supports
 multiple validation backends and gives teams a lot of ways to model an application.
 
-jero goes in the opposite direction. There is one body model: `Struct`. There is one routing shape for REST
-collections: `Resource`. There is one dependency story: construct objects and pass them
-in. There is one lifecycle mechanism: enter resources on the app's stacks.
+jero goes in the opposite direction:
+
+- One body model: `Struct`.
+- One routing shape for REST collections: `Resource`.
+- One dependency story: construct objects and pass them in.
+- One lifecycle mechanism: enter resources on the app's stacks.
 
 Choose Litestar when you want a production framework with a broad feature set and more
 configuration choices. Choose jero when you want fewer choices, stronger conventions,

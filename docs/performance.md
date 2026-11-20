@@ -5,7 +5,7 @@ harness, and the full methodology are public at
 [api-benchmarks](https://github.com/RogerThomas/api-benchmarks).
 
 **TL;DR:** jero is the fastest Python framework on all four workloads, by 1.03× to
-1.27× over Django Bolt and 1.35× to 4.8× over Blacksheep, Litestar, and FastAPI. Per
+1.27× over Django Bolt and 1.35× to 4.8× over BlackSheep, Litestar, and FastAPI. Per
 core, it beats Go's Gin on all four and is the fastest of all ten on three of them;
 only Bun's Elysia is faster, on the pure framework path.
 
@@ -38,9 +38,9 @@ Each panel is scaled to its own fastest framework; the labels show absolute thro
 
 - **Correctness first.** Every framework passed a 100-request body check before load
   and returned 100% expected statuses under it.
-- **Shared libraries.** Every Python framework uses the same HTTP client (lothc), JWT
-  decoder (ryjwt), and Postgres driver (fastpg; Django Bolt included, bypassing Django's
-  ORM). jero's author wrote all three, and this benchmark.
+- **Shared libraries.** Every Python framework uses the same HTTP client (lothc) and JWT
+  decoder (ryjwt), and every async one the same Postgres driver (fastpg; Django Bolt
+  included, bypassing Django's ORM; sync Flask uses psycopg). jero's author wrote all three, and this benchmark.
 - **Native code.** The Python stacks do their JSON, JWT, database, and HTTP-client work
   in C and Rust extensions; Gin uses `encoding/json`, golang-jwt, and pgx.
 - **Otherwise idiomatic.** The differences between apps are listed under "Known,

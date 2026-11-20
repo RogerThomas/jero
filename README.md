@@ -24,7 +24,7 @@
 
 </div>
 
-**jero** is an AI-powered ([a note on AI usage](docs/note-on-ai-usage.md)) framework
+**jero** is an AI-powered ([a note on AI usage](https://RogerThomas.github.io/jero/note-on-ai-usage/)) framework
 that builds typed JSON/REST APIs from plain classes. Annotate your handlers with
 [msgspec](https://msgspec.dev/) Structs — jero does the rest: routing,
 validation, serialization, auth, streaming, resource lifecycle, etc.
@@ -69,7 +69,7 @@ request/response contract, and they're verified at startup.
 <table>
 <tr>
 <td>⚡&nbsp;<strong>Fast</strong></td>
-<td>The fastest Python ASGI framework across every workload in the <a href="#performance">benchmark</a>. All introspection happens once, at startup; the request path is just dict lookup → decode → call → encode.</td>
+<td>The fastest Python ASGI framework across every workload in the <a href="#performance--benchmarks">benchmark</a>. All introspection happens once, at startup; the request path is just dict lookup → decode → call → encode.</td>
 </tr>
 <tr>
 <td>🎯&nbsp;<strong>Opinionated</strong></td>
@@ -77,7 +77,7 @@ request/response contract, and they're verified at startup.
 </tr>
 <tr>
 <td>🔒&nbsp;<strong>Typed</strong></td>
-<td>Fully static under pyright-strict, leaning hard into modern Python typing — PEP 695 generics (<code>JSONResponse[Body, Headers]</code>, <code>BaseApp[Factory]</code>), bounded type-params, generic inheritance, <code>Protocol</code>s. A handler's signature <em>is</em> its schema, and the source of the generated OpenAPI spec.</td>
+<td>Strictly type-checked with pyrefly, with the public API verified under mypy, ty, pyright and zuban, leaning hard into modern Python typing — PEP 695 generics (<code>JSONResponse[Body, Headers]</code>, <code>BaseApp[Factory]</code>), bounded type-params, generic inheritance, <code>Protocol</code>s. A handler's signature <em>is</em> its schema, and the source of the generated OpenAPI spec.</td>
 </tr>
 </table>
 
@@ -86,31 +86,31 @@ only lifecycle — the one thing plain Python doesn't give you.
 
 ## What you get
 
-- **[Resources & Endpoints](docs/guide/resources.md)** — REST CRUD by method name, or
+- **[Resources & Endpoints](https://RogerThomas.github.io/jero/guide/resources/)** — REST CRUD by method name, or
   bare verbs for one-off routes.
-- **[Bind by name, validated by msgspec](docs/guide/binding.md)** — `json`, `content`,
+- **[Bind by name, validated by msgspec](https://RogerThomas.github.io/jero/guide/binding/)** — `json`, `content`,
   `content_stream`, `form`, `params`, `path`, `headers`, `cookies`, `raw_headers`,
   `user`; malformed → 400, schema-invalid → 422, all resolved
   once at startup.
-- **[Typed responses *and* typed headers](docs/guide/responses.md)** —
+- **[Typed responses *and* typed headers](https://RogerThomas.github.io/jero/guide/responses/)** —
   `JSONResponse[Body, Headers]` keeps both schemas (no erasure), `status_code` overrides
   the status, `cookies=` takes secure-by-default `SetCookie`s, and `raw_headers` is the
   escape hatch for the exotic tail.
-- **[Streaming, typed end to end](docs/guide/streaming.md)** — NDJSON, Server-Sent
+- **[Streaming, typed end to end](https://RogerThomas.github.io/jero/guide/streaming/)** — NDJSON, Server-Sent
   Events, and raw byte streams, with lifecycle teardown and client-disconnect handling
   done for you.
-- **[Multipart forms & uploads](docs/guide/forms.md)** — typed parts, file uploads,
+- **[Multipart forms & uploads](https://RogerThomas.github.io/jero/guide/forms/)** — typed parts, file uploads,
   per-part headers.
-- **[Auth checked at startup](docs/guide/auth.md)** — the `user` type is verified
+- **[Auth checked at startup](https://RogerThomas.github.io/jero/guide/auth/)** — the `user` type is verified
   against your authenticator before a single request is served, not at runtime.
-- **[OpenAPI 3.1, derived](docs/guide/openapi.md)** — one `_include_openapi` call serves
+- **[OpenAPI 3.1, derived](https://RogerThomas.github.io/jero/guide/openapi/)** — one `_include_openapi` call serves
   the spec and a Scalar UI, built from your types and `msgspec.Meta`
   constraints — no decorators.
-- **[Lifecycle without a DI container](docs/guide/wiring.md)** — hand-wire in `wire`,
+- **[Lifecycle without a DI container](https://RogerThomas.github.io/jero/guide/wiring/)** — hand-wire in `wire`,
   open resources on exit stacks, group construction in a `BaseFactory`.
-- **[REST semantics for free](docs/guide/rest.md)** — 404/400/422/401/405, auto `HEAD` +
+- **[REST semantics for free](https://RogerThomas.github.io/jero/guide/rest/)** — 404/400/422/401/405, auto `HEAD` +
   `OPTIONS`; opt any `Struct` into camelCase on the wire with `rename="camel"`.
-- **[A real test story](docs/guide/testing.md)** — a sync, in-process `TestClient` (no
+- **[A real test story](https://RogerThomas.github.io/jero/guide/testing/)** — a sync, in-process `TestClient` (no
   network), streaming and typed WebSocket support, and a `factory=` seam for mocking.
 
 Start with **[Getting Started](https://RogerThomas.github.io/jero/getting-started/)**, or
@@ -205,9 +205,9 @@ app = App()
 ## Performance / Benchmarks
 
 Four workloads, ten frameworks, one worker on one dedicated core each: Python (Django
-Bolt, Blacksheep, Litestar, Robyn, FastAPI, Flask), Go (Gin), Bun (Elysia), and Java
+Bolt, BlackSheep, Litestar, Robyn, FastAPI, Flask), Go (Gin), Bun (Elysia), and Java
 (Spring Boot). **jero is the fastest Python framework on all four**, by 1.03× to 1.27×
-over Django Bolt and 1.35× to 4.8× over Blacksheep, Litestar, and FastAPI. Per core, it
+over Django Bolt and 1.35× to 4.8× over BlackSheep, Litestar, and FastAPI. Per core, it
 beats Gin on all four and is the fastest of all ten on three of them.
 
 <p align="center">

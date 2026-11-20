@@ -18,8 +18,8 @@ peregrine --host 0.0.0.0 --workers 1 myapp:app
 
 peregrine publishes no macOS wheels (installing it there compiles it from source,
 which needs a Swift toolchain), so for local development on a Mac, or anywhere you'd
-rather not depend on it, [granian](https://github.com/emmett-framework/granian) is the
-default, and the `granian` extra installs both in one step:
+rather not depend on it, use [granian](https://github.com/emmett-framework/granian),
+the default from [Getting started](../getting-started.md):
 
 ```bash
 uv add "jero[granian]"
@@ -82,6 +82,9 @@ the fly — is server/proxy work. jero's [middleware](middleware.md) can answer
 requests, add headers, and observe; it never rewrites bodies, because that costs the
 buffering jero refuses to pay. Configure gzip/brotli, caching, and TLS at the server or
 your reverse proxy.
+
+Request body size limits belong there too: jero sets none, and `json`, `content`, and
+`form` hold the whole body in memory.
 
 The one exception is [`_include_assets`](assets.md): compression and `ETag`s there
 are computed once, at wiring, over a fixed set of small files held in memory — not

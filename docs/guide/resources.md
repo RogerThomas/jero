@@ -17,6 +17,9 @@ the HTTP method and status. For `path="/widgets"`:
 | `update_partial` | PATCH  | `/widgets/{widget_id}` | 200    |
 | `delete`         | DELETE | `/widgets/{widget_id}` | 200    |
 
+The path is declared on the class. A `{slot}` in a URL is filled from the handler's
+`path` argument, a Struct with one field per slot:
+
 ```python
 from msgspec import Struct
 
@@ -40,13 +43,13 @@ class WidgetResource(Resource, path="/widgets"):
         return Widget(id="widget-id", name=json.name)
 
     async def read_many(self) -> list[Widget]:             # GET  /widgets
-        return [Widget(id="widget-id", name="gizmo")]
+        return [Widget(id="widget-id", name="name")]
 
     async def read_one(self, path: WidgetPath) -> Widget:  # GET  /widgets/{widget_id}
-        return Widget(id=path.widget_id, name="gizmo")
+        return Widget(id=path.widget_id, name="name")
 
     async def delete(self, path: WidgetPath) -> Widget:    # DELETE /widgets/{widget_id}
-        return Widget(id=path.widget_id, name="gizmo")
+        return Widget(id=path.widget_id, name="name")
 
 
 class App(BaseApp):
@@ -57,16 +60,23 @@ class App(BaseApp):
 app = App()
 ```
 
-The item id is the one `path` field the mount path doesn't name, appended as the last
-segment. Its name is yours to choose, but it becomes the `{slot}` in the URL and the
-OpenAPI spec, so name it for the resource (`widget_id`, not `id`). Item routes need
-exactly one; `create` and `read_many` take none. Both are checked at startup.
+- **The item id** is the one `path` field the mount path doesn't name. It is appended
+  as the last segment.
+- **Its name is yours to choose**, but it becomes the `{slot}` in the URL and the OpenAPI
+  spec, so name it for the resource (`widget_id`, not `id`).
+- **Item routes need exactly one** such field; `create` and `read_many` take none. Both
+  are checked at startup.
+
+A mount path can carry slots of its own: see [Path templates](#path-templates).
 
 ## Endpoint — single routes
 
 An `Endpoint` is a class with bare verb methods (`get` / `post` / `put` / `patch` /
-`delete`). There are no CRUD semantics: the method name *is* the verb, every verb
-returns 200, and the path is exact. A different path is a different `Endpoint`.
+`delete`). There are no CRUD semantics:
+
+- The method name *is* the verb.
+- Every verb returns 200.
+- The path is exact. A different path is a different `Endpoint`.
 
 ```python
 from msgspec import Struct
@@ -96,9 +106,8 @@ Use endpoints for health checks, webhooks, and legacy paths you must serve verba
 ## Actions on a resource
 
 An "action" (*converse* on a conversation, *submit* on an order) usually doesn't need
-an `Endpoint` — and reaching for one duplicates the resource's path template in a
-second class. Model the action's **result as a sub-resource** instead, and the action
-becomes an ordinary `create`:
+an `Endpoint`. Model the action's **result as a sub-resource**, and the action becomes
+an ordinary `create`:
 
 ```python
 from msgspec import Struct
@@ -135,6 +144,8 @@ app = App()
 The result gets an id, a later `GET`, 201/`Location` semantics, and an OpenAPI home
 under its parent. State changes (*cancel*, *archive*) are often an `update_partial` on a
 status field. Use an `Endpoint` only when no noun works.
+
+### Custom methods: `{slot}:verb`
 
 When no noun works, the `Endpoint`'s path may end in a **custom method**: the last
 segment's slot followed by `:verb`, the shape Google's AIP-136 uses
@@ -174,30 +185,32 @@ class App(BaseApp):
 app = App()
 ```
 
-The slot binds everything before the suffix, so `POST /widgets/a:b:duplicate` binds
-`widget_id="a:b"`. An action route is tried before a plain `{widget_id}` route on the same
-verb, and a request whose suffix matches no action (or would leave the slot empty) falls
-through to that plain route. Matching sees the path as the server decoded it, so
-`x%3Aduplicate` reaches the action too. Reverse routing (`Location.from_operation(...)`)
-and the OpenAPI path both carry the suffix. Reversal builds the URL from the values it is
-given, so on the same method an id ending in an action's verb reverses to a URL the action
-answers: keep ids free of `:`, as AIP-122 asks. A plain route an action would answer entirely
-is a `WiringError`: a literal `/groups/{group_id}/all:go` beside the action
-`/groups/{group_id}/{item_id}:go` on the same method could never run. A
-wholly literal last segment such as `/widgets:batchGet` needs none of this: it is matched
-as written.
+- **Where it goes.** Only on the last segment of an `Endpoint` path, right after its
+  slot; anywhere else is a `WiringError`. The verb is letters, digits, `-`, `.`, `_`
+  or `~`.
+- **The slot binds everything before the suffix.** `POST /widgets/a:b:duplicate` binds
+  `widget_id="a:b"`.
+- **Fall-through.** A request whose suffix matches no action, or would leave the slot
+  empty, goes to the plain `{widget_id}` route. (Match order is under
+  [Path templates](#path-templates).)
+- **Percent-encoding.** Matching sees the path as the server decoded it, so
+  `x%3Aduplicate` reaches the action too.
+- **Reverse routing** ([`Location.from_operation(...)`](links-and-location.md)) and the
+  OpenAPI path both carry the suffix.
+- **Keep ids free of `:`**, as AIP-122 asks. Reversal builds the URL from the values it
+  is given, so on the same method an id ending in an action's verb reverses to a URL the
+  action answers.
+- **A plain route an action would answer entirely is a `WiringError`**, since it could
+  never run.
+- **A wholly literal last segment** such as `/widgets:batchGet` needs none of this: it is
+  matched as written.
 
 ## Path templates
 
-A route declares its path **on the class**, at definition time. jero reads it once at
-wiring — no path passed at the call site — so the class is the **single source of
-truth** for its path, which is exactly what URL reversal
+A mount path is a template: static segments plus `{slot}` params in `snake_case`. The
+class is the single source of truth for its path, which is what URL reversal
 ([`Link` / `Location`](links-and-location.md)) and the [OpenAPI generator](openapi.md)
-read off it.
-
-The mount path is a template: static segments plus `{slot}` params in `snake_case`.
-A handler binds the slots through a `path` Struct whose fields must cover **every**
-slot:
+read. The `path` Struct's fields must cover **every** slot:
 
 ```python
 from msgspec import Struct
@@ -231,34 +244,25 @@ app = App()
 Rules, all checked at startup with a precise `WiringError`:
 
 - Every `{slot}` in the mount path must be a field on the `path` Struct.
-- Path Struct fields **cannot have defaults** — a URL segment is always present.
+- Path Struct fields **cannot have defaults**: a URL segment is always present.
 - Item routes have exactly one field beyond the slots (the id); every other route has
   none.
-- When two templates on the same method could match one path, an action (`:verb`) route
-  wins, then the one with more literal segments (`/groups/special/items/{item_id}` over
-  `/groups/{group_id}/items/{item_id}`), whatever order they were included in. Only between
-  equally literal templates does inclusion order decide.
-- A `:verb` action suffix goes only on the last segment of an `Endpoint` path, right
-  after its slot. The verb is letters, digits, `-`, `.`, `_` or `~`.
 
-Path values that fail conversion to their field type return **404** — a malformed id
-doesn't identify a resource.
+When two templates on the same method could match one path, the order is:
+
+1. An action (`:verb`) route.
+2. The template with more literal segments (`/groups/special/items/{item_id}` over
+   `/groups/{group_id}/items/{item_id}`), whatever order they were included in.
+3. Only between equally literal templates does inclusion order decide.
+
+A path value that fails conversion to its field type is a **404** (see
+[REST semantics](rest.md#status-codes)).
 
 ## Registering them
 
-Resources and endpoints are wired in `BaseApp.wire`:
-
-```python
-class App(BaseApp):
-    async def wire(self) -> None:
-        self._include_resource(WidgetResource())
-        self._include_endpoint(HealthEndpoint())
-```
-
-Routing is pure dict lookup: static routes match exactly; templated routes are
-bucketed by `(method, segment-count)` and matched on their static segments — no
-regexes, no route-table scans, no ordering rules. All of it is resolved **once**, at
-wiring time.
+Mount each class in `BaseApp.wire`, as every example on this page does:
+`_include_resource` for a `Resource`, `_include_endpoint` for an `Endpoint`. All routing
+is resolved once, at startup.
 
 ## Metadata
 
@@ -293,10 +297,12 @@ class App(BaseApp):
 app = App()
 ```
 
-All three types — `EndpointMeta`, `ResourceMeta`, `OperationMeta` — carry `tags`,
-`responses`, and `exceptions`; `operation_id`, `summary`, and `description` live only on
-`OperationMeta`, so they can't cascade to every operation. They don't affect routing;
-they refine the [auto-generated OpenAPI spec](openapi.md), which derives the rest from
-your types (docstrings are never published — public prose is always explicit).
+- **`EndpointMeta`, `ResourceMeta`, `OperationMeta`** all carry `tags`, `responses`, and
+  `exceptions`.
+- **`operation_id`, `summary`, `description`** live only on `OperationMeta`, so they
+  can't cascade to every operation.
+- Metadata doesn't affect routing. It refines the
+  [generated OpenAPI spec](openapi.md), which derives the rest from your types.
+- Docstrings are never published: public prose is always explicit.
 
 See [Wiring & lifecycle](wiring.md) for how resources get their dependencies.
