@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/RogerThomas/jero/compare/0.4.1...0.4.2) (2026-11-20)
+
+
+### Documentation
+
+* restructure the guides example-first and fix factual drift ([#102](https://github.com/RogerThomas/jero/issues/102)) ([757a67a](https://github.com/RogerThomas/jero/commit/757a67a0eac846e31e811715b9135b9e5437c9cb))
+
 ## [0.4.1](https://github.com/RogerThomas/jero/compare/0.4.0...0.4.1) (2026-11-13)
 
 
