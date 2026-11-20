@@ -33,7 +33,7 @@ the project's type checks.
 
 A jero app is a `BaseApp` subclass that wires up *resources* (REST collections) and
 *endpoints* (single routes). Handler inputs and outputs are
-[msgspec](https://msgspec.dev/) `Struct`s — the types *are* the
+[msgspec](https://msgspec.dev/) `Struct`s: the types *are* the
 request/response contract.
 
 jero has no route decorators. Instead of writing `@app.get(...)`, you define a class,
@@ -81,33 +81,29 @@ curl localhost:8000/widgets/abc # -> { "id": "abc", "name": "widget-name" }
 That's the whole loop: a `Struct` for the URL slots (`path`), a `Struct` for the
 response, and a method name (`read_one`) that maps to `GET`.
 
-Everything that crosses the wire is a `Struct` — bodies, params, path slots, headers,
-forms, etc. The `Struct` is what gives jero validation, fast serialization,
-startup checks, and the [OpenAPI spec](guide/openapi.md); a raw `dict` return is a
-startup error. [Philosophy](philosophy.md#struct-everywhere) has the full reasoning.
-
 ## The mental model
 
 - A **`Resource`** is a class with any of the CRUD methods `create` / `read_one` /
   `read_many` / `update_full` / `update_partial` / `delete`, mapped to POST / GET (item) /
   GET (collection) / PUT / PATCH / DELETE. See [Resources & Endpoints](guide/resources.md).
 - An **`Endpoint`** is a class with bare verb methods (`get`/`post`/…) for non-resource
-  routes — health checks, webhooks, actions.
+  routes: health checks, webhooks, actions.
 - **Handler arguments bind by name**, each a `Struct`: `json`, `params`, `path`,
-  `headers`, `cookies`, `form`, `user`, plus raw `content: bytes` / `content_stream` /
-  `raw_headers`. See
+  `headers`, `cookies`, `form`, plus raw `content: bytes` / `content_stream` /
+  `raw_headers`, and `user` (whatever your authenticator returns). See
   [Request binding](guide/binding.md).
 - **Returns are typed**: a `Struct`, `list[Struct]`, `str`, `bytes`, or a response
   wrapper (`JSONResponse[T]`, `BytesResponse`, a streaming response, etc.) when you need to
-  control headers or status. See [Responses & headers](guide/responses.md).
-- **Dependencies are hand-wired** in `wire` — no DI container. The framework adds the
+  control headers or status. A raw `dict` return is a startup error
+  ([why](philosophy.md#struct-everywhere)). See [Responses & headers](guide/responses.md).
+- **Dependencies are hand-wired** in `wire`: no DI container. The framework adds the
   one thing plain Python doesn't: resource lifecycle. See [Wiring & lifecycle](guide/wiring.md).
 - For a complete application shape, see the [complete example](guide/complete-example.md).
 
 ## Test it without a server
 
-jero ships a synchronous, in-process [`TestClient`](guide/testing.md) — no socket, no
-running server:
+jero ships a synchronous, in-process [`TestClient`](guide/testing.md): no socket, no
+running server.
 
 ```python
 # doc-example: fragment (illustrative snippet, not a runnable app)
@@ -123,9 +119,9 @@ def test_read_one():
 
 ## Where next
 
-- [Resources & Endpoints](guide/resources.md) — the routing model and path templates.
-- [Request binding](guide/binding.md) — every way to get data into a handler.
-- [Complete example](guide/complete-example.md) — factory, auth, lifecycle, and typed
+- [Resources & Endpoints](guide/resources.md): the routing model and path templates.
+- [Request binding](guide/binding.md): every way to get data into a handler.
+- [Complete example](guide/complete-example.md): factory, auth, lifecycle, and typed
   responses together.
 
-Everything else — streaming, forms, auth, errors, deployment, etc. — is in the Guide.
+Everything else (streaming, forms, auth, errors, deployment, etc.) is in the Guide.

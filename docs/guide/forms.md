@@ -1,10 +1,7 @@
 # Forms & uploads
 
 For form bodies, take a `form` argument annotated with a `Struct`. Each field is one
-form part; its type decides how the part is decoded. A form with a file field binds from
-`multipart/form-data`. A form with no files binds from `multipart/form-data` *or*
-`application/x-www-form-urlencoded` (see [below](#url-encoded-forms)). jero buffers
-and parses the body once, at the start of the request.
+form part; its type decides how the part is decoded.
 
 ```python
 from typing import Literal
@@ -47,6 +44,11 @@ class App(BaseApp):
 app = App()
 ```
 
+- A form with a file field binds from `multipart/form-data` only.
+- A form with no files also binds from `application/x-www-form-urlencoded` (see
+  [below](#url-encoded-forms)).
+- jero buffers and parses the body once, at the start of the request.
+
 ## Field types
 
 A form field can be:
@@ -59,11 +61,11 @@ A form field can be:
 - **`list[...]`** of any of the above — repeated parts under the same name.
 - Any of the above wrapped in `| None` — an optional part.
 
-Fields accept `msgspec.Meta` like anywhere else — `quantity:
-Annotated[int, Meta(ge=1, description="How many")]` (or inside the wrapper,
-`FormPart[Annotated[str, Meta(min_length=2)]]`). The constraints are enforced on the
-request and surface in the [OpenAPI schema](openapi.md) (files are documented as binary;
-everything else carries its full schema, `Meta` and `$ref`s included).
+Fields accept `msgspec.Meta` like anywhere else: `quantity:
+Annotated[int, Meta(ge=1, description="How many")]`, or inside the wrapper,
+`FormPart[Annotated[str, Meta(min_length=2)]]`. The constraints are enforced on the
+request and appear in the [OpenAPI schema](openapi.md). Files are documented as binary;
+everything else carries its full schema, `Meta` and `$ref`s included.
 
 ## Envelope metadata — `FormPart` and `FilePart`
 
@@ -143,8 +145,8 @@ client.post(
 ## Error semantics
 
 - A body that isn't one of the form's content types → **415**.
-- A malformed multipart body → **400**.
-- A missing required part, or a file part without a filename → **422**.
+- A malformed multipart body → **400**; a missing required part, or a file part without
+  a filename → **422** (see [REST semantics](rest.md#status-codes)).
 
-Like `json` and `content`, `form` is a request body — mutually exclusive with them, and
-rejected on `GET`/`DELETE`.
+`form` is a request body: mutually exclusive with `json`, `content`, and
+`content_stream`, and a `WiringError` at startup on a `GET`/`DELETE` handler.

@@ -25,7 +25,8 @@ being aggressively opinionated rather than flexible.
    so that question never reaches code review.
 
 3. **Strict, expressive typing — not optional.** Everything is fully, statically
-   typed under pyright-strict. If you don't like typing, this is not your
+   typed and strictly checked (pyrefly for `jero/`; mypy, ty, pyright and zuban for the
+   public API). If you don't like typing, this is not your
    framework. Types are not decoration — they *are* the contract (the binding,
    the `WiringError`s) and the source of the OpenAPI spec (`jero/_openapi.py`).
    Every design decision must produce precise static types; prefer rich,
@@ -47,8 +48,10 @@ Always follow the following style guide:
 
 ### Other Rules and Practices
 
-- pyright **strict** and ruff must stay clean; tests must pass. `task pyright`,
-  `task ruff`, `task test` — or run everything at once with `task check`.
+- pyrefly (the primary, strict checker for `jero/`) and ruff must stay clean, as must
+  `task typecheck-public` (mypy, ty, pyright and zuban over `tests` and `demo_app`); tests
+  must pass. `task pyrefly`, `task ruff`, `task test` — or run the quality tools at once
+  with `task check`.
 - **Supported Python versions:** 3.13, 3.14, and 3.15. The main CI matrix runs
   the full test suite and pyrefly on each. Keep the minimum version at 3.13 and
   type checkers targeting it; the shared CI setup uses uv 0.13.4 to install
@@ -135,7 +138,7 @@ Always follow the following style guide:
   `EndpointMeta` / `ResourceMeta` / `OperationMeta` (the wrong meta type on a shape is a
   loud failure; `operation_id` lives only on `OperationMeta`; `summary`/`description`/
   `responses` refine the generated spec). `path` is **required** on
-  the concrete shapes — omitting it is a pyright error, not just a startup `WiringError`.
+  the concrete shapes — omitting it is a type-checker error, not just a startup `WiringError`.
   An optional `ref="..."` gives the class a string handle for URL reversal across import
   cycles (see Links/Location below).
 - **Links & Location** — responses carry `location: Location | None` (RFC 9110, one
@@ -201,7 +204,7 @@ Always follow the following style guide:
   survive). The buffered wrappers are
   `@dataclass` (like the streaming ones), generic over body `T` and headers `H` so
   both schemas survive to the OpenAPI spec — a bare `JSONResponse` (no `[T]`) is a
-  pyright-strict error on purpose.
+  type-checker error on purpose.
 - **Errors**: `BaseHTTPError` is the abstract root — the HTTP contract (class-level
   `status`, validated 400–599 at class creation) without a wire body; `except
   BaseHTTPError` means "any jero error". Two families sit on it. The **Problem family**

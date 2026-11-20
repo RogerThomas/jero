@@ -1,8 +1,7 @@
 # Request binding
 
-Handler arguments bind **by name**. You declare only the ones you need; jero resolves
-each from the request and validates it against your `Struct` — once at startup it
-learns *which* sources a handler wants, and the request path just fills them in.
+Handler arguments bind **by name**. Declare only the ones you need, and jero fills
+each from the request, validated against your `Struct`.
 
 | Argument      | Source                          | Type                     |
 | ------------- | ------------------------------- | ------------------------ |
@@ -16,13 +15,6 @@ learns *which* sources a handler wants, and the request path just fills them in.
 | `cookies`     | request cookies                 | a `Struct` (see [Cookies](cookies.md)) |
 | `raw_headers` | request headers (opaque)        | `RawHeaders`             |
 | `user`        | the auth result                 | whatever `authenticate` returns (any type), or `T \| None` behind [optional auth](auth.md#optional-authentication) |
-
-`json`, `content`, `content_stream`, and `form` are mutually exclusive (one request
-body), and are rejected on bodyless verbs (`GET`, `DELETE`). Everything else can combine freely.
-
-jero reads these annotations at startup, so import their types normally, never under
-`if TYPE_CHECKING:` (see the [FAQ](../faq.md#why-does-ruff-want-my-struct-imports-under-type_checking)
-if ruff suggests it).
 
 ```python
 from msgspec import Struct
@@ -61,14 +53,19 @@ class App(BaseApp):
 app = App()
 ```
 
+- **One request body.** `json`, `content`, `content_stream`, and `form` are mutually
+  exclusive, and declaring one on a `GET` or `DELETE` handler is a `WiringError` at
+  startup. Everything else combines freely.
+- **Import the types normally**, never under `if TYPE_CHECKING:`. jero reads these
+  annotations at startup (see the
+  [FAQ](../faq.md#why-does-ruff-want-my-struct-imports-under-type_checking) if ruff
+  suggests it).
+- **Failures.** Malformed → **400**, schema failure → **422** (see
+  [REST semantics](rest.md#status-codes)).
+
 ## JSON body — `json`
 
-The body is decoded straight into your `Struct` by msgspec. A malformed body → **400**;
-a well-formed body that fails the schema → **422**. That split runs through every
-source: failures *reading* the request (malformed JSON, an unconvertible query or
-header value) are 400s, and only a successfully parsed body or form part whose content
-breaks its declared schema is a 422 — which is why a bad query value is a 400 where the
-same bad value inside a JSON body is a 422.
+The body is decoded straight into your `Struct` by msgspec.
 
 A JSON body is **always** a `Struct` (or a tagged union of them), never a raw `dict`.
 That's what gives it both validation and a schema in the [OpenAPI spec](openapi.md).
@@ -76,10 +73,8 @@ That's what gives it both validation and a schema in the [OpenAPI spec](openapi.
 ### One of several shapes: a tagged union
 
 When a body comes in more than one shape, declare `json` as a union of **tagged**
-Structs rather than one Struct with every field optional. Each member declares `tag=`
-(`tag=True` uses the class name), and msgspec reads the tag to pick the member to decode,
-so a union costs no more per request than a single Struct. The handler narrows with
-`match` (or `isinstance`), fully typed.
+Structs, not one Struct with every field optional. Each member declares `tag=`
+(`tag=True` uses the class name), and the handler narrows with `match` or `isinstance`.
 
 ```python
 from typing import Annotated
@@ -124,15 +119,16 @@ class App(BaseApp):
 app = App()
 ```
 
-Naming the union with a `type` alias is optional (`json: FixedDiscount | PercentDiscount`
-works the same), but it gives the body one name to reuse, and an alias can itself sit
-inside a wider union (`json: Discount | Refund`).
-
-`{"kind": "fixed", "price_cents": 1000, "discount_cents": 250}` decodes to a
-`FixedDiscount`. A missing tag, or one no member claims, is a **422** like any other
-schema failure. In the [OpenAPI spec](openapi.md) the body is msgspec's `anyOf` plus a
-`discriminator` mapping each tag to its member: the same schema a
-[tagged-union response](streaming.md) gets.
+- `{"kind": "fixed", "price_cents": 1000, "discount_cents": 250}` decodes to a
+  `FixedDiscount`.
+- A missing tag, or one no member claims, is a **422** like any other schema failure.
+- A union costs no more per request than a single Struct: msgspec reads the tag to pick
+  the member.
+- The `type` alias is optional (`json: FixedDiscount | PercentDiscount` works the same).
+  An alias can itself sit inside a wider union (`json: Discount | Refund`).
+- In the [OpenAPI spec](openapi.md) the body is an `anyOf` plus a `discriminator`
+  mapping each tag to its member: the same schema a
+  [tagged-union response](streaming.md#mixed-streams) gets.
 
 The rules, all checked at startup:
 
@@ -174,13 +170,15 @@ class App(BaseApp):
 app = App()
 ```
 
+jero sets no request body size limit, and `content` holds the whole body in memory. Cap
+the size at your [server or reverse proxy](deployment.md#what-belongs-in-the-proxy), or read the body incrementally with
+[`content_stream`](#streamed-raw-body-content_stream).
+
 ## Streamed raw body — `content_stream`
 
-`content` holds the whole body in memory. When that's the wrong shape (a large upload,
-a payload you proxy onward, a format you parse incrementally), take
-`content_stream: ContentStream` instead and read the body as it arrives. It's the final
-escape hatch: anything jero has no typed vocabulary for can still be read, one chunk at
-a time.
+When a buffered body is the wrong shape (a large upload, a payload you proxy onward, a
+format you parse incrementally), take `content_stream: ContentStream` and read the body
+as it arrives. It is the escape hatch for any body jero has no typed vocabulary for.
 
 ```python
 import hashlib
@@ -247,10 +245,11 @@ class UploadsEndpoint(Endpoint, path="/uploads"):
 
 ## Query & path — `params`, `path`
 
-Both are `Struct`s converted from strings (`?limit=5` → `limit: int = 5`). `params`
-fields may have defaults (optional query params); `path` fields may not (see
-[path templates](resources.md#path-templates)). Bad query → **400**; bad path value →
-**404**.
+Both are `Struct`s converted from strings (`?limit=5` → `limit: int = 5`).
+
+- `params` fields may have defaults (optional query params).
+- `path` fields may not (see [path templates](resources.md#path-templates)).
+- Bad query → **400**; bad path value → **404**.
 
 ## Headers — `headers` (typed) and `raw_headers` (opaque)
 
@@ -315,22 +314,21 @@ class App(BaseApp):
 app = App()
 ```
 
-Use the typed `headers` Struct for values you act on; reach for `raw_headers` only for
-forwarding the whole bag upstream or for diagnostics. The same split applies on the
+Use the typed `headers` Struct for values you act on, and `raw_headers` only to forward
+the whole bag upstream or for diagnostics. The same split applies on the
 [response side](responses.md#headers).
 
 ## Cookies — `cookies`
 
-A typed `Struct`, bound the same way — but **verbatim and case-sensitive**, with no
-header-style mangle at all: RFC 6265 cookie names are case-sensitive and routinely
-aren't valid Python identifiers (`__Host-session`), so a field name simply *is* the
-cookie name it binds. Full treatment — the rename idiom, lenient-parsing rules, setting
-and deleting cookies, and cookie auth — lives in its own page: [Cookies](cookies.md).
+A typed `Struct`, like `headers`, with one difference: names bind **verbatim and
+case-sensitive**. A field name *is* the cookie name, with no lower-casing and no `-` to
+`_` mapping. For names that aren't valid identifiers (`__Host-session`), lenient
+parsing, setting and deleting cookies, and cookie auth, see [Cookies](cookies.md).
 
 ## camelCase (and any wire convention)
 
 msgspec's `rename` is honored everywhere. Define a base Struct for your wire
-convention and inherit it — snake_case in code, camelCase on the wire:
+convention and inherit it: snake_case in code, camelCase on the wire.
 
 ```python
 class Camel(Struct, rename="camel"):

@@ -1,8 +1,5 @@
 # Philosophy
 
-jero exists because the current Python web framework defaults are not the only way to
-build APIs.
-
 FastAPI, BlackSheep, Litestar, Django, Flask, Starlette, and the rest have all pushed
 Python web development forward. jero is not a rejection of that work. It is a different
 set of bets: fewer extension points, fewer runtime decisions, stronger static
@@ -10,7 +7,7 @@ contracts, and a narrower idea of what a JSON API framework should be.
 
 ## No decorators, no DI container
 
-Route decorators are the common default, and what most frameworks reach for:
+Most frameworks reach for route decorators:
 
 ```python
 @app.get("/widgets/{widget_id}")
@@ -19,9 +16,10 @@ async def read_widget(widget_id: str) -> Widget:
 ```
 
 For a single handler this reads cleanly: path, verb, and function sit together. The
-tradeoffs surface across a whole API, and the deepest one is dependencies. A plain
-function has no `self` to hold what a handler depends on (a database pool, an HTTP
-client, a service), so those dependencies must arrive some other way. There are only
+tradeoffs surface across a whole API.
+
+The deepest one is dependencies. A plain function has no `self` to hold a database
+pool, an HTTP client, or a service, so those must arrive some other way. There are only
 two:
 
 - module-level globals (Flask's `current_app` / `g`), or
@@ -35,10 +33,11 @@ routes and a DI layer to feed them are largely recovering what a plain class giv
 free.
 
 jero starts from that class. A route is a `Resource` for a REST collection or an
-`Endpoint` for a one-off route; the path lives on the class, method names carry the HTTP
+`Endpoint` for a one-off route. The path lives on the class, method names carry the HTTP
 semantics, and dependencies are ordinary constructor arguments:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 @dataclass
 class WidgetResource(Resource, path="/widgets"):
     _service: WidgetService
@@ -47,13 +46,17 @@ class WidgetResource(Resource, path="/widgets"):
         return await self._service.get_widget(path.widget_id)
 ```
 
-The collection is now one object whose operations live together because they *are*
-together, and whose dependencies are passed to `__init__`. That is the whole dependency
-story: Python's own injection mechanism, constructors. Build an object, pass it what it
-needs. No globals, no resolver graph, no per-request container lookup, no dependency
-protocol to learn. Wiring is ordinary async Python:
+The method names are a fixed set: `create` is POST on the collection, `read_many` is GET
+on the collection, and `read_one`, `update_full`, `update_partial`, and `delete` are the
+item operations. The set is small enough to learn quickly and strict enough for the
+framework to enforce at startup. Less freedom, but more shape.
+
+Dependencies use Python's own injection mechanism, constructors: build an object, pass
+it what it needs. No globals, no resolver graph, no per-request container lookup, no
+dependency protocol to learn. Wiring is ordinary async Python:
 
 ```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
 class App(BaseApp[Factory]):
     async def wire(self) -> None:
         service = await self._factory.create_widget_service()
@@ -62,11 +65,11 @@ class App(BaseApp[Factory]):
 
 The framework adds one thing plain Python does not: lifecycle. Enter a resource that must
 be opened and closed with `_enter` or `_aenter`, and the app closes it in reverse order at
-shutdown; for larger apps a `BaseFactory` groups construction in the same explicit style.
+shutdown. For larger apps a `BaseFactory` groups construction in the same explicit style.
 
 Decorators are lighter for a handful of one-off routes. For a typed, REST-shaped JSON
-API, the class is the better unit of design, and it doubles as a stable thing the
-framework attaches to: a shape to validate at startup, the target for reverse-routed
+API, the class is the better unit of design. It is also a stable thing the framework
+attaches to: a shape to validate at startup, the target for reverse-routed
 `Location` / `Link` headers, and the anchor for OpenAPI generation.
 
 ## msgspec first
@@ -83,32 +86,30 @@ typed, JSON-focused framework, msgspec is the better foundation.
 
 ## Struct everywhere
 
-In jero, JSON request bodies and JSON responses are `Struct`s. Query params, path
-params, typed headers, cookies, form models, typed response headers, etc. are
-also `Struct`s. (The auth user is the one exception: it never crosses the wire, so it can
-be any type you like.)
+JSON request bodies and JSON responses are `Struct`s. So are query params, path params,
+typed headers, cookies, form models, typed response headers, etc. The auth user is the
+one exception: it never crosses the wire, so it can be any type you like.
 
-That is not ceremony for its own sake. The type is the contract.
+The type is the contract. When a handler accepts `json: WidgetIn`, jero knows the
+request body shape. When it returns `Widget`, jero knows the response body shape. That
+single source drives validation, serialization, startup checks, and the OpenAPI
+generator.
 
-When a handler accepts `json: WidgetIn`, jero knows the request body shape. When it
-returns `Widget`, jero knows the response body shape. That single source drives
-validation, serialization, startup checks, and the OpenAPI generator. A raw
-`dict` does not carry enough information. It may be convenient in the moment, but it
-turns the framework blind at exactly the boundary where the contract matters most.
-
+A raw `dict` does not carry enough information. It may be convenient in the moment, but
+it turns the framework blind at exactly the boundary where the contract matters most.
 JSON is typed or it is rejected at startup.
 
 ## Startup validation
 
-jero tries hard to fail before the app serves traffic.
+jero tries hard to fail before the app serves traffic. Each of these is a startup error:
 
-If a route's path slots don't match its `path` Struct, that is a startup error. If a
-handler declares `user` without auth, that is a startup error. If auth returns one user
-type and the handler asks for another, that is a startup error. If a handler's `user`
-annotation disagrees with whether its authenticator accepts anonymous callers, in either
-direction (including a handler that omits `user` on a route that serves them), that is a
-startup error. If a response type
-cannot be understood as a framework response contract, that is a startup error.
+- A route's path slots don't match its `path` Struct.
+- A handler declares `user` without auth.
+- Auth returns one user type and the handler asks for another.
+- A handler's `user` annotation disagrees with whether its authenticator accepts
+  anonymous callers, in either direction (including a handler that omits `user` on a
+  route that serves them).
+- A response type cannot be understood as a framework response contract.
 
 This is a DX choice as much as a performance choice. Runtime flexibility often means
 runtime surprise. jero would rather make invalid applications impossible to boot than
@@ -127,35 +128,15 @@ of that, the public-facing interface is checked with *every* major type checker:
 interface is everything jero's [test suite](guide/testing-approach.md) exercises: `./tests`
 and the shared `demo_app` it runs against.
 
-This is the best of both worlds. The project picks a single fast checker for its own
-source, and at the same time guarantees that, whatever your favourite type checker is,
-jero's public API is fully supported and type-checks cleanly under it.
-
-## Class-based resources
-
-The method *names* carry the REST semantics directly: `create` is POST on the collection,
-`read_many` is GET on the collection, and `read_one`, `update_full`, `update_partial`, and
-`delete` are the item operations. The set is small enough to learn quickly and strict
-enough for the framework to enforce at startup.
-
-Less freedom, but more shape. jero is comfortable with that tradeoff.
+The project picks a single fast checker for its own source, and still guarantees that
+jero's public API type-checks cleanly under whichever checker you prefer.
 
 ## Opinionated
 
-Opinionated does not mean "arbitrary." It means the framework has an answer.
-
-How do I define routes? Use `Resource` or `Endpoint`.
-
-How do I bind request data? Name the handler argument `json`, `content`,
-`content_stream`, `form`, `params`, `path`, `headers`, `cookies`, `raw_headers`, or `user`.
-
-How do I return JSON? Return a `Struct`, `list[Struct]`, `JSONResponse[T, H]`,
-`Created[T, H]`, or `Accepted[T, H]`.
-
-How do I wire dependencies? Construct them in `wire` or a `BaseFactory`, then pass
-them to class constructors.
-
-How do I manage app lifetime resources? Use `_enter` and `_aenter`.
+Opinionated does not mean "arbitrary." It means the framework has an answer to each
+"how do I...?": how to define routes, bind request data, return JSON, wire dependencies,
+and manage app-lifetime resources. The answers are listed in
+[The mental model](getting-started.md#the-mental-model).
 
 This is the promise and the cost of jero. It is not a toolkit for assembling your own
 framework style. It is a framework with a style. If you try to fight it, it will feel

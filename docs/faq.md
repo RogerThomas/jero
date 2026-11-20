@@ -2,17 +2,23 @@
 
 ## Can handlers be sync?
 
-Yes. Handlers, `authenticate`, and middleware hooks may all be `def` or `async def` —
-jero detects which at wiring. Use sync for pure CPU-light work; anything that does I/O
-should be async.
+Yes. Handlers, `authenticate`, and the middleware `intercept` / `observe` hooks may be `def`
+or `async def`; jero detects which at wiring (`response_headers` is sync only). Use
+sync for pure CPU-light work; anything that does I/O should be async.
 
-A `def` handler runs directly on the event loop, not in a thread pool. This is the
-opposite of FastAPI, which moves every `def` handler onto a thread pool so that
-blocking code there is safe. jero doesn't, for performance (see below). While a `def`
-handler runs, every other request on that worker waits, so a blocking call inside one
-(a sync SDK, a `time.sleep`, a large file read) stalls the whole server. Keep the
-handler `async def` and hand the blocking call to a thread yourself, or use an async
-client instead:
+A `def` handler runs directly on the event loop, not in a thread pool. While it runs,
+every other request on that worker waits, so a blocking call inside one (a sync SDK, a
+`time.sleep`, a large file read) stalls the whole server.
+
+This is the opposite of FastAPI, which moves every `def` handler onto a thread pool so
+that blocking code there is safe. jero has no implicit thread pool on purpose, and the
+main reason is performance: handing every sync handler to a thread would add a thread
+switch to each request, the CPU-light ones that never needed it included. It would also
+hide which of your code runs concurrently.
+
+Keep the handler `async def` and hand the blocking call to a thread yourself, or use an
+async client instead. `asyncio.to_thread` puts the hand-off in plain sight, on exactly
+the calls that need it:
 
 ```python
 import asyncio
@@ -43,15 +49,9 @@ class App(BaseApp):
 app = App()
 ```
 
-There is no implicit thread pool on purpose, and the main reason is performance.
-Handing every sync handler to a thread would add a thread switch to each request, the
-CPU-light ones that never needed it included. It would also hide which of your code
-runs concurrently. `asyncio.to_thread` puts the hand-off in plain sight, on exactly the
-calls that need it.
-
 ## Does jero support WebSockets?
 
-Yes—jero provides typed bidirectional [WebSockets](guide/websockets.md) and an
+Yes. jero provides typed bidirectional [WebSockets](guide/websockets.md) and an
 in-process typed `Channel` for fan-out. For one-way server push, prefer
 [NDJSON or Server-Sent Events](guide/streaming.md), which cover most live-update cases
 and give SSE clients automatic reconnection.
@@ -66,19 +66,19 @@ belongs on your reverse proxy or CDN (see
 
 ## Where is `request.state`?
 
-There isn't one. Middleware can't pass state to handlers — the idiom is jero's typed
-sources: [bind the header](guide/binding.md) in the handler, or carry the value on the
+There isn't one. Middleware can't pass state to handlers. Use jero's typed
+sources instead: [bind the header](guide/binding.md) in the handler, or carry the value on the
 auth [`user`](guide/auth.md).
 
 ## Can I return a `dict`?
 
-No — a JSON body is a `Struct` (or `list[Struct]`), and a `dict` return is a
+No. A JSON body is a `Struct` (or `list[Struct]`), and a `dict` return is a
 `WiringError` at startup. The `Struct` is what buys validation, the OpenAPI schema, and
 msgspec's encode speed. See [Philosophy](philosophy.md#struct-everywhere).
 
 ## Can I use Pydantic models?
 
-Not on the wire — request and response contracts are msgspec `Struct`s. Off the wire,
+Not on the wire: request and response contracts are msgspec `Struct`s. Off the wire,
 anything goes: the [demo app](guide/project-structure.md) uses pydantic-settings to
 parse environment configuration, then maps it into a `Struct`.
 
@@ -110,19 +110,19 @@ No. jero's generics use PEP 696 type-parameter defaults, which shipped in 3.13. 
 ## Why is there no dependency-injection container?
 
 Because constructors already are one: build objects in `wire`, pass them in. The
-framework adds only what plain Python lacks — resource lifecycle. See
+framework adds only what plain Python lacks: resource lifecycle. See
 [Wiring & lifecycle](guide/wiring.md) and [Philosophy](philosophy.md#no-decorators-no-di-container).
 
 ## How do I share state between workers?
 
-You don't — each worker process runs `wire` and holds its own services and
+You don't. Each worker process runs `wire` and holds its own services and
 [background queue](guide/background-tasks.md). Shared state (a cache, a durable queue)
 belongs in an external service. See [Deployment](guide/deployment.md#running-the-app).
 
 ## How stable is the API?
 
 jero is in beta, on the 0.x series. The public surface is settled and fully documented,
-but a breaking change may still land in a minor release until 1.0 — every release's
+but a breaking change may still land in a minor release until 1.0. Every release's
 changes are listed in the [release notes](https://github.com/RogerThomas/jero/releases).
 
 ## Why is the `TestClient` sync?

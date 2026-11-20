@@ -159,7 +159,7 @@ Then call it with a bearer token:
 
 ```bash
 curl -H "Authorization: Bearer token" localhost:8000/widgets/widget-1
-# {"name":"first-widget","id":"widget-1","ownerId":"user-id"}
+# {"name":"first-widget","id":"widget-1","owner_id":"user-id"}
 ```
 
 ## A project-structured version

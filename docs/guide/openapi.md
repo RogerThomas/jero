@@ -1,8 +1,7 @@
 # OpenAPI & docs
 
 jero generates an [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0) document from the
-types you already wrote — no decorators, no duplicate schema definitions. One call in
-`wire` serves the spec as JSON and a [Scalar](https://github.com/scalar/scalar) docs UI:
+types you already wrote. One call in `wire` serves it:
 
 ```python
 from msgspec import Struct
@@ -16,7 +15,6 @@ class Widget(Struct):
 
 class WidgetsEndpoint(Endpoint, path="/widgets"):
     async def get(self) -> list[Widget]:
-        """List widgets."""
         return [Widget(id="widget-id")]
 
 
@@ -29,9 +27,12 @@ class App(BaseApp):
 app = App()
 ```
 
-That serves the document at **`/openapi.json`** and the docs UI at **`/docs`**. Order
-doesn't matter — `_include_openapi` can come before or after your routes, because the
-document is built once after wiring finishes.
+- **`/openapi.json`** serves the document.
+- **`/docs`** serves a [Scalar](https://github.com/scalar/scalar) docs UI
+  ([options](#the-docs-ui)).
+- `_include_openapi` can come before or after your routes: the document is built once,
+  after wiring finishes.
+- The spec routes themselves are never documented.
 
 ## What's derived
 
@@ -42,23 +43,46 @@ Everything in the document comes from the wiring you already did:
 | `paths` + operations     | each wired `Resource`/`Endpoint` method and its mount path |
 | `parameters`             | the `path` / `params` / `headers` / `cookies` source Structs, expanded field by field |
 | `requestBody`            | the `json` body Struct (a tagged union becomes `anyOf` + `discriminator`), or `content` bytes, or a `form` |
-| `responses` (success)    | the handler's return type — a `Struct`, `list[Struct]`, `str`, `bytes`, a `JSONResponse[T]` / `NoContent` / `Created[T]` / `Accepted[T]`, or a streaming response. A *union* of these yields one entry per status |
-| `responses` (errors)     | the sources an operation actually has (see below) |
-| `components.schemas`     | every referenced `Struct`, via msgspec — `rename` and `msgspec.Meta` honored |
+| `responses` (success)    | the handler's return type: a `Struct`, `list[Struct]`, `str`, `bytes`, a `JSONResponse[T]` / `NoContent` / `Created[T]` / `Accepted[T]`, or a streaming response. A *union* of these yields one entry per status |
+| `responses` (errors)     | the sources an operation actually has (see [Error responses](#error-responses)) |
+| `components.schemas`     | every referenced `Struct`, via msgspec, with `rename` and `msgspec.Meta` honored |
 | `security`               | the `auth` an operation is mounted behind |
 | `summary` / `description`| `OperationMeta.summary` / `.description` (explicit; docstrings are never published) |
 | model `description`      | a model's `ModelMeta` via `jero.Struct`'s `meta=` (explicit; not its docstring) |
 | `operationId`            | the shape and method name, e.g. `WidgetResource_readOne` |
-| `tags`                   | `meta` / `meta_<op>` (see [Metadata](resources.md#metadata)) |
+| `tags`                   | `meta` / `meta_<op>` (see [Tags](#tags)) |
 
-The spec routes (`/openapi.json`, `/docs`) are never themselves documented.
+> **Docstrings are never published.** A docstring is a note to maintainers, so it can't
+> leak into the public spec. Public prose is always explicit: `OperationMeta.summary` /
+> `description` for operations, `ModelMeta` for models, field `Meta` for fields.
+
+### Error responses
+
+jero returns errors as RFC 9457 Problem Details
+(`{"type", "title", "status", "docs?"}`, plus `"detail"` and `"params"` on a
+parameterized error; see [Errors](errors.md)). The spec lists only the errors an
+operation can actually produce:
+
+| Status | Documented when the operation… |
+| ------ | ------------------------------ |
+| `400`  | binds a body, query params, headers, or cookies (malformed request) |
+| `401`  | is mounted behind `auth` |
+| `404`  | binds a `path` |
+| `415`  | takes a `form` (wrong media type) |
+| `422`  | binds a body (well-formed but invalid) |
+| `500`  | always (an unhandled error) |
+
+So a bodyless, unauthenticated `GET` lists only its success response and `500`. All
+derived error responses point at one shared `Problem` schema.
+
+## Describing models
 
 ### Schemas and `msgspec.Meta`
 
 Models are schema'd by msgspec's own
-[`schema_components`](https://jodie.dev/msgspec/api.html#msgspec.json.schema_components),
-so the wire convention and field constraints come through for free. Annotate a field
-with `msgspec.Meta` and it is both validated on the request *and* documented:
+[`schema_components`](https://jodie.dev/msgspec/api.html#msgspec.json.schema_components).
+Annotate a field with `msgspec.Meta` and it is both validated on the request and
+documented:
 
 ```python
 from typing import Annotated
@@ -71,22 +95,20 @@ class WidgetIn(Struct, rename="camel"):
     price_cents: Annotated[int, Meta(ge=0, description="Price in cents")]
 ```
 
-`ge`/`le` become `minimum`/`maximum`, `min_length`/`max_length`, `pattern`,
-`description`, `examples`, and `title` all appear on the schema, and `rename="camel"`
-means the property is `priceCents` on the wire.
+- `ge` / `le` become `minimum` / `maximum`.
+- `min_length` / `max_length`, `pattern`, `description`, `examples`, and `title` all
+  appear on the schema.
+- `rename="camel"` makes the property `priceCents` on the wire.
 
-When **every** field carries `examples`, jero composes whole-object examples and attaches
-them to the request/response **media type** (where docs UIs like Scalar render them as a
-selectable sample), zipped by index — annotate each field once and full sample bodies
-appear for free:
+**Whole-object examples.** When every field carries `examples`, jero zips them by index
+into whole-object examples on the request/response media type, where docs UIs like
+Scalar render them as a selectable sample:
 
 ```python
 class WidgetIn(Struct, rename="camel"):
     name: Annotated[str, Meta(examples=["Gadget", "Gizmo"])]
     price_cents: Annotated[int, Meta(examples=[1999, 2999])]
 ```
-
-A request/response using `WidgetIn` then gets, on its `application/json` media type:
 
 ```jsonc
 "examples": {
@@ -95,16 +117,17 @@ A request/response using `WidgetIn` then gets, on its `application/json` media t
 }
 ```
 
-(The example is composed only if every field has examples — a partial object would omit
-required fields. A field with fewer examples reuses its last; a `list[...]` response
-example is the array of all composed objects.)
+- Nothing is composed unless every field has examples: a partial object would omit
+  required fields.
+- A field with fewer examples reuses its last one.
+- A `list[...]` response example is the array of all composed objects.
 
 ### Defining models
 
-jero exports its own `Struct` — a drop-in for `msgspec.Struct` (same fields, config
-keywords, encode/decode, `isinstance` checks) with one addition: an optional `meta=` class
-keyword for OpenAPI metadata. **Recommended:** import `Struct` from `jero` and give your
-project one base that fixes your wire convention; inherit it everywhere:
+jero exports its own `Struct`: a drop-in for `msgspec.Struct` (same fields, config
+keywords, encode/decode, `isinstance` checks) plus an optional `meta=` class keyword for
+OpenAPI metadata. The recommended setup is one project base that fixes your wire
+convention, inherited everywhere:
 
 ```python
 # doc-example: fragment (illustrative snippet, not a runnable app)
@@ -113,70 +136,39 @@ from jero import Struct, ModelMeta
 class Base(Struct, rename="camel"):            # one project base
     pass
 
-class Page(Base):                              # no meta — identical to a plain Struct
+class Page(Base):                              # no meta: identical to a plain Struct
     limit: int = 20
 
 class Widget(Base, meta=ModelMeta(description="A sellable widget.")):
     name: str
-    meta: dict     # a wire field named `meta` is fine — the class keyword and a field differ
+    meta: dict     # a wire field named `meta` is fine
 ```
 
-The `meta=` description lands on the model's component schema. The class keyword and a wire
-field named `meta` are different namespaces, so they never collide.
-
-> **If you never need a model description, just use `msgspec.Struct`.** `jero.Struct` is
-> only sugar for the `meta=` keyword; a plain `msgspec.Struct` works everywhere jero
-> accepts a model — it simply gets no model-level `description`. Field-level `msgspec.Meta`
-> descriptions flow into the schema either way.
-
-### Model descriptions
-
-A model's schema `description` is **explicit**, never taken from the class docstring (so a
-maintainer note can't leak into the public spec) — it comes only from a `ModelMeta` passed
-through the `meta=` keyword above, exactly like `Resource`/`Endpoint` take their `meta`.
+- **`ModelMeta(description=...)`** lands on the model's component schema. It is the only
+  source of a model description, the same way `Resource`/`Endpoint` take their `meta`.
+- **The `meta=` keyword and a wire field named `meta`** are different namespaces, so
+  they never collide.
+- **A plain `msgspec.Struct` works everywhere** jero accepts a model. It gets no
+  model-level `description`; field-level `msgspec.Meta` descriptions reach the schema
+  either way.
 
 ### Component names
 
-By default a model's key under `components.schemas` (and every `$ref` that points at it) is
-its class name. `ModelMeta(name=...)` overrides it:
+A model's key under `components.schemas`, and every `$ref` that points at it, is its
+class name. `ModelMeta(name=...)` overrides it:
 
 ```python
 class Widget(Base, meta=ModelMeta(name="PublicWidget")):
     name: str
 ```
 
-Use it to give a model a stable public name independent of the Python class, or to
-disambiguate two same-named Structs that would otherwise collide. Two models resolving to
-the same component name is a startup `WiringError`.
-
-> **Docstrings are never published.** Public prose is always explicit:
-> `OperationMeta.summary`/`description` for operations, `ModelMeta` for models, field
-> `Meta` for fields. A docstring stays what it should be — a note to maintainers.
-
-### Error responses
-
-jero returns errors as RFC 9457 Problem Details (`{"type", "title", "status", "docs?"}`,
-see [Errors](errors.md)) with consistent statuses, so the generator
-documents the errors an operation can *actually* produce — no false entries:
-
-| Status | Documented when the operation… |
-| ------ | ------------------------------ |
-| `400`  | binds a body, query params, headers, or cookies (malformed request) |
-| `401`  | is mounted behind `auth` |
-| `404`  | binds a `path` |
-| `415`  | takes a `form` (wrong media type) |
-| `422`  | binds a body (well-formed but invalid) |
-| `500`  | always (an unhandled error) |
-
-A bodyless, unauthenticated `GET` therefore lists only its success response and `500` —
-not a `422` it could never return. All derived error responses point at one shared
-`Problem` schema (the Problem Details body every framework error encodes to).
+Use it to give a model a stable public name independent of the Python class, or to tell
+apart two same-named Structs. Two models resolving to the same component name is a
+startup `WiringError`.
 
 ## Overriding and extending
 
-The derived document is the baseline; declare metadata at class definition to refine it.
-`summary` / `description` give the operation its prose, and `responses` adds responses the
-framework can't infer (a domain `409`) or overrides a derived one by reusing its status.
+The derived document is the baseline. Declare metadata on the class to refine it:
 
 ```python
 from msgspec import Struct
@@ -206,7 +198,6 @@ class WidgetResource(
         return json
 
     async def read_one(self, path: WidgetPath) -> Widget:
-        """Fetch one widget by id."""
         return Widget(id=path.widget_id)
 
 
@@ -219,14 +210,20 @@ class App(BaseApp):
 app = App()
 ```
 
-Responses cascade by status: derived → class-level `meta.responses` → per-operation
-`meta_<op>.responses`, with the most specific winning.
+- **`meta`** applies to every operation of the class; **`meta_<op>`** to one. See
+  [Metadata](resources.md#metadata).
+- **`summary` / `description`** give the operation its prose.
+- **`operation_id`** replaces the derived `operationId`.
+- **`responses`** adds a response jero can't infer (a domain `409`), or overrides a
+  derived one by reusing its status.
+
+Responses cascade by status: derived, then class-level `meta.responses`, then
+per-operation `meta_<op>.responses`. The most specific wins.
 
 ### Documenting errors
 
-A `ResponseSpec` is a hand-written entry. For errors you already have *classes* for,
-declare the classes instead — `exceptions` derives the whole response entry from the
-error itself, so nothing is duplicated as strings:
+A `ResponseSpec` is a hand-written entry. For errors you already have classes for,
+declare the classes with `exceptions` and the whole entry is derived from the error:
 
 ```python
 from msgspec import Struct
@@ -259,37 +256,39 @@ class App(BaseApp):
 app = App()
 ```
 
-Everything derives from the class: the **status** (410), the **description** (the
-Problem family's `title`; a `StructHTTPError`'s `description`), and the **body schema**
-— the real per-class problem shape with `type` and `status` as consts, so the spec
-finally says *which* codes an operation emits (clients dispatch on `type`), plus the
-`params` schema for parameterized errors. A `StructHTTPError` documents its composed
-wire model — its `consts` and status appear as enum consts —
-and with an [error body adapter](errors.md#house-wide-error-format) registered, the
-Problem family — derived responses included — documents the adapter's body instead.
+What the entry takes from the class:
 
-`exceptions` also lives on `EndpointMeta` / `ResourceMeta`. How the three response
-sources combine, per status:
+- **Status**: the class's `status` (410 here).
+- **Description**: the `title` of an `HTTPError`, or the `description` of a
+  [`StructHTTPError`](errors.md#bring-your-own-error-body).
+- **Body schema**: the per-class problem shape, with `type` and `status` as consts, so
+  the spec says which codes an operation emits. A parameterized error adds its `params`
+  schema. A `StructHTTPError` documents its composed wire model, with its `consts` and
+  status as enum consts.
+
+With an [error body adapter](errors.md#house-wide-error-format) registered, the Problem
+family documents the adapter's body instead, derived responses included.
+
+`exceptions` also lives on `EndpointMeta` / `ResourceMeta`. The three response sources
+combine per status:
 
 | Source | Class level vs operation level | Precedence per status |
 | :-- | :-- | :-- |
-| explicit `responses` (`ResponseSpec`) | operation **overrides** class | highest — always the last word |
-| declared `exceptions` (error classes) | class **extends** operation (both remain raiseable) | middle — **joins** a derived entry at its status |
-| derived (from the operation's sources) | — | baseline |
+| explicit `responses` (`ResponseSpec`) | operation **overrides** class | highest: always the last word |
+| declared `exceptions` (error classes) | class **extends** operation (both remain raiseable) | middle: **joins** a derived entry at its status |
+| derived (from the operation's sources) | n/a | baseline |
 
-Several errors sharing a status merge into one entry with an `anyOf` of their bodies.
-That includes a derived one: declare your own 422 and the entry documents both it and
-the framework's 422 for a malformed body, since the operation can still send either.
-Entries are validated at wiring: anything that isn't a concrete jero error class is a
-startup `WiringError`.
+- Several errors sharing a status merge into one entry with an `anyOf` of their bodies.
+- That includes a derived one. Declare your own 422 and the entry documents both it and
+  the framework's 422 for a malformed body, since the operation can still send either.
+- An entry that isn't a concrete jero error class is a startup `WiringError`.
 
 #### Keeping the list complete
 
-Python can't say which errors a function raises, so `exceptions` is the one part of the
-spec you maintain by hand, and a new `raise` deep in a service can leave it behind.
-[`TestClient`](testing.md) checks it for you. Once an operation declares `exceptions`
-(at either level), any test request to it that answers with an error the spec leaves
-out fails:
+`exceptions` is the one part of the spec you maintain by hand, and a new `raise` deep in
+a service can leave it behind. [`TestClient`](testing.md) checks it for you. Once an
+operation declares `exceptions` (at either level), any test request to it that answers
+with an error the spec leaves out fails:
 
 ```text
 AssertionError: GET /widgets returned WidgetLockedError (423), which its exceptions=[...] does not declare
@@ -299,22 +298,24 @@ AssertionError: GET /widgets returned WidgetLockedError (423), which its excepti
   checked, and wiring `_include_openapi` or not changes nothing.
 - **Exact classes.** A subclass of a declared error documents its own `type`, so it
   needs its own entry.
-- **Whatever the spec documents passes**: the framework's own errors derived from the
-  operation's sources (a malformed body's 422, a missing credential's 401, the generic
-  500, even when you declare your own error at the same status), the errors the
-  operation's authenticator [declares once](auth.md#declaring-the-authenticators-errors),
-  and any error at a status an explicit `ResponseSpec` takes over. The check reads the same cascade the
-  spec is built from.
+- **Whatever the spec documents passes.** That is:
+    - the framework's own errors derived from the operation's sources (a malformed
+      body's 422, a missing credential's 401, the generic 500), even when you declare
+      your own error at the same status;
+    - the errors the operation's authenticator
+      [declares once](auth.md#declaring-the-authenticators-errors);
+    - any error at a status an explicit `ResponseSpec` takes over.
 - **The error sent is the one checked.** When an exception handler translates an
   exception into an error class, that error class is checked, not the exception. A
   handler that answers with an `ExceptionResponse` isn't checked, since an
   `ExceptionResponse` can't be listed in `exceptions`.
-- Only the error paths your tests exercise are checked.
+- **Only exercised paths.** Only the error paths your tests exercise are checked.
 
-**Tags** are the groups an operation belongs to. A `meta` tag entry is either a bare
-`str` (the tag name — this is the OpenAPI operation-tag shape) or a `Tag` to define that
-name *with a description* inline. They cascade by *container type*: a class-level `meta`
-tag is the baseline, and an operation's `meta_<op>` extends or replaces it:
+### Tags
+
+Tags are the groups an operation belongs to. A `tags` entry is either a bare `str` (the
+tag name) or a `Tag`, which defines that name with a description inline. A class-level
+`meta` tag is the baseline, and an operation's `meta_<op>` extends or replaces it:
 
 ```python
 # doc-example: fragment (illustrative snippet, not a runnable app)
@@ -332,36 +333,35 @@ meta_read_one=OperationMeta(operation_id="getWidget"),   # no tags -> inherits [
 | a `list` | **extends** them (union, de-duplicated, order preserved) |
 | a non-empty `tuple` | **replaces** them |
 
-### Tag descriptions and order
+#### Tag descriptions and order
 
-A tag's **description** (docs UIs render it as the blurb under the section heading) lives
-on the document's tag list — OpenAPI has no operation-level tag description. You get one
-there in two ways:
+A tag's description is the blurb docs UIs render under the section heading. It lives on
+the document's tag list, because OpenAPI has no operation-level tag description. There
+are two ways to put one there:
 
-- **Define it inline** with a `Tag(name, description)` anywhere it's used (above), and it's
-  hoisted to the document. Reference the same tag by bare name (`"widgets"`) elsewhere.
-- **Declare it centrally** on `_include_openapi(tags=[...])`, which also fixes the order
-  sections appear in:
+- **Inline**: a `Tag(name, description)` anywhere the tag is used (above) is hoisted to
+  the document. Reference the same tag by bare name (`"widgets"`) elsewhere.
+- **Centrally**: `_include_openapi(tags=[...])`, which also fixes the order sections
+  appear in:
 
 ```python
 self._include_openapi(
     title="Widgets API", version="1.0.0",
     tags=[
         Tag("widgets", "Create, read, and manage widgets."),
-        Tag("system"),  # description optional — here just to pin the order
+        Tag("system"),  # description optional: here just to pin the order
     ],
 )
 ```
 
-A tag may be used without ever being described (it's a bare section, which OpenAPI
-allows). The one rule: describing the **same name two different ways** — anywhere — is a
-startup `WiringError`, so a tag's meaning can't silently fork.
+A tag may be used without ever being described: it is a bare section, which OpenAPI
+allows. Describing the same name two different ways, anywhere, is a startup
+`WiringError`.
 
 ## Security schemes
 
-An operation mounted behind `auth` gets a `security` requirement. To advertise the
-*scheme*, subclass one of the auth bases — the spec then carries the matching
-`securitySchemes` entry:
+An operation mounted behind `auth` gets a `security` requirement, and the spec carries
+the matching `securitySchemes` entry. Subclass an auth base to pick the scheme:
 
 ```python
 # doc-example: fragment (illustrative snippet, not a runnable app)
@@ -373,10 +373,9 @@ class TokenAuth(BearerAuth):    # -> {"type": "http", "scheme": "bearer"}
         ...
 ```
 
-[`BearerAuth`](auth.md) and `BasicAuth` are sugar over an optional
-`openapi_security: ClassVar[SecurityScheme]` attribute that *any* authenticator can set.
-An authed route whose `Auth` declares nothing defaults to HTTP bearer. For other shapes,
-set the attribute directly with a `SecurityScheme` constructor:
+`BearerAuth` and `BasicAuth` are shorthand for a class attribute,
+`openapi_security: ClassVar[SecurityScheme]`, that any authenticator can set. For any
+other shape, set it yourself:
 
 ```python
 # doc-example: fragment (illustrative snippet, not a runnable app)
@@ -385,28 +384,25 @@ from typing import ClassVar
 from jero import SecurityScheme
 
 
-class CookieAuth:
-    # a bearer token in a cookie is apiKey/cookie in OpenAPI — there is no "bearer cookie"
+class ApiKeyAuth:
     openapi_security: ClassVar[SecurityScheme] = SecurityScheme.api_key(
-        name="session", location="cookie"
+        name="x-api-key", location="header"
     )
 
-    async def authenticate(self, headers: Session) -> User:
+    async def authenticate(self, headers: ApiKeyHeaders) -> User:
         ...
 ```
 
-`SecurityScheme` has three constructors: `http_bearer()`, `http_basic()`, and
-`api_key(name=..., location="header" | "query" | "cookie")`. The attribute must be a
-`SecurityScheme` (or absent / `None`, which means the bearer default) — anything else is a
-`WiringError` at startup, so a spec never silently advertises the wrong scheme.
-
-An operation whose authenticator [accepts anonymous callers](auth.md#optional-authentication) advertises
-its scheme *and* the unauthenticated alternative, which OpenAPI spells as an empty
-requirement object alongside it:
-
-```json
-"security": [{"bearerAuth": []}, {}]
-```
+- **Constructors.** `SecurityScheme` has three: `http_bearer()`, `http_basic()`, and
+  `api_key(name=..., location="header" | "query" | "cookie")`.
+- **Nothing declared.** With the attribute absent or `None`, jero derives the scheme
+  from what `authenticate` binds. The
+  [auth page](auth.md#auth-in-the-openapi-spec) has the table.
+- **Anything else is a `WiringError`** at startup: the attribute must be a
+  `SecurityScheme` or `None`.
+- **Anonymous callers.** An operation whose authenticator
+  [accepts anonymous callers](auth.md#optional-authentication) advertises its scheme
+  and an empty requirement beside it: `"security": [{"bearerAuth": []}, {}]`.
 
 ## The docs UI
 
@@ -426,25 +422,30 @@ self._include_openapi(
 )
 ```
 
-### Favicon
-
-Without it, the docs page has no icon and `/favicon.ico` 404s. `favicon` takes a
-`Path` — read **once at wiring** (a missing or unreadable file, or a suffix other than
-`.ico`/`.png`/`.svg`, is a `WiringError`) and served precomputed at `/favicon.ico` — or
-a `str` URL (`data:` URIs work), emitted verbatim in the `<link>` with nothing served.
-Like the spec routes, `/favicon.ico` never appears in the generated document, and a
-custom `docs_html` page is never modified — reference the favicon yourself there.
-
 At startup jero logs where the docs are served (at `INFO` on the `jero` logger):
 
 ```
 [INFO] jero: Serving API docs at http://127.0.0.1:8000/docs
 ```
 
-The line is a full, clickable URL when
-[`JERO_BASE_URL`](deployment.md#behind-a-reverse-proxy) names the public origin;
-otherwise it's the relative path (jero doesn't know the server's bound host). With the
-UI disabled it points at the spec instead.
+- With [`JERO_BASE_URL`](deployment.md#behind-a-reverse-proxy) naming the public origin,
+  the line is a full, clickable URL. Otherwise it is the relative path, since jero
+  doesn't know the server's bound host.
+- With the UI disabled, it points at the spec instead.
 
-The `demo_app/` package serves a live spec — wire it up, open `/docs`, and browse the
+The `demo_app/` package serves a live spec: wire it up, open `/docs`, and browse the
 widgets API in Scalar.
+
+### Favicon
+
+Without `favicon`, the docs page has no icon and `/favicon.ico` 404s. It takes one of:
+
+| `favicon=` | What happens |
+| ---------- | ------------ |
+| a `Path`   | read once at wiring and served precomputed at `/favicon.ico` |
+| a `str` URL (`data:` URIs work) | emitted verbatim in the `<link>`; nothing is served |
+
+- A missing or unreadable file, or a suffix other than `.ico` / `.png` / `.svg`, is a
+  `WiringError`.
+- `/favicon.ico` never appears in the generated document.
+- A custom `docs_html` page is never modified: reference the favicon yourself there.

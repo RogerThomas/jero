@@ -22,13 +22,6 @@ serialization, auth checks, and [OpenAPI generation](guide/openapi.md) all deriv
 statically declared types, introspected once at startup. The request path stays
 minimal: dict lookup, msgspec decode, handler call, encode.
 
-There are no route decorators and no dependency-injection container. Routes are plain
-classes (`Resource` for REST collections, `Endpoint` for one-off routes), the method
-name *is* the HTTP operation, and dependencies are ordinary constructor arguments.
-Everything that crosses the wire is a msgspec `Struct`: bodies, headers, path and
-query params, forms, etc. That single contract drives validation, serialization, startup
-checks, schema generation, and msgspec's compiled-codec speed.
-
 ## Quickstart
 
 ```python
@@ -76,7 +69,7 @@ New here? Start with [Getting Started](getting-started.md).
 jero was written for speed and performance: in our four-scenario benchmark against nine
 frameworks across Python, Go, Bun, and Java (one worker on one core each), jero is the
 **fastest Python framework in every one** and, per core, the fastest of all ten on three
-of the four, methodology included. [→ Performance / Benchmarks](performance.md)
+of the four. Results and methodology: [→ Performance / Benchmarks](performance.md)
 
 ## Core principles
 
@@ -87,12 +80,7 @@ framework can be *both* extremely fast *and* a joy to build on.
 | ------------------ | ------------- |
 | **Speed**          | Introspection happens once, at startup. The request path stays minimal and predictable. |
 | **Opinionated&nbsp;DX** | One way to do each thing. Contracts fail loud at startup with a precise `WiringError`, never quietly at runtime. |
-| **Strict typing**  | Types are the contract, the validation source, and the [OpenAPI](guide/openapi.md) source — and the public interface is checked by every major type checker. |
-
-jero leans hard into modern Python typing: [PEP 695](https://peps.python.org/pep-0695)
-generics (`JSONResponse[Body, Headers]`, `NDJSONStreamingResponse[Movie]`), bounded
-type parameters with defaults, and `Protocol`s, so a handler's signature *is* its
-schema. If you don't like typing, this isn't your framework.
+| **Strict typing**  | Types are the contract, the validation source, and the [OpenAPI](guide/openapi.md) source. The public interface is checked by every major type checker. |
 
 For the reasoning behind those choices, read [Philosophy](philosophy.md). For a
 feature-by-feature contrast with other Python frameworks, read
@@ -100,27 +88,27 @@ feature-by-feature contrast with other Python frameworks, read
 
 ## Highlights
 
-- **Startup validation** — invalid apps can't boot: every contract is checked at wiring
+- **Startup validation.** Invalid apps can't boot: every contract is checked at wiring
   with a precise `WiringError`. [→](philosophy.md#startup-validation)
-- **Typed responses *and* headers** — `JSONResponse[Body, Headers]` keeps both schemas;
+- **Typed responses *and* headers.** `JSONResponse[Body, Headers]` keeps both schemas;
   unions of responses document every status. [→](guide/responses.md)
-- **Typed streaming** — NDJSON, SSE, and raw bytes, with lifecycle teardown and
+- **Typed streaming.** NDJSON, SSE, and raw bytes, with lifecycle teardown and
   disconnect handling done for you. [→](guide/streaming.md)
-- **Typed WebSockets** — compiled framing in both directions and bounded local fan-out
+- **Typed WebSockets.** Compiled framing in both directions and bounded local fan-out
   through `Channel`. [→](guide/websockets.md)
-- **Auth checked at startup** — the `user` type is verified against the authenticator
+- **Auth checked at startup.** The `user` type is verified against the authenticator
   before a single request is served. [→](guide/auth.md)
-- **Reverse routing** — `Location` / `Link` headers built from the route class,
+- **Reverse routing.** `Location` / `Link` headers built from the route class,
   validated at construction. [→](guide/links-and-location.md)
-- **Compiled middleware & CORS** — fixed per-tier costs, zero on uncovered routes.
+- **Compiled middleware & CORS.** Fixed per-tier costs, zero on uncovered routes.
   [→](guide/middleware.md)
-- **OpenAPI from your types** — a 3.1 spec plus Scalar docs UI, no duplicate schema
+- **OpenAPI from your types.** A 3.1 spec plus Scalar docs UI, no duplicate schema
   definitions. [→](guide/openapi.md)
-- **In-process `TestClient`** — sync, no network, full lifespan, streaming and WebSockets.
+- **In-process `TestClient`.** Sync, no network, full lifespan, streaming and WebSockets.
   [→](guide/testing.md)
 
 ## API reference
 
-The full public surface — `BaseApp`, `BaseFactory`, `Resource`, `Endpoint`, the
-response and streaming types, the test helpers, etc. — is documented in the
+The full public surface (`BaseApp`, `BaseFactory`, `Resource`, `Endpoint`, the
+response and streaming types, the test helpers, etc.) is documented in the
 [API reference](modules.md).

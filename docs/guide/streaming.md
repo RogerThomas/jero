@@ -1,15 +1,21 @@
 # Streaming
 
 For long or open-ended responses, return one of three streaming wrappers instead of a
-buffered body. Each is typed end-to-end — the generic `T` carries the per-item schema
-(documented in the [OpenAPI spec](openapi.md)), and an optional `H` carries typed response headers
-just like the [buffered responses](responses.md).
+buffered body.
 
-| Wrapper                          | Content type            | Yields                       |
-| -------------------------------- | ----------------------- | ---------------------------- |
-| `StreamingResponse`              | `application/octet-stream` | `bytes` chunks            |
-| `NDJSONStreamingResponse[T]`     | `application/x-ndjson`  | one `T` Struct per line      |
-| `SSEResponse[T]`                 | `text/event-stream`     | Server-Sent Events (GET-only)|
+| Wrapper                         | Content type               | Yields                        |
+| ------------------------------- | -------------------------- | ----------------------------- |
+| `StreamingResponse[H]`          | `application/octet-stream` | `bytes` chunks                |
+| `NDJSONStreamingResponse[T, H]` | `application/x-ndjson`     | one `T` per line              |
+| `SSEResponse[T, H]`             | `text/event-stream`        | Server-Sent Events (GET-only) |
+
+- **`T` is the item type**, documented in the [OpenAPI spec](openapi.md): a `Struct` or a
+  [union of tagged Structs](#mixed-streams). `SSEResponse` also accepts `str`, which is
+  its default, so a bare `SSEResponse` streams text. `NDJSONStreamingResponse` must name
+  its `T`.
+- **`H` is an optional typed headers Struct**, as on the
+  [buffered responses](responses.md). It defaults to `None`, so `StreamingResponse` and
+  `NDJSONStreamingResponse[Movie]` carry no typed headers.
 
 Two of these run for real in the
 [`demo_app/`](https://github.com/RogerThomas/jero/tree/main/demo_app) package: an NDJSON
@@ -19,7 +25,7 @@ and an SSE `/notifications` feed. Both live in
 
 ## NDJSON
 
-Stream one JSON `Struct` per line — ideal for large result sets a client consumes
+Stream one JSON `Struct` per line, for large result sets a client consumes
 incrementally:
 
 ```python
@@ -53,12 +59,10 @@ app = App()
 
 ### Mixed streams
 
-A stream doesn't have to be homogeneous. When the lines carry more than one shape — say
-text chunks followed by a trailing footer — make `T` a **union of tagged Structs**
-rather than one Struct with all-optional fields. Each member declares `tag=True`, so
-every line carries a `type` discriminator the client can switch on, and the OpenAPI
-schema documents the union precisely (`anyOf` of the member schemas, plus a
-`discriminator`):
+When the lines carry more than one shape (say, text chunks followed by a trailing
+footer), make `T` a **union of tagged Structs**, not one Struct with all-optional
+fields. Each member declares `tag=True`, so every line carries a `type` discriminator
+the client can switch on:
 
 ```python
 from collections.abc import AsyncIterator
@@ -102,12 +106,12 @@ The wire output is one tagged line per item:
 {"type": "FooterChunk", "total_chunks": 2}
 ```
 
-Tag every union member. The tag is what makes the stream self-describing — without a
-discriminator, clients have to guess each line's shape from its fields — and once
-`_include_openapi` is wired, an untagged union of several Structs fails loud at startup
-(msgspec needs the discriminator to schema the union).
-
-The same union form works for `SSEResponse[T]` and `JSONResponse[T]`.
+- **Tag every member.** Without a discriminator, clients have to guess each line's shape
+  from its fields.
+- **Once `_include_openapi` is wired**, an untagged union of several Structs fails at
+  startup. The spec documents a tagged union as an `anyOf` of the member schemas plus a
+  `discriminator`.
+- The same union form works for `SSEResponse[T]` and `JSONResponse[T]`.
 
 ## Server-Sent Events
 
@@ -182,9 +186,9 @@ app = App()
 ## Setup & teardown (lifecycle)
 
 A plain async iterable is enough when there's nothing to clean up. When the stream
-holds a resource — a DB cursor, an upstream connection — give it a **one-yield
-lifecycle generator**: yield the stream once, then do teardown after. The framework
-guarantees the teardown runs, even on client disconnect or a mid-stream error:
+holds a resource (a DB cursor, an upstream connection), pass a **one-yield lifecycle
+generator**: yield the stream once, then tear down after. jero guarantees the teardown
+runs, even on client disconnect or a mid-stream error:
 
 ```python
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
@@ -235,24 +239,23 @@ class App(BaseApp):
 app = App()
 ```
 
-Hit `GET /movies/export` and the worker logs `cursor opened` before the rows stream and
-`cursor closed` once it's done — the teardown half of the one-yield generator running for
-real.
-
-That's the whole model: a plain stream if you don't need lifecycle, a one-yield
-generator if you do.
+`GET /movies/export` prints `cursor opened` before the rows stream and `cursor closed`
+once it's done.
 
 ## Disconnect handling
 
-jero watches the client connection while it streams. If the client disconnects, it
-stops pulling from your iterator and runs the lifecycle teardown — you don't write any
-of that bookkeeping. An error raised inside the stream (after the response has started)
-is logged with its traceback, then swallowed after teardown so a broken stream can't
-crash the worker — the client sees a truncated stream, and the `jero` logger has
-the cause.
+jero watches the client connection while it streams:
+
+- **The client disconnects**: jero stops pulling from your iterator and runs the
+  lifecycle teardown.
+- **An error before the first item**: nothing has been sent yet, so it becomes a normal
+  error response, exactly as if the handler had raised it.
+- **An error after the response has started**: it is logged with its traceback on the
+  `jero` logger, then swallowed after teardown. The client sees a truncated stream, and
+  the worker keeps running.
 
 ## Status & headers
 
-Streaming wrappers carry `status_code`, typed `headers`, and `raw_headers`, exactly
-like the [buffered responses](responses.md). `HEAD` requests return the headers with no
-body and never iterate the stream.
+Streaming wrappers carry `status_code`, typed `headers`, `raw_headers`, `cookies`,
+`location`, and `links`, exactly like the [buffered responses](responses.md). A `HEAD`
+request returns the headers with no body and never iterates the stream.

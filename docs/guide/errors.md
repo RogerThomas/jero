@@ -1,8 +1,7 @@
 # Errors
 
 Failures are typed classes you raise. A raised jero error short-circuits the handler
-and becomes a consistent JSON body with the right status — the same shape whether the
-framework raised it (a 404 route miss, a 422 validation failure) or you did:
+and becomes a JSON body with the right status:
 
 ```python
 from msgspec import Struct
@@ -45,18 +44,33 @@ app = App()
 {"type": "out-of-stock", "title": "Widget out of stock", "status": 409}
 ```
 
-Because errors are classes, they carry a schema — the [OpenAPI generator](openapi.md#documenting-errors)
-documents exactly which errors an operation raises, body shape included.
+- **One shape.** The body looks the same whether the framework raised the error (a 404
+  route miss, a 422 validation failure) or you did.
+- **Anything else is a 500.** Any other uncaught exception becomes the static
+  `internal-server-error` problem. Server internals never leak to the client.
+- **Errors document themselves.** Because errors are classes, they carry a schema: the
+  [OpenAPI generator](openapi.md#documenting-errors) documents exactly which errors an
+  operation raises, body shape included.
 
 ## Problem Details
 
 Every framework and application `HTTPError` uses a typed
-[RFC 9457 Problem Details](https://www.rfc-editor.org/rfc/rfc9457) body. jero
-deviates from the RFC in one way: `type` is a stable machine-readable code, not a
-URI. Clients use `type`, never `title` or `detail`, for programmatic decisions.
+[RFC 9457 Problem Details](https://www.rfc-editor.org/rfc/rfc9457) body:
 
-For common statuses, jero ships errors ready to raise — one line, same typed problem
-body the framework itself sends:
+| Field              | Value |
+| ------------------ | ----- |
+| `type`             | a stable machine-readable code. Clients use `type`, never `title` or `detail`, for programmatic decisions |
+| `title`            | the class's human-readable title |
+| `status`           | the class's HTTP status |
+| `docs`             | optional: a documentation link, from the `docs="https://..."` class option |
+| `detail`, `params` | only on [parameterized errors](#parameterized-errors) |
+
+The RFC makes `type` a URI. jero's built-in errors use a short kebab-case code instead
+(`not-found`). That is a convention, not a rule: any non-blank string is accepted, so a
+URI works too.
+
+For common statuses, jero ships errors ready to raise, with the same body the framework
+itself sends:
 
 ```python
 # doc-example: fragment (illustrative snippet, not a runnable app)
@@ -70,15 +84,13 @@ raise GoneError()            # 410 {"type": "gone", ...}
 raise TooManyRequestsError() # 429 {"type": "too-many-requests", ...}
 ```
 
-(`AuthenticationRequiredError`, `ValidationFailedError`, and the other statuses the
-framework raises itself are exported too.) These carry the status semantics and nothing
-more — the moment an error means something domain-specific, define your own static
-error by subclassing `HTTPError`, as in the example above.
-
-There is no `raise HTTPError(409, detail="widget already exists")` form. An ad-hoc
-detail string becomes a contract clients regex against, and a response without a
-stable `type` leaves them dispatching on status alone. The class is four lines, once,
-and every raise site stays consistent.
+- `AuthenticationRequiredError`, `ValidationFailedError`, and the other errors the
+  framework raises itself are exported too.
+- These carry the status semantics and nothing more. Once an error means something
+  domain-specific, define your own by subclassing `HTTPError`, as in the example above.
+- There is no `raise HTTPError(409, detail="widget already exists")` form. An ad-hoc
+  detail string becomes a contract clients regex against, and a response without a
+  stable `type` leaves them dispatching on status alone.
 
 ## Parameterized errors
 
@@ -116,9 +128,8 @@ raise WidgetNotFoundError(widget_id="widget-id")
 
 The response includes both `"detail": "Widget widget-id not found"` and
 `"params": {"widgetId": "widget-id"}`. `detail` and `params` cannot appear separately.
-An optional `docs="https://..."` class option adds documentation for either error form.
 
-`ParameterizedHTTPError` is the same error without the dataclass layer: the error class
+`ParameterizedHTTPError` is the same error without the dataclass layer: the class
 declares no fields, and the raise site passes the params Struct itself.
 
 ```python
@@ -144,24 +155,19 @@ class WidgetNotFoundError(
 raise WidgetNotFoundError(WidgetNotFoundParams(widget_id="widget-id"))
 ```
 
-The response and the OpenAPI schema are identical to the dataclass form. The trade-off
-is where you pay: `ParameterizedHTTPError` declares each field once but builds the
-params Struct at every raise site, while `DataclassHTTPError` repeats the fields and a
-`__post_init__` on the class to give every raise site plain keyword arguments.
+The response and the OpenAPI schema are identical. The difference is where you pay:
 
-Any other uncaught exception becomes the static `internal-server-error` problem; server
-internals never leak to the client.
+| Form                     | Class                               | Raise site |
+| ------------------------ | ----------------------------------- | ---------- |
+| `DataclassHTTPError`     | repeats the fields, plus a `__post_init__` | plain keyword arguments |
+| `ParameterizedHTTPError` | declares nothing                    | builds the params Struct |
 
 ## Bring your own error body
 
-Problem Details is the default, not a requirement: starting an API from
-scratch, use the [`HTTPError` family](#problem-details) above. `StructHTTPError`
-is the channel for backporting jero onto an **existing** error standard — when your
-wire format is already decided, subclass it with your own body Struct. The class options
-declare how **every** field of the body gets its value — pinned constants, templates
-rendered from raise-time params, the class's status — and whatever is left over is a
-raise-time parameter. Decorate with `@dataclass` and declare those params as fields:
-the generated `__init__` gives you a statically-typed raise site.
+Problem Details is the default, not a requirement. Starting an API from scratch, use
+the [`HTTPError` family](#problem-details) above. `StructHTTPError` is for bringing jero
+to an **existing** error standard: when your wire format is already decided, subclass it
+with your own body Struct.
 
 ```python
 from dataclasses import dataclass
@@ -212,17 +218,30 @@ app = App()
 {"errorCode": "abcd", "errorMessage": "Document is 50000001 bytes; the limit is 50MB", "statusCode": 413}
 ```
 
-Total coverage is enforced loud at class definition: every body field must be fed by
-exactly one source (a const, a template, the status, or a same-named param) — an
-unknown field name, a field fed twice, a template on a non-`str` field, or a status
-field that isn't an `int` all fail before the app can start. The wire representation is
-composed fresh at encode time from a model built once at class creation; nothing you
-pass is ever mutated, and the pinned values appear in the OpenAPI schema as enum
-consts, so the spec documents exactly which code (and status) each error carries.
+The class options declare how **every** field of the body gets its value:
 
-One more source covers richer house formats: **`params_field=`** — a Struct-typed
-body field the raise-time params nest into, so the response carries the rendered text
-*and* the raw values:
+| Source               | Feeds a body field with |
+| -------------------- | ----------------------- |
+| `consts=`            | a pinned value. It also appears in the OpenAPI schema as an enum const |
+| `templates=`         | a string rendered from the raise-time params |
+| `status_field=`      | the class's status |
+| `params_field=`      | the raise-time params, nested as a Struct ([below](#nesting-the-params)) |
+| a same-named param   | whatever the raise site passes |
+
+- **Typed raise site.** Decorate with `@dataclass` and declare the params as fields: the
+  generated `__init__` is statically typed.
+- **Total coverage, checked at class definition.** Every body field must be fed by
+  exactly one source. An unknown field name, a field fed twice, a template on a
+  non-`str` field, or a status field that isn't an `int` all fail before the app can
+  start.
+- **Nothing you pass is mutated.** The wire body is composed fresh at encode time.
+- **Templates** follow ordinary `str.format` rules. Escape literal braces as
+  `{{thing}}`.
+
+### Nesting the params
+
+`params_field=` names a Struct-typed body field the raise-time params nest into, so the
+response carries the rendered text and the raw values:
 
 ```python
 from dataclasses import dataclass
@@ -277,22 +296,19 @@ app = App()
  "extensions": {"thing": "my-thing"}}
 ```
 
-The description renders server-side from the params, and the same params ship raw in
-`extensions` for clients that want the structured values. Templates follow ordinary
-`str.format` rules (escape literal braces as `{{thing}}`). For a shared shape across
-errors, make the base generic over its varying part
+**Sharing one shape across errors.** Make the base generic over its varying part
 (`class CompanyBody[E: Struct](Struct): ... extensions: E`) and pin `E` in a concrete
 body subclass per error (`class ThingBody(CompanyBody[ThingExt]): ...`). The body handed
-to `StructHTTPError[...]` must be that concrete subclass — a subscripted generic like
+to `StructHTTPError[...]` must be that concrete subclass: a subscripted generic like
 `StructHTTPError[CompanyBody[ThingExt]]` is a `TypeError` at class definition.
 
-Catch scope: `except HTTPError` catches only the Problem family; `except BaseHTTPError`
-means "any jero error", both families.
+**Catch scope.** `except HTTPError` catches only the Problem family. `except
+BaseHTTPError` means "any jero error", both families.
 
 ## House-wide error format
 
-`StructHTTPError` covers errors *you* raise. The framework's own errors — 404 route
-misses, 422 validation failures, the unexpected-exception 500 — are Problem-family. To
+`StructHTTPError` covers errors *you* raise. The framework's own errors (404 route
+misses, 422 validation failures, the unexpected-exception 500) are Problem-family. To
 render those in your house shape too, register an `ErrorBodyAdapter`: the app-wide
 renderer for the Problem family.
 
@@ -332,24 +348,41 @@ class App(BaseApp):
 app = App()
 ```
 
-Now `GET /nope` returns
-`{"errorCode": "not-found", "errorMessage": "Not found", "statusCode": 404}` — and the
-same for every Problem-family error, including ones your
-[exception handlers](#custom-exception-handlers) translate into. `str(error)` is the
-uniform human message (the `title`, or the rendered `detail` for parameterized errors);
-`error.type` is the stable machine code to map into your own vocabulary.
-`StructHTTPError`s render themselves, so each error has exactly one renderer. Keep
-`compose` pure — it receives only the error; request-correlated data belongs in
-exception handlers. An adapter failure is contained: logged, with the Problem body sent
-instead. At most one adapter per app, and the derived OpenAPI error responses
-[follow it](openapi.md#documenting-errors).
+Now `GET /nope` returns:
+
+```json
+{"errorCode": "not-found", "errorMessage": "Not found", "statusCode": 404}
+```
+
+- **Every Problem-family error** renders this way, including ones your
+  [exception handlers](#custom-exception-handlers) translate into.
+- **`str(error)`** is the uniform human message: the `title`, or the rendered `detail`
+  for a parameterized error.
+- **`error.type`** is the stable machine code to map into your own vocabulary.
+- **`status_field`** names a field jero *adds* to the body, so it must not already exist
+  on `HouseBody`. That is the opposite of `StructHTTPError`'s `status_field`, which
+  feeds an existing field.
+
+The rules:
+
+- `StructHTTPError`s render themselves, so each error has exactly one renderer.
+- Keep `compose` pure. It receives only the error; request-correlated data belongs in
+  exception handlers.
+- An adapter failure is contained: it is logged, and the Problem body is sent instead.
+- At most one adapter per app.
+- The derived OpenAPI error responses [follow it](openapi.md#documenting-errors).
 
 ## Custom exception handlers
 
 An exception handler is any hand-wired object with one typed `handle_exception` method.
-No base class or decorator is required. Return an `ExceptionResponse` to replace the
-exception, or `None` to continue default handling (`HTTPError` becomes its problem;
-another exception becomes the generic 500 problem):
+No base class or decorator is required. The annotation on `exception` is what it
+handles, and what it returns decides the response:
+
+| Return                  | Response |
+| ----------------------- | -------- |
+| `None`                  | default handling continues: an `HTTPError` becomes its problem, any other exception the generic 500 problem |
+| an `HTTPError` instance | that error's problem |
+| an `ExceptionResponse`  | your own `status_code`, JSON Struct, and headers |
 
 ```python
 from msgspec import Struct
@@ -405,20 +438,28 @@ class App(BaseApp):
 app = App()
 ```
 
-jero infers every type from the method signature at wiring. Registering two handlers
-for the same exception type is a `WiringError`; handlers for a base and subclass may
-coexist, and the nearest type in the exception's MRO wins. Exceptions raised after a
-streaming response has started cannot replace that response. `ExceptionResponse`
-requires an error `status_code` from 400 through 599; if a custom handler itself fails,
-jero sends the generic 500 problem without recursively dispatching the new failure.
-A handler may return a union of concrete response types when the exception occurrence
-determines its body, headers, or status; every union member is validated at wiring.
-It may also return a union of declared `HTTPError` subclasses; their `type`, `title`,
-`status`, and optional `detail_template` remain static class-level contracts, and the
-handler only selects and constructs the appropriate error instance.
+The rules:
+
+- **Types come from the signature.** jero infers every type from the method signature
+  at wiring.
+- **One handler per exception type.** Registering two for the same type is a
+  `WiringError`. Handlers for a base and a subclass may coexist, and the nearest type in
+  the exception's MRO wins.
+- **`ExceptionResponse` needs an error status.** `status_code` is required and must be
+  from 400 through 599.
+- **Union returns.** A handler may return a union of concrete response types when the
+  exception occurrence determines its body, headers, or status. Every union member is
+  validated at wiring.
+- **`HTTPError` returns.** The union may name declared `HTTPError` subclasses. Their
+  `type`, `title`, `status`, and optional `detail_template` stay static class-level
+  contracts: the handler only selects and constructs the error instance.
+- **A failing handler** gets the generic 500 problem. jero does not dispatch the new
+  failure to handlers again.
+- **Streaming.** An exception raised after a streaming response has started cannot
+  replace that response.
 
 ## Related pages
 
-- [REST semantics](rest.md) — the status every framework-raised error uses, and why.
-- [OpenAPI & docs](openapi.md#documenting-errors) — declaring which errors an operation
+- [REST semantics](rest.md): the status every framework-raised error uses, and why.
+- [OpenAPI & docs](openapi.md#documenting-errors): declaring which errors an operation
   raises, so the spec documents them.

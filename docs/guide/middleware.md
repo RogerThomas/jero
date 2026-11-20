@@ -1,20 +1,8 @@
 # Middleware
 
-A jero middleware is a **typed, hand-wired object whose hooks are introspected and
-compiled at wiring** (the same pattern as
-[custom exception handlers](errors.md#custom-exception-handlers)): no base class, no
-decorator. It can do three things:
-
-- **`intercept`** — answer a request before routing and auth (gates, preflights).
-- **`response_headers`** — add headers to covered responses, constant or computed.
-- **`observe`** — see the outcome after the response starts (timing, audit).
-
-Wiring compiles only what a middleware actually defines, and each hook kind has a
-fixed, known cost. Routes no middleware covers are not wrapped, not branched into, not
-touched — the uncovered request path is byte-for-byte the one an app without
-middleware runs.
-
-## A first middleware: request timing
+A middleware is a plain object with one or more hooks. There is no base class and no
+decorator: jero reads the hooks at wiring and compiles only the ones the object defines
+(the same pattern as [custom exception handlers](errors.md#custom-exception-handlers)).
 
 ```python
 import logging
@@ -47,80 +35,22 @@ class App(BaseApp):
 app = App()
 ```
 
-`duration` is measured from dispatch to response-start. `observe` may be sync or async;
-either way it runs after the response has left, so it never adds latency a caller sees.
+A middleware can do three things:
 
-## The protocol
+- **`intercept`**: answer a request before routing and auth (gates, preflights).
+- **`response_headers`**: add headers to responses, constant or computed.
+- **`observe`**: see the outcome after the response is sent (timing, audit).
 
-A middleware object may define any of these; everything else on it is ignored, and an
-object defining none of them fails wiring loud:
+Two facts about `observe`, used above:
 
-```python
-# doc-example: fragment (illustrative snippet, not a runnable app)
-from typing import ClassVar
+- It runs after the response is sent, sync or async, so it never adds latency a caller
+  sees.
+- `duration` is measured from dispatch to response start.
 
-from jero import HTTPMethod, JSONResponse, Request, Struct
-
-
-class SecurityHeaders(Struct):
-    x_frame_options: str = "DENY"
-
-
-class RefusedBody(Struct):
-    reason: str
-
-
-class OriginHeaders(Struct):
-    origin: str | None = None
-
-
-class ExampleMiddleware:
-    # EITHER a constant attribute (baked into covered routes at wiring — free) ...
-    response_headers: ClassVar[SecurityHeaders] = SecurityHeaders()
-
-    # static scope declaration: intercept compiles into these wire verbs only
-    intercept_methods: ClassVar[tuple[HTTPMethod, ...]] = ("GET",)
-
-    # answer instead of routing; None falls through. Sync or async.
-    def intercept(self, request: Request[OriginHeaders]) -> JSONResponse[RefusedBody] | None: ...
-
-    # observability: sees the outcome, cannot touch it. Exceptions logged + swallowed.
-    def observe(self, request: Request, status: int, duration: float) -> None: ...
-```
-
-(A middleware defines *either* the constant `response_headers` attribute *or* the method
-form `def response_headers(self, request: Request[H]) -> HeadersStruct | None` — one
-name, one meaning per class.)
-
-`Request[H]` is the read-only view every hook receives: the wire `method` and `path`,
-plus `headers` — *your* Struct, bound exactly like [auth's `headers`](auth.md): wiring
-compiles a scanner for just the keys your fields name. Annotate a bare `Request` to bind
-no headers at all. `received_at` is `time.perf_counter()` at dispatch, stamped on routes
-a dynamic hook covers.
-
-**The capability boundary:** middleware can *answer* a request
-(`intercept`), *add response headers* (`response_headers`), and *watch* (`observe`). It
-can never rewrite a handler's body or status: that requires buffering or wrapping every
-response — the onion price — and belongs in the server or your reverse proxy (compression,
-caching, ETags). jero refuses it rather than covering it slowly. Passing
-state from middleware to handlers (`request.state.tenant`) is also not offered: the
-idiom is jero's existing typed sources — bind the header in the handler, or carry it on
-the auth `user`.
-
-## The tiers and what they cost
-
-| hook | when it runs | per-request cost |
-| :-- | :-- | :-- |
-| `response_headers` (constant attribute) | never — baked into route header blocks at wiring | zero |
-| `intercept` + `intercept_methods` | only on the declared verbs, pre-auth | zero off-scope; one table hit + scan on-scope |
-| `response_headers(...)` (method) | every covered response, as it leaves | one scan + call + merge |
-| `observe(...)` | after the response starts | request view + one call |
-
-The tiers order the design: reach for the constant tier when a value is fixed, scope
-intercepts to the verbs that need them, and treat the method tier as the last resort it
-is. Every cost is opt-in and per-covered-route — uncovered routes pay nothing.
-[Measured numbers](../performance.md#what-middleware-and-cors-cost) are on the
-Performance page.
+A route is **covered** by a middleware when the middleware is registered app-wide or
+passed on that route's include (see [Registration](#registration-global-and-per-include)).
+Routes no middleware covers are not wrapped and not branched into: they run the same
+request path as an app without middleware.
 
 ## Registration: global and per-include
 
@@ -169,10 +99,99 @@ class App(BaseApp):
 app = App()
 ```
 
-`middleware=` is an include-time keyword beside `auth=` — middleware scope is deployment
-policy, not resource identity, so it does not live on the `Endpoint`/`Resource` class.
+- **`_include_middleware(...)`** registers a global middleware: it covers every route.
+- **`middleware=(...)`** is an include-time keyword beside `auth=`: it covers only the
+  routes of that include, on top of the globals.
 
-The request path is fixed:
+Scope is deployment policy, so it is set at the mount and never on the
+`Endpoint`/`Resource` class.
+
+## The protocol
+
+A middleware object may define any of these. Everything else on it is ignored, and an
+object defining none of them is a `WiringError`.
+
+```python
+# doc-example: fragment (illustrative snippet, not a runnable app)
+from typing import ClassVar
+
+from jero import HTTPMethod, JSONResponse, Request, Struct
+
+
+class SecurityHeaders(Struct):
+    x_frame_options: str = "DENY"
+
+
+class RefusedBody(Struct):
+    reason: str
+
+
+class OriginHeaders(Struct):
+    origin: str | None = None
+
+
+class ExampleMiddleware:
+    # EITHER a constant attribute (baked into covered routes at wiring, free) ...
+    response_headers: ClassVar[SecurityHeaders] = SecurityHeaders()
+
+    # static scope declaration: intercept compiles into these wire verbs only
+    intercept_methods: ClassVar[tuple[HTTPMethod, ...]] = ("GET",)
+
+    # answer instead of routing; None falls through. Sync or async.
+    def intercept(self, request: Request[OriginHeaders]) -> JSONResponse[RefusedBody] | None: ...
+
+    # observability: sees the outcome, cannot touch it. Exceptions logged + swallowed.
+    def observe(self, request: Request, status: int, duration: float) -> None: ...
+```
+
+`response_headers` has two forms, and a class defines one or the other:
+
+- **Constant**: a Struct attribute, as above.
+- **Method**: `def response_headers(self, request: Request[H]) -> HeadersStruct | None`,
+  called for every covered response.
+
+### `Request`
+
+Every hook receives a read-only `Request[H]`:
+
+| Field         | Value |
+| :------------ | :---- |
+| `method`      | The wire method. A `HEAD` request reads `"HEAD"`, even though routing serves it from a `GET` handler. |
+| `path`        | The request path. |
+| `headers`     | *Your* Struct `H`, bound like [auth's `headers`](auth.md): wiring compiles a scanner for just the keys your fields name. A bare `Request` binds no headers. |
+| `received_at` | `time.perf_counter()` at dispatch. Stamped on routes covered by a per-request hook, which is every hook except the constant `response_headers` attribute. |
+
+### What middleware cannot do
+
+- **Rewrite a handler's body or status.** That needs every response buffered or wrapped,
+  and belongs in the server or your reverse proxy (compression, caching, ETags).
+- **Pass state to handlers** (`request.state.tenant`). Use jero's typed sources instead:
+  bind the header in the handler, or carry the value on the auth `user`.
+- **Emit `content-length` or `content-type`.** The senders own those.
+
+## The tiers and what they cost
+
+| hook | when it runs | per-request cost |
+| :-- | :-- | :-- |
+| `response_headers` (constant attribute) | never: baked into route header blocks at wiring | zero |
+| `intercept` + `intercept_methods` | only on the declared verbs, pre-auth | zero off-scope; one table hit + scan on-scope |
+| `response_headers(...)` (method) | every covered response, as it leaves | one scan + call + merge |
+| `observe(...)` | after the response is sent | request view + one call |
+
+So:
+
+- Use the constant attribute when a header value is fixed.
+- Scope an intercept to the verbs that need it.
+- Use the method form of `response_headers` only when the value depends on the request,
+  because it runs on every covered response.
+
+Every cost is opt-in and paid only by covered routes.
+[Measured numbers](../performance.md#what-middleware-and-cors-cost) are on the
+Performance page.
+
+## The request path
+
+The order is fixed:
 
 ```
 request arrives
@@ -182,26 +201,29 @@ request arrives
   4. auth → bind → handler
   5. response_headers merges onto WHATEVER response leaves
      (handler success, problem body, exception-handler response, short-circuit)
-  6. observe sees the outcome after the response starts
+  6. observe sees the outcome after the response is sent
 ```
 
-Two consequences worth spelling out: **global intercepts run pre-routing**, so they can
-answer requests no route serves (that's how an OPTIONS-scoped intercept answers
-preflights for paths that would 404) — and **intercepts run before auth** (a preflight
-carries no credentials). Intercept scoping sees the **wire method**: `HEAD` is its own
-entry, even though routing serves it from `GET` handlers.
+What follows from it:
 
-An exception inside `intercept` or `response_headers` enters the same funnel as handler
-exceptions — custom handlers get their shot, then the generic 500 problem. `observe`
-exceptions are logged and swallowed. Middleware can never emit `content-length` or
-`content-type` (the senders own those), and two middlewares' *constant* pairs claiming
-the same header name fail wiring loud; dynamic pairs can't be checked and append per
-HTTP semantics.
+- **Global intercepts run before routing**, so they can answer requests no route serves.
+  That is how an OPTIONS-scoped intercept answers preflights for paths that would 404.
+- **Intercepts run before auth.** A preflight carries no credentials.
+- **Intercept scoping sees the wire method.** `HEAD` is its own entry, even though
+  routing serves it from `GET` handlers.
+
+Errors and conflicts:
+
+- An exception inside `intercept` or `response_headers` enters the same funnel as a
+  handler exception: custom handlers get their shot, then the generic 500 problem.
+- An exception inside `observe` is logged and swallowed.
+- Two middlewares whose *constant* pairs claim the same header name are a `WiringError`.
+  Computed pairs can't be checked, and append per HTTP semantics.
 
 ## An interception gate
 
-An admin include gated on a header, scoped at the mount — the rest of the app never
-pays for it:
+An admin include gated on a header. The gate is scoped at the mount, so the rest of the
+app never pays for it:
 
 ```python
 from typing import ClassVar
@@ -243,15 +265,16 @@ class App(BaseApp):
 app = App()
 ```
 
-An intercept's return annotation follows handler rules — any buffered response kind,
-unioned freely, with `| None` meaning "fall through". A plain `Struct` return answers
-with 200; `NoContent` / `Created` / `Accepted` fix their own status; `status_code=`
-overrides. Streaming kinds are rejected at wiring: an interception is an answer, not a
-stream.
+An intercept's return annotation follows handler rules:
+
+- Any buffered response kind, unioned freely. `| None` means "fall through".
+- A plain `Struct` answers with 200. `NoContent` / `Created` / `Accepted` fix their own
+  status. `status_code=` overrides.
+- Streaming kinds are a `WiringError`: an interception is an answer, not a stream.
 
 ## Rebuilding CORS yourself
 
-The built-in [`CORS`](cors.md) policy uses exactly this machinery — nothing it does is
+The built-in [`CORS`](cors.md) policy uses exactly this machinery: nothing it does is
 privileged. A wildcard policy is one constant attribute plus one preflight intercept:
 
 ```python
@@ -308,20 +331,16 @@ class App(BaseApp):
 app = App()
 ```
 
-Registered globally, the intercept answers preflights pre-routing — including for paths
-that would 404 — and the constant pair rides every response for free. Prefer the
-built-in (`self._include_cors(CORS())`): it also handles origin allow-lists, per-route
-preflight policy, and validation. But when you need a cross-cutting behavior jero
-doesn't ship, this is the shape it takes.
+Registered globally, the intercept answers preflights before routing, including for
+paths that would 404, and the constant pair rides every response for free.
+
+Prefer the built-in (`self._include_cors(CORS())`): it also handles origin allow-lists,
+per-route preflight policy, and validation. But when you need a cross-cutting behavior
+jero doesn't ship, this is the shape it takes.
 
 ## Why not onion middleware
 
-The classic ASGI middleware shape — an onion of app wrappers, each an async callable
-wrapping `send` — costs a coroutine plus allocations per layer per request, on every
-request, whether or not the layer applies. Measured on jero's hot path, one onion layer
-that does nothing but append a single constant CORS pair already costs about **1.3×** —
-a third of the entire per-request budget, before it does anything a real middleware
-does. jero rejects that shape: the compiled tiers above have a floor of zero and a
-known ceiling, and only covered routes pay. The
-[measured per-tier numbers](../performance.md#what-middleware-and-cors-cost) are on the
-Performance page.
+The classic ASGI shape, an onion of app wrappers around `send`, costs every request on
+every layer whether or not the layer applies: one layer that only appends a constant
+header measured about **1.3×** on jero's hot path. See the
+[measured per-tier numbers](../performance.md#what-middleware-and-cors-cost).

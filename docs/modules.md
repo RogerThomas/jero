@@ -24,6 +24,7 @@ The full public surface, grouped by area. Everything here is importable from `je
 
 ::: jero.Request
 ::: jero.RawHeaders
+::: jero.ContentStream
 ::: jero.NoHeaders
 ::: jero.FormPart
 ::: jero.FilePart
@@ -58,6 +59,7 @@ The full public surface, grouped by area. Everything here is importable from `je
 ## Errors
 
 ::: jero.BaseHTTPError
+::: jero.ClientDisconnectedError
 ::: jero.HTTPError
 ::: jero.DataclassHTTPError
 ::: jero.ParameterizedHTTPError

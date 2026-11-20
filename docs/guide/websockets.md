@@ -5,9 +5,9 @@ both initiate messages over one long-lived connection. For one-way server push, 
 [Server-Sent Events](streaming.md#server-sent-events). SSE reconnects naturally, works
 through ordinary HTTP infrastructure, and is usually the simpler contract.
 
-jero WebSockets are typed in both directions. Their framing, decoders, path binding,
-headers, and authentication are compiled at wiring time; a handler only receives an
-accepted connection after its handshake has passed those checks.
+jero WebSockets are typed in both directions. Framing, decoders, binding and
+authentication are compiled at wiring. A handler only receives a connection whose
+handshake has passed those checks.
 
 ## A complete typed protocol
 
@@ -71,31 +71,40 @@ class App(BaseApp):
 app = App()
 ```
 
-Explicit kebab-case tags are required even when a direction currently has one Struct.
-The tag is a deployed wire contract: adding a second member later must not silently
-change the first message's representation. A final `assert_never` arm makes adding a
-new inbound member without handling it a static error.
+What to notice:
 
-Correlated ask/answer messages conventionally use `XRequest` / `XResponse` and carry a
-`request_id: str` that the server echoes. Unsolicited server-push messages use plain
-names such as `Tick` or `Departed`.
+- **Every member needs an explicit string tag**, even when a direction currently has one
+  Struct (kebab-case is the convention). The tag is a deployed wire contract: adding a
+  second member later must not change how the first is represented.
+- **The final `assert_never` arm** makes adding an inbound member without handling it a
+  static error.
+- **Naming.** Correlated ask/answer messages conventionally use `XRequest` / `XResponse`
+  and carry a `request_id: str` that the server echoes. Unsolicited server-push messages
+  use plain names such as `Tick` or `Departed`.
 
 ## Handshake binding and authentication
 
 `handle` may bind `path`, `params`, `headers`, `cookies`, `raw_headers`, and `user`
-exactly like an HTTP handler. `cookies` is the motivating case for cookie auth here: a
-browser's WebSocket API cannot set an `Authorization` header, but it always sends
-cookies — mount a `CookieAuth`/`HybridAuth` authenticator (see
-[Cookies](cookies.md#websockets-the-motivating-case)) and a browser client
-authenticates with the session cookie it already has. Authentication and binding run
-before the upgrade. A failure is returned as an ordinary typed HTTP rejection when the
-ASGI server advertises the WebSocket denial response extension. Without that optional extension, jero sends a pre-accept close and
-the server rejects the upgrade (normally as HTTP 403, without the typed body). Only a
-valid handshake receives `websocket.accept` and enters the handler.
+exactly like an HTTP handler. Mount an authenticator with `auth=` on
+`_include_websocket`.
 
-Acceptance is therefore implicit—there is no `websocket.accept()`. Reject application
-state that a browser must understand after acceptance by sending a typed message and
-then closing:
+A browser's WebSocket API cannot set an `Authorization` header but always sends cookies,
+so browser clients authenticate with [cookie auth](cookies.md#websockets-the-motivating-case).
+
+Binding and authentication run before the upgrade. Only a valid handshake is accepted
+and enters the handler, so acceptance is implicit: there is no `websocket.accept()`.
+
+A failed handshake is rejected one of two ways:
+
+- **The ASGI server advertises the WebSocket denial response extension:** the client
+  gets the ordinary typed HTTP rejection, body included.
+- **It does not:** jero sends a pre-accept close and the server rejects the upgrade,
+  normally as HTTP 403 without the typed body.
+
+## Closing
+
+To refuse a client after the handshake, send a typed message, then close with a
+`4000–4999` code:
 
 ```python
 await websocket.send(RoomFull(retry_after_seconds=30))
@@ -103,18 +112,33 @@ await websocket.close(code=4003, reason="room full")
 return
 ```
 
-Codes `4000–4999` are available to the application. jero uses `1003` for the wrong frame
-kind, `1007` for malformed JSON, `1008` for a schema violation, `1009` for an oversized
-message, `1011` for an uncaught handler error, and `1013` for a channel overflow close.
-Inbound frames default to at most 1 MiB; override this per mount with
-`max_frame_size=`. Ping/pong keepalive belongs to the ASGI server because standard ASGI
-does not expose ping frames to applications.
+The close codes you will see:
 
-`close()` accepts jero's standard protocol codes or application codes `4000–4999`.
-Close reasons are limited to the WebSocket protocol's 123 UTF-8 bytes; invalid values
-raise before a close event is sent. Code `1010` is client-only and therefore rejected
-for these server-originated closes. Sending after the connection starts closing is also
-rejected locally rather than emitting an invalid ASGI event.
+| Code        | Sent when |
+| ----------- | --------- |
+| `1003`      | A frame of the wrong kind arrived (see [Framing](#framing)) |
+| `1007`      | An inbound message was malformed JSON |
+| `1008`      | An inbound message violated the schema |
+| `1009`      | An inbound message was larger than `max_frame_size` |
+| `1011`      | The handler raised an uncaught error |
+| `1013`      | A [`Channel`](#broadcasting-with-channel) queue overflowed under `overflow="close"` |
+| `4000–4999` | Yours: the application range |
+
+Rules for `close()`:
+
+- `code` must be one of the standard codes a server may send, or in `4000–4999`.
+  `1010` is client-only, so it is rejected.
+- `reason` is limited to the protocol's 123 UTF-8 bytes.
+- An invalid code or reason raises before any close event is sent.
+- Sending after the connection starts closing is rejected locally, so no invalid ASGI
+  event is emitted.
+
+## Limits
+
+- **Frame size.** Inbound frames may be at most 1 MiB by default. Override this per
+  mount with `max_frame_size=`.
+- **Keepalive.** Ping/pong belongs to the ASGI server: standard ASGI does not expose
+  ping frames to applications.
 
 ## Framing
 
@@ -126,12 +150,13 @@ Each direction chooses exactly one kind:
 | `str` | text verbatim | close `1003` |
 | `bytes` | close `1003` | bytes verbatim |
 
-The directions are independent, so `WebSocket[bytes, Transcript]` is valid. Mixed forms
-such as `Message | str` are not. Raw `str` and `bytes` are deliberate escape hatches for
-third-party JSON, msgpack, audio, or another user-owned protocol.
+- The directions are independent, so `WebSocket[bytes, Transcript]` is valid.
+- Mixed forms such as `Message | str` are not.
+- Raw `str` and `bytes` are escape hatches for third-party JSON, msgpack, audio, or
+  another protocol you own.
 
 WebSockets are not represented by OpenAPI. The tagged message unions are the
-client-facing contract; AsyncAPI generation is outside jero's current scope.
+client-facing contract. AsyncAPI generation is outside jero's current scope.
 
 ## Broadcasting with `Channel`
 
@@ -175,10 +200,11 @@ class App(BaseApp):
 app = App()
 ```
 
-`publish` is synchronous and fire-and-forget. On a full queue, `"close"` closes that
-consumer with `1013`; `"drop-oldest"` replaces stale queued data, which suits tickers.
-The attachment context always removes the connection and its topic memberships.
-`queue_size` must be a positive, non-boolean integer.
+- `publish` is synchronous and fire-and-forget.
+- `overflow` decides what a full queue does: `"close"` closes that consumer with `1013`,
+  and `"drop-oldest"` replaces stale queued data, which suits tickers.
+- `queue_size` must be a positive, non-boolean integer.
+- Leaving the `attach` context always removes the connection and its topic memberships.
 
 A channel is per process. With multiple workers, relay an external pub/sub subscription
 into each worker's local channel:
@@ -189,7 +215,7 @@ async def relay(channel: Channel[ChatMessage], broker: Broker) -> None:
         channel.publish("global", message)
 ```
 
-jero deliberately does not choose Redis, PostgreSQL, NATS, or another backplane.
+jero does not choose Redis, PostgreSQL, NATS, or another backplane for you.
 
 ## Testing
 
@@ -201,7 +227,7 @@ with client.websocket("/weather", inbound=Inbound, outbound=Outbound) as websock
     response = websocket.receive()
 ```
 
-An HTTP handshake rejection raises `WebSocketUpgradeError` with its `TestResponse` on
-`.response`. A close raises `WebSocketClosedError`, whose `.code` and `.reason` are
-available for assertions. `send_text` and `send_bytes` allow deliberate protocol-error
-tests.
+- An HTTP handshake rejection raises `WebSocketUpgradeError`, with its `TestResponse` on
+  `.response`.
+- A close raises `WebSocketClosedError`, with `.code` and `.reason` to assert on.
+- `send_text` and `send_bytes` send raw frames, for deliberate protocol-error tests.
